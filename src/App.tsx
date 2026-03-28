@@ -1,77 +1,63 @@
-import { ChangeEvent, useMemo, useState } from 'react';
-import {
-  DocumentModel,
-  PlaybackQueueStatus,
-  SourceType,
-  SpeakableSegment,
-} from './types/reader';
+import { ChangeEvent, useEffect, useState } from 'react';
+import { ingestFile, ingestText, ingestUrl } from './lib/ingest/ingest';
+import { DocumentModel, PlaybackQueueStatus, SourceType } from './types/reader';
 
 const sourceTabs: SourceType[] = ['text', 'file', 'url'];
-
-function parseTextToSegments(rawText: string): SpeakableSegment[] {
-  let offset = 0;
-
-  return rawText
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line, index) => {
-      const start = rawText.indexOf(line, offset);
-      const end = start + line.length;
-      offset = end;
-
-      return {
-        id: `seg-${index + 1}`,
-        text: line,
-        type: index === 0 ? 'heading' : 'paragraph',
-        sourceOffsets: { start, end },
-        metadata: {
-          confidence: 1,
-          tags: index === 0 ? ['title-candidate'] : ['body'],
-        },
-      } satisfies SpeakableSegment;
-    });
-}
 
 function App() {
   const [sourceType, setSourceType] = useState<SourceType>('text');
   const [textInput, setTextInput] = useState('Paste text to normalize and preview for playback.');
   const [urlInput, setUrlInput] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedFileName, setSelectedFileName] = useState('');
+  const [documentModel, setDocumentModel] = useState<DocumentModel>({
+    title: 'Untitled Source',
+    source: { type: 'text', value: '' },
+    segments: [],
+    warnings: [],
+  });
+
   const [queueStatus, setQueueStatus] = useState<PlaybackQueueStatus>('idle');
   const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
   const [voice, setVoice] = useState('alloy');
   const [rate, setRate] = useState(1);
   const [pitch, setPitch] = useState(1);
 
-  const parsedSegments = useMemo(() => parseTextToSegments(textInput), [textInput]);
+  useEffect(() => {
+    let active = true;
 
-  const documentModel = useMemo<DocumentModel>(() => {
-    const sourceValue = sourceType === 'text' ? textInput : sourceType === 'url' ? urlInput : selectedFileName;
+    const runIngest = async () => {
+      const nextModel = sourceType === 'text'
+        ? await ingestText(textInput)
+        : sourceType === 'url'
+          ? await ingestUrl(urlInput)
+          : selectedFile
+            ? await ingestFile(selectedFile)
+            : await ingestText('');
 
-    return {
-      title: parsedSegments[0]?.text.slice(0, 72) || 'Untitled Source',
-      source: {
-        type: sourceType,
-        value: sourceValue,
-        name: sourceType === 'file' ? selectedFileName : undefined,
-      },
-      segments: parsedSegments,
-      warnings: parsedSegments.length === 0
-        ? [{ code: 'NO_SEGMENTS', message: 'No speakable text found.', severity: 'warning' }]
-        : [],
+      if (active) {
+        setDocumentModel(nextModel);
+        setCurrentSegmentIndex((index) => Math.min(index, Math.max(nextModel.segments.length - 1, 0)));
+      }
     };
-  }, [parsedSegments, selectedFileName, sourceType, textInput, urlInput]);
+
+    void runIngest();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedFile, sourceType, textInput, urlInput]);
 
   const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) {
+      setSelectedFile(null);
       setSelectedFileName('');
       return;
     }
 
+    setSelectedFile(file);
     setSelectedFileName(file.name);
-    setTextInput(`File selected: ${file.name}\n\nDrop parser integration here.`);
     setSourceType('file');
   };
 
@@ -80,7 +66,7 @@ function App() {
       setCurrentSegmentIndex((index) => Math.max(0, index - 1));
       return;
     }
-    setCurrentSegmentIndex((index) => Math.min(parsedSegments.length - 1, index + 1));
+    setCurrentSegmentIndex((index) => Math.min(documentModel.segments.length - 1, index + 1));
   };
 
   return (
@@ -131,6 +117,7 @@ function App() {
               type="file"
               onChange={onFileChange}
             />
+            {selectedFileName ? <span className="mt-1 block text-xs text-slate-400">Selected: {selectedFileName}</span> : null}
           </label>
 
           <label className="mt-3 block text-sm text-slate-300">
