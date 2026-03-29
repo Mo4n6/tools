@@ -47,7 +47,7 @@ export interface TTSProviderSelection {
   provider: TTSProvider;
   providerType: 'kokoro' | 'web-speech';
   runtime: 'webgpu' | 'wasm' | 'system';
-  dtype: KokoroProviderOptions['dtype'] | 'n/a';
+  dtype: NonNullable<KokoroProviderOptions['dtype']> | 'n/a';
   fallbackToWebSpeech: boolean;
   fallbackIntentional?: boolean;
   fallbackReason?: string;
@@ -157,6 +157,7 @@ export const selectTTSProvider = async (
           provider: new WebSpeechProvider(),
           providerType: 'web-speech',
           runtime: 'system',
+          dtype: 'n/a',
           fallbackToWebSpeech: true,
           fallbackReason: fallbackError.message,
           fallbackError,
