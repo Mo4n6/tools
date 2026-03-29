@@ -47,6 +47,14 @@ export interface TTSProviderSelection {
   fallbackError?: TTSFallbackError;
 }
 
+const logFallbackRecordForDev = (fallbackError: TTSFallbackError): void => {
+  if (!import.meta.env.DEV) {
+    return;
+  }
+
+  console.info(`[TTS_FALLBACK][${fallbackError.code}] ${fallbackError.message}`);
+};
+
 export const selectTTSProvider = async (
   options: TTSProviderSelectorOptions = {}
 ): Promise<TTSProviderSelection> => {
@@ -83,8 +91,13 @@ export const selectTTSProvider = async (
         type: 'tts.degraded_mode',
         from: 'kokoro',
         to: 'web-speech',
+        providerFrom: 'kokoro',
+        providerTo: 'web-speech',
+        fallbackCode: fallbackError.code,
+        fallbackMessage: fallbackError.message,
         fallbackError,
       });
+      logFallbackRecordForDev(fallbackError);
       return {
         provider: new WebSpeechProvider(),
         fallbackToWebSpeech: true,
@@ -109,8 +122,13 @@ export const selectTTSProvider = async (
     type: 'tts.degraded_mode',
     from: 'kokoro',
     to: 'web-speech',
+    providerFrom: 'kokoro',
+    providerTo: 'web-speech',
+    fallbackCode: fallbackError.code,
+    fallbackMessage: fallbackError.message,
     fallbackError,
   });
+  logFallbackRecordForDev(fallbackError);
 
   return {
     provider: new WebSpeechProvider(),

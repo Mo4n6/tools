@@ -36,6 +36,10 @@ export type PerfMetricEvent =
     type: 'tts.degraded_mode';
     from: 'kokoro';
     to: 'web-speech';
+    providerFrom: 'kokoro';
+    providerTo: 'web-speech';
+    fallbackCode: TTSFallbackError['code'];
+    fallbackMessage: string;
     fallbackError: TTSFallbackError;
   };
 
@@ -100,7 +104,12 @@ export const setupLocalDebugPerfTelemetry = (): void => {
       }
 
       if (event.type === 'tts.degraded_mode') {
-        console.info('[perf][debug] fallback-activations', fallbackActivationCount, event.fallbackError);
+        console.info(
+          '[perf][debug] fallback-activations',
+          fallbackActivationCount,
+          event.fallbackCode,
+          event.fallbackMessage
+        );
         return;
       }
 
