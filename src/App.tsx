@@ -12,6 +12,8 @@ import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
 import type { TTSProvider } from './tts/types';
 
 const isUrlIngestEnabled = import.meta.env.VITE_ENABLE_URL_INGEST !== 'false';
+const isPagesStyleBase = import.meta.env.BASE_URL !== '/';
+const shouldSkipKokoroInitOnPages = import.meta.env.VITE_SKIP_KOKORO_INIT_ON_PAGES !== 'false';
 type SourceType = 'text' | 'file' | 'url';
 const sourceTabs: SourceType[] = isUrlIngestEnabled ? ['text', 'file', 'url'] : ['text', 'file'];
 const TTS_PREFS_STORAGE_KEY = 'reader-tts-preferences';
@@ -135,6 +137,7 @@ function App() {
   const [provider, setProvider] = useState<TTSProvider>(() => new WebSpeechProvider());
   const [providerLabel, setProviderLabel] = useState('web-speech');
   const [showFallbackBanner, setShowFallbackBanner] = useState(false);
+  const [showInformationalFallbackBanner, setShowInformationalFallbackBanner] = useState(false);
   const [providerFallbackError, setProviderFallbackError] = useState<TTSFallbackError | null>(null);
   const [devTtsDiagnostics, setDevTtsDiagnostics] = useState<DevTtsDiagnostics | null>(null);
   const [voice, setVoice] = useState(storedPreferences?.voice ?? 'alloy');
@@ -160,7 +163,13 @@ function App() {
     let active = true;
 
     const initializeProvider = async () => {
-      const selectedProvider = await selectTTSProvider();
+      const skipKokoroInit = isPagesStyleBase && shouldSkipKokoroInitOnPages;
+      const selectedProvider = await selectTTSProvider({
+        skipKokoroInit,
+        skipKokoroInitReason: skipKokoroInit
+          ? 'GitHub Pages MVP mode: Kokoro init skipped intentionally while bundling is being finalized.'
+          : undefined,
+      });
       const providerName = resolveProviderLabel(selectedProvider.provider);
 
       if (import.meta.env.DEV) {
@@ -192,7 +201,8 @@ function App() {
       if (active) {
         setProvider(selectedProvider.provider);
         setProviderLabel(providerName);
-        setShowFallbackBanner(selectedProvider.fallbackToWebSpeech);
+        setShowFallbackBanner(selectedProvider.fallbackToWebSpeech && !selectedProvider.fallbackIntentional);
+        setShowInformationalFallbackBanner(Boolean(selectedProvider.fallbackIntentional));
         setProviderFallbackError(selectedProvider.fallbackError ?? null);
       }
     };
@@ -322,6 +332,15 @@ function App() {
                 </ul>
               ) : null}
             </>
+          ) : null}
+        </div>
+      ) : null}
+
+      {showInformationalFallbackBanner ? (
+        <div className="mb-4 rounded-md border border-sky-700 bg-sky-950/40 px-3 py-2 text-sm text-sky-100">
+          Web Speech mode is intentionally enabled for GitHub Pages MVP while Kokoro bundling is finalized.
+          {providerFallbackError?.message ? (
+            <p className="mt-1 text-xs text-sky-200">{providerFallbackError.message}</p>
           ) : null}
         </div>
       ) : null}
