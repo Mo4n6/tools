@@ -9,9 +9,6 @@ const productionBase = (() => {
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
   base: mode === 'production' ? productionBase : '/',
-  optimizeDeps: {
-    include: ['kokoro-js'],
-  },
   build: {
     rollupOptions: {
       output: {
