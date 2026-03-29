@@ -1,5 +1,11 @@
 # GitHub Pages MVP
 
+## Deployment references
+
+- Workflow: `https://github.com/<your-github-username>/kokoro-reader/actions/workflows/deploy-pages.yml`
+- Site: `https://<your-github-username>.github.io/kokoro-reader/`
+- Asset URL pattern to verify after deploy: `https://<your-github-username>.github.io/kokoro-reader/assets/...`
+
 ## Scope
 
 ### Supported

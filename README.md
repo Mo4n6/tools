@@ -4,9 +4,14 @@
 
 This repository deploys to GitHub Pages on every push to `main` using `.github/workflows/deploy-pages.yml`.
 
+Workflow runs:
+
+- `https://github.com/<your-github-username>/kokoro-reader/actions/workflows/deploy-pages.yml`
+
 ### Pages URL
 
 - `https://<your-github-username>.github.io/kokoro-reader/`
+- Built assets should resolve from `https://<your-github-username>.github.io/kokoro-reader/assets/...`
 
 ### MVP scope supported on Pages
 

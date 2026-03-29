@@ -3,8 +3,7 @@ import react from '@vitejs/plugin-react';
 
 const productionBase = (() => {
   const repository = process.env.GITHUB_REPOSITORY?.split('/')[1] ?? 'kokoro-reader';
-  const normalizedRepository = repository === 'codextest' ? 'kokoro-reader' : repository;
-  return `/${normalizedRepository}/`;
+  return `/${repository}/`;
 })();
 
 export default defineConfig(({ mode }) => ({
