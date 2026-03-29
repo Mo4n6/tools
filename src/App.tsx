@@ -26,6 +26,7 @@ const LEGACY_VOICE_MIGRATIONS: Record<string, string> = {
   verse: 'af_verse',
   lumen: 'af_lumen',
 };
+const KOKORO_VOICE_IDS = ['af_alloy', 'af_verse', 'af_lumen'] as const;
 
 const normalizeKokoroVoiceId = (voice: string): string => LEGACY_VOICE_MIGRATIONS[voice] ?? voice;
 
@@ -56,6 +57,22 @@ type IngestedState = {
 
 const migrateStoredVoice = (voice: string): string => normalizeKokoroVoiceId(voice);
 
+const getWebSpeechVoiceIds = (): string[] => {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+    return [];
+  }
+
+  return window.speechSynthesis.getVoices().map((voice) => voice.voiceURI);
+};
+
+const getDefaultVoiceForProvider = (provider: string, providerVoiceIds: string[]): string | null => {
+  if (provider === 'kokoro') {
+    return 'af_alloy';
+  }
+
+  return providerVoiceIds[0] ?? null;
+};
+
 const loadTtsPreferences = (): StoredTtsPreferences | null => {
   if (typeof window === 'undefined') {
     return null;
@@ -67,21 +84,34 @@ const loadTtsPreferences = (): StoredTtsPreferences | null => {
       return null;
     }
 
-    const parsed = JSON.parse(raw) as StoredTtsPreferences;
-    const migratedVoice = migrateStoredVoice(parsed.voice);
-    if (migratedVoice !== parsed.voice) {
-      const migratedPreferences: StoredTtsPreferences = {
-        ...parsed,
-        voice: migratedVoice,
-      };
-      window.localStorage.setItem(TTS_PREFS_STORAGE_KEY, JSON.stringify(migratedPreferences));
-      return migratedPreferences;
+    const parsed = JSON.parse(raw) as Partial<StoredTtsPreferences>;
+    if (typeof parsed.voice !== 'string' || typeof parsed.rate !== 'number' || typeof parsed.provider !== 'string') {
+      return null;
     }
 
-    return {
-      ...parsed,
-      voice: migratedVoice,
+    const provider = parsed.provider;
+    const providerVoiceIds = provider === 'web-speech' ? getWebSpeechVoiceIds() : [...KOKORO_VOICE_IDS];
+    const migratedVoice = migrateStoredVoice(parsed.voice);
+    const isVoiceAvailable = providerVoiceIds.includes(migratedVoice);
+    const correctedVoice = isVoiceAvailable
+      ? migratedVoice
+      : getDefaultVoiceForProvider(provider, providerVoiceIds) ?? migratedVoice;
+
+    const correctedPreferences: StoredTtsPreferences = {
+      voice: correctedVoice,
+      rate: parsed.rate,
+      provider,
     };
+
+    if (
+      correctedPreferences.voice !== parsed.voice
+      || correctedPreferences.rate !== parsed.rate
+      || correctedPreferences.provider !== parsed.provider
+    ) {
+      window.localStorage.setItem(TTS_PREFS_STORAGE_KEY, JSON.stringify(correctedPreferences));
+    }
+
+    return correctedPreferences;
   } catch {
     return null;
   }
