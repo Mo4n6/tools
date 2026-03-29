@@ -1155,6 +1155,7 @@ function App() {
               segmentCount={ingested.document.segments.length}
               playbackMode={playbackMode}
               machineError={player.error}
+              machineHint={player.hint}
               voice={voice}
               voices={filteredVoices}
               selectedLanguage={selectedVoiceLanguage}
@@ -1192,6 +1193,9 @@ function App() {
               onLanguageChange={setSelectedVoiceLanguage}
               onRateChange={setRate}
               onPlaybackModeChange={setPlaybackModeOverride}
+              onManualRetry={() => {
+                void player.retryCurrentSegment();
+              }}
             />
             <button
               aria-label="Reset playback queue"

@@ -36,6 +36,7 @@ interface PlayerInternalState {
   currentSegmentIndex: number;
   charOffset: number;
   error: string | null;
+  hint: string | null;
 }
 
 type Action =
@@ -43,12 +44,19 @@ type Action =
   | { type: 'SET_INDEX'; index: number }
   | { type: 'SET_CHAR_OFFSET'; charOffset: number }
   | { type: 'SET_ERROR'; error: string }
-  | { type: 'RESET_ERROR' };
+  | { type: 'RESET_ERROR' }
+  | { type: 'SET_HINT'; hint: string }
+  | { type: 'RESET_HINT' };
 
 const DEFAULT_LOOKAHEAD = 2;
 const UNKNOWN_PROVIDER_ID = 'unknown-provider';
 const UNKNOWN_RUNTIME_SIGNATURE = 'unknown-runtime';
 const MIN_REASONABLE_AUDIO_SECONDS = 0.05;
+const SYNTHESIS_RETRY_MAX_ATTEMPTS = 3;
+const SYNTHESIS_RETRY_BACKOFF_BASE_MS = 180;
+const SYNTHESIS_MAX_SPLIT_DEPTH = 3;
+const WASM_FAILURE_DEGRADE_THRESHOLD = 3;
+const WEB_SPEECH_STABILITY_HINT = 'Switched to system voice for stability.';
 
 function getProviderId(provider: TTSProvider): string {
   const providerWithId = provider as TTSProvider & { providerId?: string; id?: string };
@@ -118,6 +126,7 @@ function createInitialState(cursor?: PlayerResumeCursor): PlayerInternalState {
     currentSegmentIndex: Math.max(0, cursor?.segmentIndex ?? 0),
     charOffset: Math.max(0, cursor?.charOffset ?? 0),
     error: null,
+    hint: null,
   };
 }
 
@@ -133,6 +142,10 @@ function reducer(state: PlayerInternalState, action: Action): PlayerInternalStat
       return { ...state, state: 'error', error: action.error };
     case 'RESET_ERROR':
       return { ...state, error: null };
+    case 'SET_HINT':
+      return { ...state, hint: action.hint };
+    case 'RESET_HINT':
+      return { ...state, hint: null };
     default:
       return state;
   }
@@ -153,12 +166,27 @@ export interface UsePlayerControllerResult {
   charOffset: number;
   queue: QueueSegmentModel[];
   error: string | null;
+  hint: string | null;
   play: () => Promise<void>;
   pause: () => void;
   resume: () => Promise<void>;
   skipNext: () => Promise<void>;
   skipPrevious: () => Promise<void>;
   seekSegment: (index: number, charOffset?: number) => Promise<void>;
+  retryCurrentSegment: () => Promise<void>;
+}
+
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function isLikelyWasmFailure(message: string, runtimeSignature: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes('wasm')
+    || normalized.includes('webassembly')
+    || runtimeSignature.toLowerCase().includes('wasm');
 }
 
 export function usePlayerController({
@@ -207,6 +235,8 @@ export function usePlayerController({
   const queueTransitionCountRef = useRef(0);
   const queueUnderrunCountRef = useRef(0);
   const synthesisIdentityRef = useRef<string | null>(null);
+  const wasmFailureCountRef = useRef(0);
+  const webSpeechFallbackActiveRef = useRef(false);
 
   const bumpQueueVersion = useCallback(() => {
     queueVersionRef.current += 1;
@@ -265,6 +295,11 @@ export function usePlayerController({
       }
     }
 
+    if (webSpeechFallbackActiveRef.current) {
+      setQueueEntry({ cacheKey, segmentId: segment.id, synthesisStatus: 'ready', audioUrl: null, mode: 'native-spoken' });
+      return { segmentId: segment.id, mode: 'native-spoken' };
+    }
+
     if (nextPrefetchInFlightRef.current.has(cacheKey)) {
       return null;
     }
@@ -299,18 +334,35 @@ export function usePlayerController({
         return result;
       };
 
-      const synthStartedAt = perfTelemetry.now();
-      let result: TTSSynthesisResult;
-      try {
-        result = await synthesizeWithProbe(segment.id, segment.text);
-      } catch (primaryError) {
-        const subchunks = splitTextForSynthesisRetry(segment.text);
+      const synthesizeWithRetries = async (
+        id: string,
+        text: string,
+        splitDepth = 0,
+      ): Promise<TTSSynthesisResult> => {
+        let lastError: unknown = null;
+        for (let attempt = 1; attempt <= SYNTHESIS_RETRY_MAX_ATTEMPTS; attempt += 1) {
+          try {
+            return await synthesizeWithProbe(id, text);
+          } catch (error) {
+            lastError = error;
+            if (attempt < SYNTHESIS_RETRY_MAX_ATTEMPTS) {
+              const backoffMs = SYNTHESIS_RETRY_BACKOFF_BASE_MS * (2 ** (attempt - 1));
+              await delayMs(backoffMs);
+            }
+          }
+        }
+
+        if (splitDepth >= SYNTHESIS_MAX_SPLIT_DEPTH) {
+          throw lastError;
+        }
+
+        const subchunks = splitTextForSynthesisRetry(text);
         if (subchunks.length < 2) {
-          throw primaryError;
+          throw lastError;
         }
 
         const subResults = await Promise.all(
-          subchunks.map((subchunk, index) => synthesizeWithProbe(`${segment.id}::chunk_${index}`, subchunk))
+          subchunks.map((subchunk, index) => synthesizeWithRetries(`${id}::chunk_${index}`, subchunk, splitDepth + 1))
         );
         if (subResults.some((subResult) => !('blob' in subResult))) {
           throw new Error('Synthesis fallback returned non-audio result for at least one subchunk.');
@@ -326,13 +378,17 @@ export function usePlayerController({
             URL.revokeObjectURL(subResult.url);
           }
         });
-        result = {
-          segmentId: segment.id,
+        return {
+          segmentId: id,
           blob: stitchedBlob,
           url: stitchedUrl,
           mode: 'audio-url',
         };
-      }
+      };
+
+      const synthStartedAt = perfTelemetry.now();
+      const result = await synthesizeWithRetries(segment.id, segment.text);
+      wasmFailureCountRef.current = 0;
 
       perfTelemetry.sink.log({
         type: 'tts.segment_synth',
@@ -349,6 +405,16 @@ export function usePlayerController({
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to synthesize audio segment.';
+      if (isLikelyWasmFailure(message, providerRuntimeSignature)) {
+        wasmFailureCountRef.current += 1;
+      }
+      const canDegradeToWebSpeech = typeof window !== 'undefined' && 'speechSynthesis' in window;
+      if (canDegradeToWebSpeech && wasmFailureCountRef.current >= WASM_FAILURE_DEGRADE_THRESHOLD) {
+        webSpeechFallbackActiveRef.current = true;
+        dispatch({ type: 'SET_HINT', hint: WEB_SPEECH_STABILITY_HINT });
+        setQueueEntry({ cacheKey, segmentId: segment.id, synthesisStatus: 'ready', audioUrl: null, mode: 'native-spoken' });
+        return { segmentId: segment.id, mode: 'native-spoken' };
+      }
       perfTelemetry.sink.log({
         type: 'tts.synth_failure',
         segmentId: segment.id,
@@ -753,10 +819,29 @@ export function usePlayerController({
       }
     });
     queueRef.current.clear();
+    wasmFailureCountRef.current = 0;
+    webSpeechFallbackActiveRef.current = false;
     bumpQueueVersion();
     dispatch({ type: 'SET_STATE', state: 'idle' });
     dispatch({ type: 'RESET_ERROR' });
+    dispatch({ type: 'RESET_HINT' });
   }, [bumpQueueVersion, cleanupAudio, cleanupNativeSpeech, providerId, providerRuntimeSignature, synthesisOptions?.rate, synthesisOptions?.voice]);
+
+  const retryCurrentSegment = useCallback(async () => {
+    wasmFailureCountRef.current = 0;
+    webSpeechFallbackActiveRef.current = false;
+    nextPrefetchInFlightRef.current.clear();
+    queueRef.current.forEach((entry) => {
+      if (entry.audioUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(entry.audioUrl);
+      }
+    });
+    queueRef.current.clear();
+    bumpQueueVersion();
+    dispatch({ type: 'RESET_ERROR' });
+    dispatch({ type: 'RESET_HINT' });
+    await playIndex(machine.currentSegmentIndex, 0);
+  }, [bumpQueueVersion, machine.currentSegmentIndex, playIndex]);
 
   useEffect(() => {
     return () => {
@@ -771,12 +856,14 @@ export function usePlayerController({
     charOffset: machine.charOffset,
     queue,
     error: machine.error,
+    hint: machine.hint,
     play,
     pause,
     resume,
     skipNext,
     skipPrevious,
     seekSegment,
+    retryCurrentSegment,
   };
 }
 

@@ -7,6 +7,7 @@ type PlayerControlsProps = {
   currentSegmentIndex: number;
   segmentCount: number;
   machineError: string | null;
+  machineHint?: string | null;
   voice: string;
   voices: Array<{ id: string; name: string; language?: string; provider: string }>;
   selectedLanguage: string;
@@ -25,6 +26,7 @@ type PlayerControlsProps = {
   onLanguageChange: (language: string) => void;
   onRateChange: (rate: number) => void;
   onPlaybackModeChange: (mode: PlaybackMode) => void;
+  onManualRetry?: () => void;
 };
 
 const RATE_MIN = 0.5;
@@ -45,6 +47,7 @@ export function PlayerControls({
   currentSegmentIndex,
   segmentCount,
   machineError,
+  machineHint = null,
   voice,
   voices,
   selectedLanguage,
@@ -63,6 +66,7 @@ export function PlayerControls({
   onLanguageChange,
   onRateChange,
   onPlaybackModeChange,
+  onManualRetry,
 }: PlayerControlsProps) {
   const [liveMessage, setLiveMessage] = useState('Playback idle.');
   const isPlaying = queueStatus === 'playing' || queueStatus === 'loading';
@@ -270,10 +274,25 @@ export function PlayerControls({
         Restart Current Segment
       </button>
 
-      {machineError ? (
-        <p className="rounded border border-rose-700 bg-rose-950/40 p-2 text-xs text-rose-200" role="alert">
-          Playback error: {machineError}
+      {machineHint ? (
+        <p className="rounded border border-amber-700 bg-amber-950/40 p-2 text-xs text-amber-200" role="status">
+          {machineHint}
         </p>
+      ) : null}
+      {machineError ? (
+        <div className="space-y-2 rounded border border-rose-700 bg-rose-950/40 p-2 text-xs text-rose-200" role="alert">
+          <p>Playback error: {machineError}</p>
+          {onManualRetry ? (
+            <button
+              aria-label="Retry playback with current segment"
+              className="rounded border border-rose-300/60 bg-rose-900/40 px-2 py-1 text-rose-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300"
+              onClick={onManualRetry}
+              type="button"
+            >
+              Retry Current Segment
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
       <p className="text-xs text-emerald-300/70">
