@@ -36,9 +36,19 @@ type KokoroEngine = {
   synthesize: (text: string, options: { voice?: string; speed?: number }) => Promise<Blob | ArrayBuffer | Uint8Array>;
 };
 
-const importKokoroModule = async (): Promise<KokoroModule> => {
+const loadKokoroModule = async (): Promise<KokoroModule> => {
   const module = await import('kokoro-js');
   return module as KokoroModule;
+};
+
+let kokoroModulePromise: Promise<KokoroModule> | undefined;
+
+const importKokoroModule = async (): Promise<KokoroModule> => {
+  if (!kokoroModulePromise) {
+    kokoroModulePromise = loadKokoroModule();
+  }
+
+  return kokoroModulePromise;
 };
 
 const toAudioBlob = (audio: Blob | ArrayBuffer | Uint8Array): Blob => {
@@ -60,6 +70,7 @@ export const canImportKokoroModule = async (): Promise<boolean> => {
     await importKokoroModule();
     return true;
   } catch {
+    kokoroModulePromise = undefined;
     return false;
   }
 };
