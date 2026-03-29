@@ -5,7 +5,7 @@ import { PlayerControls } from './features/player/PlayerControls';
 import type { NormalizedDocument } from './domain/segments';
 import { usePlayerController } from './features/player/playerMachine';
 import { selectTTSProvider } from './tts/providerSelector';
-import { setupLocalDebugPerfTelemetry } from './tts/perfTelemetry';
+import { perfTelemetry, setupLocalDebugPerfTelemetry } from './tts/perfTelemetry';
 import type { TTSFallbackError } from './tts/errors';
 import { canImportKokoroModule } from './tts/providers/kokoroProvider';
 import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
@@ -229,6 +229,7 @@ const getDeviceMemoryGb = (): number | undefined => {
 };
 
 function App() {
+  const isProduction = import.meta.env.PROD;
   const [sourceType, setSourceType] = useState<SourceType>('text');
   const [textInput, setTextInput] = useState('Paste text to normalize and preview for playback.');
   const [urlInput, setUrlInput] = useState('');
@@ -258,6 +259,8 @@ function App() {
   const [voiceReadinessHelperText, setVoiceReadinessHelperText] = useState<string | null>('Loading voices…');
   const [ttsInitStatusLine, setTtsInitStatusLine] = useState<TtsInitStatusLine | null>(null);
   const [devTtsDiagnostics, setDevTtsDiagnostics] = useState<DevTtsDiagnostics | null>(null);
+  const [firstAudioTimingMs, setFirstAudioTimingMs] = useState<number | null>(null);
+  const [showDetails, setShowDetails] = useState(!isProduction);
   const [voice, setVoice] = useState(storedPreferences?.voice ?? '');
   const [availableVoices, setAvailableVoices] = useState<TTSVoice[]>([]);
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
@@ -284,6 +287,22 @@ function App() {
 
   useEffect(() => {
     setupLocalDebugPerfTelemetry();
+  }, []);
+
+  useEffect(() => {
+    const previousSink = perfTelemetry.sink;
+    perfTelemetry.sink = {
+      log: (event) => {
+        if (event.type === 'tts.first_audio') {
+          setFirstAudioTimingMs((currentTiming) => currentTiming ?? event.durationMs);
+        }
+        previousSink.log(event);
+      },
+    };
+
+    return () => {
+      perfTelemetry.sink = previousSink;
+    };
   }, []);
 
   useEffect(() => {
@@ -542,6 +561,16 @@ function App() {
     };
   }, [providerRuntimeMetadata.providerType, providerRuntimeMetadata.runtime]);
 
+  const runtimeSummary = useMemo(() => {
+    if (providerRuntimeMetadata.providerType === 'web-speech') {
+      return 'System';
+    }
+
+    return providerRuntimeMetadata.runtime === 'webgpu' ? 'GPU' : 'CPU';
+  }, [providerRuntimeMetadata.providerType, providerRuntimeMetadata.runtime]);
+
+  const shouldShowAdvancedDetails = !isProduction || showDetails;
+
   return (
     <main className="mx-auto min-h-screen max-w-7xl p-6 text-slate-100">
       <header className="mb-6">
@@ -549,7 +578,25 @@ function App() {
         <p className="mt-2 text-sm text-slate-400">
           Scaffold for source ingestion, normalization preview, and spoken playback.
         </p>
-        <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-300">
+        <p className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-300">
+          <span>Runtime: <span className="font-semibold">{runtimeSummary}</span></span>
+          <span>Model: <span className="font-semibold">onnx-community/Kokoro-82M-ONNX</span></span>
+          <span>Voice: <span className="font-semibold">{voice || 'pending'}</span></span>
+          {firstAudioTimingMs !== null ? (
+            <span>First audio: <span className="font-semibold">{firstAudioTimingMs}ms</span></span>
+          ) : null}
+        </p>
+        {isProduction ? (
+          <button
+            type="button"
+            className="mt-2 rounded-md border border-border px-2 py-1 text-xs text-slate-200 hover:border-slate-500"
+            onClick={() => setShowDetails((current) => !current)}
+          >
+            {showDetails ? 'Hide Details' : 'Details'}
+          </button>
+        ) : null}
+        {shouldShowAdvancedDetails ? (
+          <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-300">
           <span>
             Active voice provider: <span className="font-semibold">{providerRuntimeMetadata.providerType}</span>
           </span>
@@ -557,10 +604,13 @@ function App() {
             Runtime: {runtimeStatus.label}
           </span>
           <span>fallbackToWebSpeech={String(providerRuntimeMetadata.fallbackToWebSpeech)}</span>
-        </p>
-        <p className="mt-2 text-xs text-slate-400">
-          tts init: providerSelected={ttsInitStatusLine?.providerSelected ?? 'pending'} · skipKokoroInit={String(ttsInitStatusLine?.skipKokoroInit ?? false)} · kokoroImportable={ttsInitStatusLine ? String(ttsInitStatusLine.kokoroImportable) : 'pending'} · fallbackCode={ttsInitStatusLine?.fallbackCode ?? 'pending'}
-        </p>
+          </p>
+        ) : null}
+        {shouldShowAdvancedDetails ? (
+          <p className="mt-2 text-xs text-slate-400">
+            tts init: providerSelected={ttsInitStatusLine?.providerSelected ?? 'pending'} · skipKokoroInit={String(ttsInitStatusLine?.skipKokoroInit ?? false)} · kokoroImportable={ttsInitStatusLine ? String(ttsInitStatusLine.kokoroImportable) : 'pending'} · fallbackCode={ttsInitStatusLine?.fallbackCode ?? 'pending'}
+          </p>
+        ) : null}
       </header>
 
       {showFallbackBanner ? (
