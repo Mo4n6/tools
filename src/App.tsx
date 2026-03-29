@@ -509,39 +509,37 @@ function App() {
   const initializeProvider = useCallback(async (activeCheck: () => boolean) => {
       const skipKokoroInit = isPagesStyleBase && shouldSkipKokoroInitOnPages;
     
+      // ────── FULL GREMLIN OVERRIDE ──────
       const urlParams = typeof window !== 'undefined' 
         ? new URLSearchParams(window.location.search) 
         : new URLSearchParams();
     
-      const forcedDeviceOverride = getDevDeviceOverride(); // your existing function
+      const forcedFromUrl = urlParams.get('ttsDevice') || urlParams.get('device');
+      const forceWebGpu = urlParams.get('forceWebGpu') === 'true' 
+        || forcedFromUrl === 'webgpu';
+      const forceWasm = urlParams.get('forceWasm') === 'true' 
+        || forcedFromUrl === 'wasm';
     
-      // Support both ?ttsDevice=webgpu and ?forceWebGpu=true
-      let preferredDevice: 'webgpu' | 'wasm' | undefined = undefined;
+      const preferredDevice = forceWebGpu ? 'webgpu' 
+                           : forceWasm ? 'wasm' 
+                           : getDevDeviceOverride();   // fallback to your old function
     
-      if (forcedDeviceOverride === 'webgpu' || urlParams.get('forceWebGpu') === 'true') {
-        preferredDevice = 'webgpu';
-      } else if (forcedDeviceOverride === 'wasm' || urlParams.get('forceWasm') === 'true') {
-        preferredDevice = 'wasm';
-      }
+      const skipAllQualityChecks = forceWebGpu 
+        || urlParams.get('skipQuality') === 'true' 
+        || urlParams.get('skipWebGpuQualityCheck') === 'true';
     
-      // Extra nuclear flags
-      const skipAllQualityChecks = 
-        (preferredDevice === 'webgpu') || 
-        urlParams.get('skipQuality') === 'true' || 
-        urlParams.get('skipWebGpuQualityCheck') === 'true';
+      const allowUnstable = forceWebGpu 
+        || urlParams.get('allowUnstable') === 'true';
     
-      const allowUnstable = 
-        (preferredDevice === 'webgpu') || 
-        urlParams.get('allowUnstable') === 'true';
-    
-      console.log('🚀 GREMLIN TTS INIT:', { 
+      console.log('🚀 GREMLIN TTS INIT OVERRIDE:', { 
         preferredDevice, 
         skipAllQualityChecks, 
-        allowUnstable 
+        allowUnstable,
+        rawUrlParams: Object.fromEntries(urlParams) 
       });
     
       const selectedProvider = await selectTTSProvider({
-        preferredDevice,                    // ← now correctly typed (undefined | 'webgpu' | 'wasm')
+        preferredDevice,                    // this should now be 'webgpu' when you want it
         allowWebGpuIfUnstable: allowUnstable,
         skipWebGpuQualityCheck: skipAllQualityChecks,
     
@@ -550,7 +548,6 @@ function App() {
           ? 'GitHub Pages MVP mode: Kokoro init skipped intentionally while bundling is being finalized.'
           : undefined,
       });
-    
       const providerName = selectedProvider.providerType;
 
       const kokoroPackageLoadable = await emitDevKokoroImportCheck();
