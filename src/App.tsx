@@ -405,7 +405,6 @@ function App() {
     Boolean(storedPreferences?.migratedLegacyWebSpeechVoice) && !loadVoiceMigrationDone(),
   );
   const [providerInitNonce, setProviderInitNonce] = useState(0);
-  const [forceWebGpuRetry, setForceWebGpuRetry] = useState(false);
 
   const shouldSuppressNextVoiceMigrationWarning = (
     hasPendingVoiceMigrationNormalization && !hasCompletedVoiceMigration
@@ -556,9 +555,6 @@ function App() {
       }
 
       if (activeCheck()) {
-        if (forceWebGpuRetry) {
-          setForceWebGpuRetry(false);
-        }
         setProvider(selectedProvider.provider);
         setProviderLabel(providerName);
         setProviderRuntimeMetadata({
@@ -576,7 +572,7 @@ function App() {
         setShowInformationalFallbackBanner(Boolean(selectedProvider.fallbackIntentional));
         setProviderFallbackError(selectedProvider.fallbackError ?? null);
       }
-  }, [forceWebGpuRetry, shouldSkipKokoroInitOnPages]);
+  }, [shouldSkipKokoroInitOnPages]);
 
   useEffect(() => {
     let active = true;
@@ -587,6 +583,11 @@ function App() {
       active = false;
     };
   }, [initializeProvider, providerInitNonce]);
+
+  const retryWebGpuForCurrentProfile = useCallback(() => {
+    clearWebGpuUnstableProfileForCurrentBrowser();
+    setProviderInitNonce((current) => current + 1);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -874,11 +875,7 @@ function App() {
             <button
               type="button"
               className="mt-2 rounded-md border border-sky-500 px-2 py-1 text-xs text-sky-100 hover:border-sky-300"
-              onClick={() => {
-                clearWebGpuUnstableProfileForCurrentBrowser();
-                setForceWebGpuRetry(true);
-                setProviderInitNonce((current) => current + 1);
-              }}
+              onClick={retryWebGpuForCurrentProfile}
             >
               Retry WebGPU for this browser profile
             </button>
