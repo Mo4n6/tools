@@ -24,6 +24,8 @@ const LEGACY_VOICE_MIGRATIONS: Record<string, string> = {
   lumen: 'af_lumen',
 };
 
+const normalizeKokoroVoiceId = (voice: string): string => LEGACY_VOICE_MIGRATIONS[voice] ?? voice;
+
 type StoredTtsPreferences = {
   voice: string;
   rate: number;
@@ -49,7 +51,7 @@ type IngestedState = {
   warnings: DocumentWarning[];
 };
 
-const migrateStoredVoice = (voice: string): string => LEGACY_VOICE_MIGRATIONS[voice] ?? voice;
+const migrateStoredVoice = (voice: string): string => normalizeKokoroVoiceId(voice);
 
 const loadTtsPreferences = (): StoredTtsPreferences | null => {
   if (typeof window === 'undefined') {
@@ -230,6 +232,9 @@ function App() {
       if (active) {
         setProvider(selectedProvider.provider);
         setProviderLabel(providerName);
+        if (providerName === 'kokoro') {
+          setVoice((currentVoice) => normalizeKokoroVoiceId(currentVoice));
+        }
         setShowFallbackBanner(selectedProvider.fallbackToWebSpeech && !selectedProvider.fallbackIntentional);
         setShowInformationalFallbackBanner(Boolean(selectedProvider.fallbackIntentional));
         setProviderFallbackError(selectedProvider.fallbackError ?? null);
