@@ -2,7 +2,7 @@ import { JSDOM } from 'jsdom';
 import React, { useEffect } from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { usePlayerController, type UsePlayerControllerResult } from './playerMachine';
 import type { TTSProvider } from '../../tts/types';
 
@@ -32,16 +32,18 @@ class MockAudio {
 
 function HookHarness({
   provider,
+  customSegments = segments,
   synthesisOptions,
   onController,
 }: {
   provider: TTSProvider;
+  customSegments?: { id: string; text: string }[];
   synthesisOptions?: { voice?: string; rate?: number };
   onController: (controller: UsePlayerControllerResult) => void;
 }): React.JSX.Element {
   const controller = usePlayerController({
     provider,
-    segments,
+    segments: customSegments,
     synthesisOptions,
     persistKey: 'player-machine-test',
     prefetchCount: 0,
@@ -57,8 +59,10 @@ function HookHarness({
 describe('usePlayerController transitions', () => {
   let jsdom: JSDOM;
   let originalAudio: typeof globalThis.Audio | undefined;
+  let originalURL: typeof globalThis.URL;
+  let originalAudioContext: typeof AudioContext | undefined;
   let container: HTMLDivElement;
-  let root: Root;
+  let root: Root | null = null;
 
   beforeAll(() => {
     jsdom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'https://example.test' });
@@ -70,14 +74,29 @@ describe('usePlayerController transitions', () => {
       navigator: jsdom.window.navigator,
     });
     originalAudio = globalThis.Audio;
+    originalURL = globalThis.URL;
+    originalAudioContext = (globalThis as typeof globalThis & { AudioContext?: typeof AudioContext }).AudioContext;
     globalThis.Audio = MockAudio as unknown as typeof Audio;
+  });
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    root?.unmount();
+    root = null;
+    container.remove();
+    Object.assign(globalThis, { URL: originalURL, AudioContext: originalAudioContext });
   });
 
   afterAll(() => {
     if (originalAudio) {
       globalThis.Audio = originalAudio;
     }
-    root.unmount();
     jsdom.window.close();
   });
 
@@ -104,12 +123,8 @@ describe('usePlayerController transitions', () => {
       }
       return controller;
     };
-    container = document.createElement('div');
-    document.body.appendChild(container);
-    root = createRoot(container);
-
     await act(async () => {
-      root.render(<HookHarness provider={provider} onController={(value) => { controller = value; }} />);
+      root?.render(<HookHarness provider={provider} onController={(value) => { controller = value; }} />);
     });
 
     expect(getController().state).toBe('idle');
@@ -162,7 +177,7 @@ describe('usePlayerController transitions', () => {
     };
 
     await act(async () => {
-      root.render(
+      root?.render(
         <HookHarness
           provider={provider}
           synthesisOptions={{ voice: 'voice-a', rate: 1 }}
@@ -179,7 +194,7 @@ describe('usePlayerController transitions', () => {
     expect(getController().queue[0]?.audioUrl).toBe('blob:seg-1');
 
     await act(async () => {
-      root.render(
+      root?.render(
         <HookHarness
           provider={provider}
           synthesisOptions={{ voice: 'voice-b', rate: 1 }}
@@ -228,7 +243,7 @@ describe('usePlayerController transitions', () => {
     };
 
     await act(async () => {
-      root.render(
+      root?.render(
         <HookHarness
           provider={provider}
           synthesisOptions={{ voice: 'voice-a', rate: 1 }}
@@ -244,7 +259,7 @@ describe('usePlayerController transitions', () => {
 
     await act(async () => {
       provider.runtimeDevice = 'wasm';
-      root.render(
+      root?.render(
         <HookHarness
           provider={provider}
           synthesisOptions={{ voice: 'voice-a', rate: 1 }}
@@ -261,13 +276,17 @@ describe('usePlayerController transitions', () => {
 
   it('runs decode probe before ready and retries once with wasm when webgpu probe fails', async () => {
     const originalAudioContext = (globalThis as typeof globalThis & { AudioContext?: typeof AudioContext }).AudioContext;
-    const decodeAudioData = vi
+    const decodeAudioDataMock = vi
       .fn()
       .mockRejectedValueOnce(new Error('bad webgpu decode'))
       .mockResolvedValueOnce({ duration: 1 });
-    const close = vi.fn(async () => undefined);
+    const closeMock = vi.fn(async () => undefined);
+    class MockAudioContext {
+      decodeAudioData = decodeAudioDataMock;
+      close = closeMock;
+    }
     Object.assign(globalThis, {
-      AudioContext: vi.fn(() => ({ decodeAudioData, close })) as unknown as typeof AudioContext,
+      AudioContext: MockAudioContext as unknown as typeof AudioContext,
     });
 
     const synthesize = vi.fn(async ({ id }: { id: string }) => ({
@@ -304,7 +323,7 @@ describe('usePlayerController transitions', () => {
     };
 
     await act(async () => {
-      root.render(<HookHarness provider={provider} onController={(value) => { controller = value; }} />);
+      root?.render(<HookHarness provider={provider} onController={(value) => { controller = value; }} />);
     });
 
     await act(async () => {
@@ -320,5 +339,97 @@ describe('usePlayerController transitions', () => {
     expect(getController().queue[0]?.audioUrl).toBe('blob:wasm:seg-1');
 
     Object.assign(globalThis, { AudioContext: originalAudioContext });
+  });
+
+  it('retries synthesis with subchunks when initial segment synthesis fails', async () => {
+    const originalURL = globalThis.URL;
+    const createObjectURL = vi.fn(() => 'blob:stitched-seg-1');
+    const revokeObjectURL = vi.fn();
+    Object.assign(globalThis, {
+      URL: {
+        createObjectURL,
+        revokeObjectURL,
+      },
+    });
+
+    const fallbackSegments = [
+      { id: 'seg-1', text: 'First sentence. Second sentence.' },
+      { id: 'seg-2', text: 'Second segment text' },
+    ];
+
+    const synthesize = vi.fn(async ({ id, text }: { id: string; text: string }) => {
+      if (id === 'seg-1') {
+        throw new Error('initial synthesis failed');
+      }
+      return {
+        segmentId: id,
+        blob: new Blob([text], { type: 'audio/mpeg' }),
+        url: `blob:${id}`,
+      };
+    });
+
+    const provider: TTSProvider = {
+      listVoices: vi.fn(async () => []),
+      warmup: vi.fn(async () => undefined),
+      synthesize,
+    };
+
+    let controller: UsePlayerControllerResult | null = null;
+    const getController = (): UsePlayerControllerResult => {
+      if (!controller) {
+        throw new Error('Controller was not initialized');
+      }
+      return controller;
+    };
+
+    await act(async () => {
+      root?.render(<HookHarness provider={provider} customSegments={fallbackSegments} onController={(value) => { controller = value; }} />);
+    });
+
+    await act(async () => {
+      await getController().play();
+    });
+
+    expect(synthesize).toHaveBeenCalledWith({ id: 'seg-1', text: 'First sentence. Second sentence.' }, undefined);
+    expect(synthesize).toHaveBeenCalledWith({ id: 'seg-1::chunk_0', text: 'First sentence.' }, undefined);
+    expect(synthesize).toHaveBeenCalledWith({ id: 'seg-1::chunk_1', text: 'Second sentence.' }, undefined);
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(getController().queue[0]?.synthesisStatus).toBe('ready');
+    expect(getController().queue[0]?.audioUrl).toBe('blob:stitched-seg-1');
+    expect(getController().state).toBe('playing');
+
+    Object.assign(globalThis, { URL: originalURL });
+  });
+
+  it('hard-fails when initial synthesis fails and fallback splitting is not possible', async () => {
+    const provider: TTSProvider = {
+      listVoices: vi.fn(async () => []),
+      warmup: vi.fn(async () => undefined),
+      synthesize: vi.fn(async ({ id }) => {
+        throw new Error(`fatal failure: ${id}`);
+      }),
+    };
+
+    const unsplittableSegments = [{ id: 'seg-1', text: 'tiny' }];
+
+    let controller: UsePlayerControllerResult | null = null;
+    const getController = (): UsePlayerControllerResult => {
+      if (!controller) {
+        throw new Error('Controller was not initialized');
+      }
+      return controller;
+    };
+
+    await act(async () => {
+      root?.render(<HookHarness provider={provider} customSegments={unsplittableSegments} onController={(value) => { controller = value; }} />);
+    });
+
+    await act(async () => {
+      await getController().play();
+    });
+
+    expect(getController().state).toBe('error');
+    expect(getController().queue[0]?.synthesisStatus).toBe('error');
+    expect(getController().error).toContain('fatal failure: seg-1');
   });
 });

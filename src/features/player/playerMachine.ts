@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { perfTelemetry } from '../../tts/perfTelemetry';
 import type { TTSAudioSynthesisResult, TTSSynthesisOptions, TTSSynthesisResult, TTSProvider } from '../../tts/types';
+import { splitTextForSynthesisRetry } from '../../domain/chunking/policy';
 
 export type PlayerMachineState = 'idle' | 'loading' | 'playing' | 'paused' | 'error' | 'finished';
 export type SegmentSynthesisStatus = 'idle' | 'queued' | 'loading' | 'ready' | 'error';
@@ -272,28 +273,67 @@ export function usePlayerController({
     setQueueEntry({ cacheKey, segmentId: segment.id, synthesisStatus: 'loading', audioUrl: existing?.audioUrl ?? null });
 
     try {
-      const synthStartedAt = perfTelemetry.now();
       const runtimeAwareProvider = provider as TTSProvider & {
         getRuntimeDevice?: () => string;
       };
-      const runtimeBeforeProbe = runtimeAwareProvider.getRuntimeDevice?.() ?? 'unknown';
-      let result = await provider.synthesize({ id: segment.id, text: segment.text }, synthesisOptions);
+
+      const synthesizeWithProbe = async (id: string, text: string): Promise<TTSSynthesisResult> => {
+        const runtimeBeforeProbe = runtimeAwareProvider.getRuntimeDevice?.() ?? 'unknown';
+        let result = await provider.synthesize({ id, text }, synthesisOptions);
+        try {
+          await probePlayableAudio(result);
+        } catch (probeError) {
+          if (runtimeBeforeProbe !== 'webgpu') {
+            throw probeError;
+          }
+          if (!provider.synthesizeWithRuntime) {
+            throw probeError;
+          }
+          result = await provider.synthesizeWithRuntime(
+            { id, text },
+            synthesisOptions,
+            'wasm'
+          );
+          await probePlayableAudio(result);
+        }
+        return result;
+      };
+
+      const synthStartedAt = perfTelemetry.now();
+      let result: TTSSynthesisResult;
       try {
-        await probePlayableAudio(result);
-      } catch (probeError) {
-        if (runtimeBeforeProbe !== 'webgpu') {
-          throw probeError;
+        result = await synthesizeWithProbe(segment.id, segment.text);
+      } catch (primaryError) {
+        const subchunks = splitTextForSynthesisRetry(segment.text);
+        if (subchunks.length < 2) {
+          throw primaryError;
         }
-        if (!provider.synthesizeWithRuntime) {
-          throw probeError;
-        }
-        result = await provider.synthesizeWithRuntime(
-          { id: segment.id, text: segment.text },
-          synthesisOptions,
-          'wasm'
+
+        const subResults = await Promise.all(
+          subchunks.map((subchunk, index) => synthesizeWithProbe(`${segment.id}::chunk_${index}`, subchunk))
         );
-        await probePlayableAudio(result);
+        if (subResults.some((subResult) => !('blob' in subResult))) {
+          throw new Error('Synthesis fallback returned non-audio result for at least one subchunk.');
+        }
+        const audioSubResults = subResults as TTSAudioSynthesisResult[];
+        const stitchedBlob = new Blob(
+          audioSubResults.map((subResult) => subResult.blob),
+          { type: audioSubResults[0]?.blob.type || 'audio/mpeg' },
+        );
+        const stitchedUrl = URL.createObjectURL(stitchedBlob);
+        audioSubResults.forEach((subResult) => {
+          if (subResult.url.startsWith('blob:')) {
+            URL.revokeObjectURL(subResult.url);
+          }
+        });
+        result = {
+          segmentId: segment.id,
+          blob: stitchedBlob,
+          url: stitchedUrl,
+          mode: 'audio-url',
+        };
       }
+
       perfTelemetry.sink.log({
         type: 'tts.segment_synth',
         segmentId: segment.id,

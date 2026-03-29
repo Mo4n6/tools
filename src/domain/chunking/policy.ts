@@ -84,6 +84,65 @@ function splitSegmentText(text: string, policy: ChunkingPolicy): string[] {
   return pieces;
 }
 
+function chunkByWordBoundaries(text: string, maxChars: number, maxTokens: number, spacing: string): string[] {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) {
+    return [];
+  }
+
+  const result: string[] = [];
+  let current = '';
+  let currentTokens = 0;
+
+  for (const word of words) {
+    const spacer = current ? spacing : '';
+    const candidate = `${current}${spacer}${word}`;
+    if (current && (candidate.length > maxChars || currentTokens + 1 > maxTokens)) {
+      result.push(current);
+      current = word;
+      currentTokens = 1;
+      continue;
+    }
+
+    current = candidate;
+    currentTokens += 1;
+  }
+
+  if (current) {
+    result.push(current);
+  }
+
+  return result;
+}
+
+export function splitTextForSynthesisRetry(
+  text: string,
+  policy: ChunkingPolicy = defaultChunkingPolicy,
+): string[] {
+  const normalized = text.trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const sentences = splitIntoSentences(normalized);
+  if (sentences.length >= 2) {
+    const midpoint = Math.ceil(sentences.length / 2);
+    const halves = [
+      sentences.slice(0, midpoint).join(policy.prosodySpacing).trim(),
+      sentences.slice(midpoint).join(policy.prosodySpacing).trim(),
+    ].filter(Boolean);
+
+    return halves.flatMap((part) => splitSegmentText(part, policy));
+  }
+
+  return chunkByWordBoundaries(
+    normalized,
+    Math.max(1, Math.floor(policy.maxCharsPerChunk / 2)),
+    Math.max(1, Math.floor(policy.maxTokensPerChunk / 2)),
+    policy.prosodySpacing,
+  );
+}
+
 export function chunkSegmentsByPolicy(
   segments: SpeakableSegment[],
   policy: ChunkingPolicy = defaultChunkingPolicy,
