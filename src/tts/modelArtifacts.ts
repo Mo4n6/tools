@@ -8,7 +8,7 @@ export interface TTSModelArtifactUsage {
 
 export const DEFAULT_KOKORO_MODEL = 'onnx-community/Kokoro-82M-ONNX';
 
-export const TTS_MODEL_ARTIFACTS_IN_USE: TTSModelArtifactUsage[] = [
+export const TTS_MODEL_ARTIFACTS_IN_USE: readonly TTSModelArtifactUsage[] = [
   {
     id: 'kokoro-js:q8',
     packageName: 'kokoro-js',
