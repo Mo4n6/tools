@@ -243,6 +243,7 @@ type ProviderRuntimeMetadata = {
   providerType: 'kokoro' | 'web-speech';
   runtime: 'webgpu' | 'wasm' | 'system';
   dtype: RuntimeDType;
+  runtimeReason?: string;
   fallbackToWebSpeech: boolean;
   fallbackError?: TTSFallbackError;
 };
@@ -377,6 +378,7 @@ function App() {
     providerType: 'web-speech',
     runtime: 'system',
     dtype: 'n/a',
+    runtimeReason: undefined,
     fallbackToWebSpeech: false,
   });
   const [showFallbackBanner, setShowFallbackBanner] = useState(false);
@@ -558,6 +560,7 @@ function App() {
           providerType: selectedProvider.providerType,
           runtime: selectedProvider.runtime,
           dtype: selectedProvider.dtype,
+          runtimeReason: selectedProvider.runtimeReason,
           fallbackToWebSpeech: selectedProvider.fallbackToWebSpeech,
           fallbackError: selectedProvider.fallbackError,
         });
@@ -853,6 +856,12 @@ function App() {
               ) : null}
             </>
           ) : null}
+        </div>
+      ) : null}
+
+      {providerRuntimeMetadata.providerType === 'kokoro' && providerRuntimeMetadata.runtimeReason ? (
+        <div className="mb-4 rounded-md border border-sky-700/80 bg-sky-950/30 px-3 py-2 text-sm text-sky-100">
+          Runtime note: {providerRuntimeMetadata.runtimeReason}
         </div>
       ) : null}
 
