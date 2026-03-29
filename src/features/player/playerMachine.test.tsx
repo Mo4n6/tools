@@ -258,4 +258,67 @@ describe('usePlayerController transitions', () => {
     expect(getController().queue[0]?.audioUrl).toBeNull();
     Object.assign(globalThis, { URL: originalURL });
   });
+
+  it('runs decode probe before ready and retries once with wasm when webgpu probe fails', async () => {
+    const originalAudioContext = (globalThis as typeof globalThis & { AudioContext?: typeof AudioContext }).AudioContext;
+    const decodeAudioData = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('bad webgpu decode'))
+      .mockResolvedValueOnce({ duration: 1 });
+    const close = vi.fn(async () => undefined);
+    Object.assign(globalThis, {
+      AudioContext: vi.fn(() => ({ decodeAudioData, close })) as unknown as typeof AudioContext,
+    });
+
+    const synthesize = vi.fn(async ({ id }: { id: string }) => ({
+      segmentId: id,
+      blob: new Blob(['bad-audio'], { type: 'audio/wav' }),
+      url: `blob:webgpu:${id}`,
+    }));
+    const synthesizeWithRuntime = vi.fn(async ({ id }: { id: string }) => ({
+      segmentId: id,
+      blob: new Blob(['good-audio'], { type: 'audio/wav' }),
+      url: `blob:wasm:${id}`,
+    }));
+    const provider = {
+      getRuntimeDevice: () => 'webgpu',
+      listVoices: vi.fn(async () => []),
+      warmup: vi.fn(async () => undefined),
+      synthesize,
+      synthesizeWithRuntime,
+    } as TTSProvider & {
+      getRuntimeDevice: () => 'webgpu';
+      synthesizeWithRuntime: (segment: { id: string; text: string }, options: { voice?: string; rate?: number } | undefined, runtime: 'wasm' | 'webgpu') => Promise<{
+        segmentId: string;
+        blob: Blob;
+        url: string;
+      }>;
+    };
+
+    let controller: UsePlayerControllerResult | null = null;
+    const getController = (): UsePlayerControllerResult => {
+      if (!controller) {
+        throw new Error('Controller was not initialized');
+      }
+      return controller;
+    };
+
+    await act(async () => {
+      root.render(<HookHarness provider={provider} onController={(value) => { controller = value; }} />);
+    });
+
+    await act(async () => {
+      await getController().play();
+    });
+
+    expect(synthesizeWithRuntime).toHaveBeenCalledWith(
+      { id: 'seg-1', text: 'First segment text' },
+      undefined,
+      'wasm'
+    );
+    expect(getController().queue[0]?.synthesisStatus).toBe('ready');
+    expect(getController().queue[0]?.audioUrl).toBe('blob:wasm:seg-1');
+
+    Object.assign(globalThis, { AudioContext: originalAudioContext });
+  });
 });
