@@ -519,10 +519,10 @@ function App() {
     const forceWasm   = urlParams.get('forceWasm') === 'true'   || forcedFromUrl === 'wasm';
   
     // This is the line that was causing the "Cannot find name 'forcedDeviceOverride'" error
-    const preferredDevice: 'webgpu' | 'wasm' | undefined = 
+    const preferredDevice: 'webgpu' | 'wasm' | undefined =
       forceWebGpu ? 'webgpu' :
-      forceWasm   ? 'wasm'   :
-      getDevDeviceOverride();   // your original function (returns 'webgpu' | 'wasm' | null)
+      forceWasm   ? 'wasm' :
+      getDevDeviceOverride() ?? undefined;
   
     const skipAllQualityChecks = forceWebGpu || 
       urlParams.get('skipQuality') === 'true' || 
