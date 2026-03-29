@@ -4,7 +4,11 @@
     "skipLibCheck": true,
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "allowJs": true,
+    "checkJs": true,
+    "lib": ["ES2022"],
+    "types": ["node"]
   },
   "include": ["vite.config.ts", "server/**/*.ts", "scripts/**/*.mjs"]
 }
