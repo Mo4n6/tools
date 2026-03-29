@@ -12,6 +12,20 @@ import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
 import type { TTSProvider, TTSVoice } from './tts/types';
 
 const CONTINUOUS_CHUNK_TARGET_CHARS = 1400;
+const CONTINUOUS_CHUNK_MIN_CHARS = 260;
+
+function endsWithTerminalPunctuation(text: string): boolean {
+  return /[.!?…:;]$/.test(text.trim());
+}
+
+function normalizeContinuousJoin(previousText: string, nextText: string): string {
+  if (!previousText) {
+    return nextText;
+  }
+
+  const separator = endsWithTerminalPunctuation(previousText) ? ' ' : ', ';
+  return `${separator}${nextText}`;
+}
 
 type PlaybackAnchor = {
   segmentId: string;
@@ -34,48 +48,49 @@ function buildContinuousPlayback(segments: SpeakableSegment[]): {
   const playbackSegments: Array<{ id: string; text: string }> = [];
   const seekAnchors: PlaybackAnchor[] = [];
 
-  let chunkTexts: string[] = [];
+  let chunkText = '';
   let chunkCharLength = 0;
   let chunkStartIndex = 0;
+  let chunkAnchors: PlaybackAnchor[] = [];
 
   const flushChunk = (endIndex: number) => {
-    if (!chunkTexts.length) {
+    if (!chunkText) {
       return;
     }
     const playbackSegmentIndex = playbackSegments.length;
-    const text = chunkTexts.join(' ');
     playbackSegments.push({
       id: `chunk_${chunkStartIndex}_${endIndex}`,
-      text,
+      text: chunkText,
     });
-
-    let runningOffset = 0;
-    for (let index = chunkStartIndex; index <= endIndex; index += 1) {
-      const sourceSegment = segments[index];
-      if (!sourceSegment) {
-        continue;
-      }
-      seekAnchors.push({
-        segmentId: sourceSegment.id,
+    seekAnchors.push(
+      ...chunkAnchors.map((anchor) => ({
+        ...anchor,
         playbackSegmentIndex,
-        playbackCharOffset: runningOffset,
-      });
-      runningOffset += sourceSegment.text.length + 1;
-    }
+      })),
+    );
 
-    chunkTexts = [];
+    chunkText = '';
     chunkCharLength = 0;
+    chunkAnchors = [];
   };
 
   segments.forEach((segment, index) => {
-    const addition = segment.text.length + (chunkTexts.length > 0 ? 1 : 0);
-    if (chunkTexts.length > 0 && chunkCharLength + addition > CONTINUOUS_CHUNK_TARGET_CHARS) {
+    const segmentPrefix = normalizeContinuousJoin(chunkText, segment.text).slice(chunkText.length);
+    const addition = segmentPrefix.length;
+    const exceedsTarget = chunkText.length > 0 && chunkCharLength + addition > CONTINUOUS_CHUNK_TARGET_CHARS;
+    if (exceedsTarget && chunkCharLength >= CONTINUOUS_CHUNK_MIN_CHARS) {
       flushChunk(index - 1);
       chunkStartIndex = index;
     }
 
-    chunkTexts.push(segment.text);
-    chunkCharLength += addition;
+    const appendText = normalizeContinuousJoin(chunkText, segment.text).slice(chunkText.length);
+    chunkAnchors.push({
+      segmentId: segment.id,
+      playbackSegmentIndex: -1,
+      playbackCharOffset: chunkCharLength + appendText.length - segment.text.length,
+    });
+    chunkText += appendText;
+    chunkCharLength += appendText.length;
   });
 
   flushChunk(segments.length - 1);
