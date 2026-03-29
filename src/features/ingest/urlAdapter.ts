@@ -43,7 +43,8 @@ function toReadablePayload(payload: ExtractResponse): { title?: string; textCont
  * Sends a URL to the backend extractor and normalizes the readability payload.
  */
 export async function ingestUrl(url: string): Promise<NormalizedDocument> {
-  const response = await fetch('/api/extract', {
+  const extractorApiBase = import.meta.env.VITE_EXTRACTOR_API_BASE?.trim() || '/api/extract';
+  const response = await fetch(extractorApiBase, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:gh-pages": "VITE_ENABLE_URL_EXTRACTOR=false npm run build",
     "preview": "vite preview",
     "test": "vitest run",
     "check:tts-manifest": "node scripts/check-tts-manifest.mjs"

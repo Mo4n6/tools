@@ -4,7 +4,8 @@ import { ingestInput } from './features/ingest/urlAdapter';
 import { PlayerControls } from './features/player/PlayerControls';
 import { DocumentModel, PlaybackQueueStatus, SourceType } from './types/reader';
 
-const sourceTabs: SourceType[] = ['text', 'file', 'url'];
+const isUrlExtractorEnabled = import.meta.env.VITE_ENABLE_URL_EXTRACTOR !== 'false';
+const sourceTabs: SourceType[] = isUrlExtractorEnabled ? ['text', 'file', 'url'] : ['text', 'file'];
 
 function App() {
   const [sourceType, setSourceType] = useState<SourceType>('text');
@@ -54,7 +55,7 @@ function App() {
       try {
         const nextModel = sourceType === 'text'
           ? toDocumentModel({ type: 'text', value: textInput }, await ingestInput({ type: 'paste', payload: textInput }))
-          : sourceType === 'url'
+          : sourceType === 'url' && isUrlExtractorEnabled
             ? toDocumentModel(
               { type: 'url', value: urlInput },
               await ingestInput({ type: 'url', payload: urlInput }),
@@ -185,6 +186,12 @@ function App() {
             ))}
           </div>
 
+          {!isUrlExtractorEnabled ? (
+            <p className="mt-3 rounded border border-amber-700 bg-amber-950/40 p-2 text-xs text-amber-200">
+              URL reading requires backend extractor; paste/upload still available.
+            </p>
+          ) : null}
+
           <label className="mt-4 block text-sm text-slate-300">
             Paste text
             <textarea
@@ -207,19 +214,21 @@ function App() {
             {selectedFileName ? <span className="mt-1 block text-xs text-slate-400">Selected: {selectedFileName}</span> : null}
           </label>
 
-          <label className="mt-3 block text-sm text-slate-300">
-            Source URL
-            <input
-              className="mt-1 w-full rounded-md border border-border bg-slate-900 p-2"
-              type="url"
-              placeholder="https://example.com/article"
-              value={urlInput}
-              onChange={(event) => {
-                setUrlInput(event.target.value);
-                setSourceType('url');
-              }}
-            />
-          </label>
+          {isUrlExtractorEnabled ? (
+            <label className="mt-3 block text-sm text-slate-300">
+              Source URL
+              <input
+                className="mt-1 w-full rounded-md border border-border bg-slate-900 p-2"
+                type="url"
+                placeholder="https://example.com/article"
+                value={urlInput}
+                onChange={(event) => {
+                  setUrlInput(event.target.value);
+                  setSourceType('url');
+                }}
+              />
+            </label>
+          ) : null}
         </article>
 
         <article className="rounded-xl border border-border bg-panel p-4 shadow-lg shadow-black/20">
