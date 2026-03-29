@@ -370,7 +370,7 @@ export class KokoroProvider implements TTSProvider {
         }
 
         const rms = Math.sqrt(energy / sampleCount);
-        if (this.getRuntimeDevice() === 'webgpu' && (!Number.isFinite(rms) || rms < MIN_REASONABLE_RMS)) {
+        if (!Number.isFinite(rms) || rms < MIN_REASONABLE_RMS) {
           throw new TTSSynthFailureError('near_silent_audio');
         }
       } finally {
