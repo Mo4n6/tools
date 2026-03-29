@@ -39,7 +39,7 @@ jobs:
         run: npm run build
         env:
           VITE_ENABLE_URL_INGEST: 'false'
-          VITE_SKIP_KOKORO_INIT_ON_PAGES: 'true'
+          VITE_SKIP_KOKORO_INIT_ON_PAGES: 'false'
 
       - name: Validate Kokoro chunk output
         run: npm run check:kokoro-chunk
