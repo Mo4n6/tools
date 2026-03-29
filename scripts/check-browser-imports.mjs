@@ -82,6 +82,14 @@ function shouldCheck(filePath) {
     return false;
   }
 
+  const includedByScope = EXPLICIT_INCLUDE.some((scope) => {
+    const normalizedScope = scope.split(path.sep).join('/');
+    return normalized === normalizedScope || normalized.startsWith(`${normalizedScope}/`);
+  });
+  if (!includedByScope) {
+    return false;
+  }
+
   if (RUNTIME_EXCLUDE_PATTERNS.some((pattern) => pattern.test(normalized))) {
     return false;
   }
