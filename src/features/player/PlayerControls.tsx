@@ -5,11 +5,14 @@ type PlayerControlsProps = {
   queueStatus: PlayerMachineState;
   currentSegmentIndex: number;
   segmentCount: number;
+  machineError: string | null;
   voice: string;
   rate: number;
-  onTogglePlayPause: () => void;
+  onPlay: () => void;
+  onPause: () => void;
   onPrevSegment: () => void;
   onNextSegment: () => void;
+  onSeekSegmentStart: () => void;
   onVoiceChange: (voice: string) => void;
   onRateChange: (rate: number) => void;
 };
@@ -37,11 +40,14 @@ export function PlayerControls({
   queueStatus,
   currentSegmentIndex,
   segmentCount,
+  machineError,
   voice,
   rate,
-  onTogglePlayPause,
+  onPlay,
+  onPause,
   onPrevSegment,
   onNextSegment,
+  onSeekSegmentStart,
   onVoiceChange,
   onRateChange,
 }: PlayerControlsProps) {
@@ -68,7 +74,11 @@ export function PlayerControls({
 
       if (event.key === ' ') {
         event.preventDefault();
-        onTogglePlayPause();
+        if (isPlaying) {
+          onPause();
+        } else {
+          onPlay();
+        }
         return;
       }
 
@@ -100,7 +110,7 @@ export function PlayerControls({
     return () => {
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [onNextSegment, onPrevSegment, onRateChange, onTogglePlayPause, rate]);
+  }, [isPlaying, onNextSegment, onPause, onPlay, onPrevSegment, onRateChange, rate]);
 
   return (
     <div className="mt-3 space-y-3" aria-label="Player controls">
@@ -163,7 +173,13 @@ export function PlayerControls({
         <button
           aria-label={isPlaying ? 'Pause playback' : 'Play playback'}
           className="rounded-md border border-sky-500 bg-sky-900/60 px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-          onClick={onTogglePlayPause}
+          onClick={() => {
+            if (isPlaying) {
+              onPause();
+            } else {
+              onPlay();
+            }
+          }}
           type="button"
         >
           {isPlaying ? 'Pause' : 'Play'}
@@ -177,6 +193,21 @@ export function PlayerControls({
           Next ▶
         </button>
       </div>
+
+      <button
+        aria-label="Seek to current segment start"
+        className="w-full rounded-md border border-border px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+        onClick={onSeekSegmentStart}
+        type="button"
+      >
+        Restart Current Segment
+      </button>
+
+      {machineError ? (
+        <p className="rounded border border-rose-700 bg-rose-950/40 p-2 text-xs text-rose-200" role="alert">
+          Playback error: {machineError}
+        </p>
+      ) : null}
 
       <p className="text-xs text-slate-400">
         Shortcuts: Space (play/pause), ArrowLeft/ArrowRight (skip), +/- (rate)
