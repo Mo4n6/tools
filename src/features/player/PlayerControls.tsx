@@ -9,6 +9,7 @@ type PlayerControlsProps = {
   voice: string;
   voices: Array<{ id: string; name: string }>;
   rate: number;
+  playDisabled?: boolean;
   onPlay: () => void;
   onPause: () => void;
   onPrevSegment: () => void;
@@ -39,6 +40,7 @@ export function PlayerControls({
   voice,
   voices,
   rate,
+  playDisabled = false,
   onPlay,
   onPause,
   onPrevSegment,
@@ -49,6 +51,7 @@ export function PlayerControls({
 }: PlayerControlsProps) {
   const [liveMessage, setLiveMessage] = useState('Playback idle.');
   const isPlaying = queueStatus === 'playing' || queueStatus === 'loading';
+  const canPlay = !playDisabled;
   const progressText = useMemo(() => {
     if (segmentCount === 0) {
       return '0 / 0';
@@ -70,6 +73,10 @@ export function PlayerControls({
 
       if (event.key === ' ') {
         event.preventDefault();
+        if (!canPlay) {
+          return;
+        }
+
         if (isPlaying) {
           onPause();
         } else {
@@ -106,7 +113,7 @@ export function PlayerControls({
     return () => {
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [isPlaying, onNextSegment, onPause, onPlay, onPrevSegment, onRateChange, rate]);
+  }, [canPlay, isPlaying, onNextSegment, onPause, onPlay, onPrevSegment, onRateChange, rate]);
 
   return (
     <div className="mt-3 space-y-3" aria-label="Player controls">
@@ -174,10 +181,14 @@ export function PlayerControls({
         <button
           aria-label={isPlaying ? 'Pause playback' : 'Play playback'}
           className="rounded-md border border-sky-500 bg-sky-900/60 px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+          disabled={!isPlaying && !canPlay}
           onClick={() => {
             if (isPlaying) {
               onPause();
             } else {
+              if (!canPlay) {
+                return;
+              }
               onPlay();
             }
           }}

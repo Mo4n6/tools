@@ -166,6 +166,7 @@ function App() {
   const [showInformationalFallbackBanner, setShowInformationalFallbackBanner] = useState(false);
   const [providerFallbackError, setProviderFallbackError] = useState<TTSFallbackError | null>(null);
   const [voiceFallbackWarning, setVoiceFallbackWarning] = useState<string | null>(null);
+  const [isPlaybackReady, setIsPlaybackReady] = useState(false);
   const [devTtsDiagnostics, setDevTtsDiagnostics] = useState<DevTtsDiagnostics | null>(null);
   const [voice, setVoice] = useState(storedPreferences?.voice ?? 'af_alloy');
   const [availableVoices, setAvailableVoices] = useState<TTSVoice[]>([]);
@@ -260,6 +261,10 @@ function App() {
     let active = true;
 
     const ensureVoiceAvailable = async () => {
+      if (active) {
+        setIsPlaybackReady(false);
+      }
+
       try {
         const voices = await provider.listVoices();
         if (!active) {
@@ -290,6 +295,10 @@ function App() {
         if (active) {
           setAvailableVoices([]);
           setVoiceFallbackWarning('Unable to validate voices for the active provider.');
+        }
+      } finally {
+        if (active) {
+          setIsPlaybackReady(true);
         }
       }
     };
@@ -412,6 +421,12 @@ function App() {
       {voiceFallbackWarning ? (
         <div className="mb-4 rounded-md border border-amber-600 bg-amber-950/30 px-3 py-2 text-sm text-amber-100">
           {voiceFallbackWarning}
+        </div>
+      ) : null}
+
+      {!isPlaybackReady ? (
+        <div className="mb-4 rounded-md border border-sky-700 bg-sky-950/30 px-3 py-2 text-sm text-sky-100">
+          Preparing voices for the active provider. Playback will be enabled once voice validation completes.
         </div>
       ) : null}
 
@@ -584,7 +599,15 @@ function App() {
               voice={voice}
               voices={availableVoices}
               rate={rate}
+              playDisabled={!isPlaybackReady}
               onPlay={() => {
+                if (!isPlaybackReady) {
+                  setVoiceFallbackWarning(
+                    'Playback is temporarily disabled while voice validation is still in progress.',
+                  );
+                  return;
+                }
+
                 if (player.state === 'paused') {
                   void player.resume();
                   return;
