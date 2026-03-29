@@ -6,7 +6,83 @@ import { WebSpeechProvider } from './providers/webSpeechProvider';
 import { KokoroDType, RuntimeDType, TTSProvider } from './types';
 
 const DEFAULT_MEMORY_GB_THRESHOLD = 4;
+const WEBGPU_UNSTABLE_PROFILES_STORAGE_KEY = 'reader-tts-webgpu-unstable-profiles-v1';
 const isPagesStyleBase = (): boolean => import.meta.env.BASE_URL !== '/';
+
+const getGpuFingerprintFragment = (): string => {
+  if (typeof document === 'undefined') {
+    return 'unknown-gpu';
+  }
+
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('webgl') ?? canvas.getContext('experimental-webgl');
+  if (!context) {
+    return 'unknown-gpu';
+  }
+
+  const webGlContext = context as WebGLRenderingContext;
+  const debugExtension = webGlContext.getExtension('WEBGL_debug_renderer_info');
+  if (!debugExtension) {
+    return 'unknown-gpu';
+  }
+
+  const renderer = webGlContext.getParameter(debugExtension.UNMASKED_RENDERER_WEBGL);
+  return typeof renderer === 'string' && renderer.trim().length > 0 ? renderer : 'unknown-gpu';
+};
+
+const getBrowserGpuProfileKey = (): string => {
+  if (typeof navigator === 'undefined') {
+    return 'unknown-browser::unknown-gpu';
+  }
+
+  return `${navigator.userAgent}::${getGpuFingerprintFragment()}`;
+};
+
+const loadUnstableWebGpuProfiles = (): Record<string, { markedAt: string; reason: string }> => {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(WEBGPU_UNSTABLE_PROFILES_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw) as Record<string, { markedAt?: string; reason?: string }>;
+    return Object.entries(parsed).reduce<Record<string, { markedAt: string; reason: string }>>((acc, [key, value]) => {
+      if (typeof value?.markedAt === 'string' && typeof value?.reason === 'string') {
+        acc[key] = {
+          markedAt: value.markedAt,
+          reason: value.reason,
+        };
+      }
+
+      return acc;
+    }, {});
+  } catch {
+    return {};
+  }
+};
+
+const isWebGpuMarkedUnstableForCurrentProfile = (): boolean => {
+  const profileKey = getBrowserGpuProfileKey();
+  return Boolean(loadUnstableWebGpuProfiles()[profileKey]);
+};
+
+const markWebGpuUnstableForCurrentProfile = (reason: string): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const profileKey = getBrowserGpuProfileKey();
+  const profiles = loadUnstableWebGpuProfiles();
+  profiles[profileKey] = {
+    markedAt: new Date().toISOString(),
+    reason,
+  };
+  window.localStorage.setItem(WEBGPU_UNSTABLE_PROFILES_STORAGE_KEY, JSON.stringify(profiles));
+};
 
 const getDeviceMemoryGb = (): number | undefined => {
   if (typeof navigator === 'undefined') {
@@ -41,6 +117,7 @@ export interface TTSProviderSelectorOptions {
   minimumMemoryGb?: number;
   skipKokoroInit?: boolean;
   skipKokoroInitReason?: string;
+  allowWebGpuIfUnstable?: boolean;
 }
 
 export interface TTSProviderSelection {
@@ -122,10 +199,12 @@ export const selectTTSProvider = async (
 
   const minimumMemoryGb = options.minimumMemoryGb ?? DEFAULT_MEMORY_GB_THRESHOLD;
   const webGpuSupport = await getWebGpuSupport();
+  const hasKnownUnstableWebGpuRuntime = isWebGpuMarkedUnstableForCurrentProfile();
+  const shouldAvoidWebGpuForProfile = hasKnownUnstableWebGpuRuntime && !options.allowWebGpuIfUnstable;
   const requestedDevice =
     options.preferredDevice
     ?? options.kokoro?.device
-    ?? (webGpuSupport.adapterAvailable ? 'webgpu' : 'wasm');
+    ?? (webGpuSupport.adapterAvailable && !shouldAvoidWebGpuForProfile ? 'webgpu' : 'wasm');
   const availableMemoryGb = getDeviceMemoryGb();
   const memorySufficient = hasEnoughMemory(minimumMemoryGb);
 
@@ -178,16 +257,33 @@ export const selectTTSProvider = async (
       const runtimeAfterWarmup = kokoroProvider.getRuntimeDevice();
 
       if (runtimeAfterWarmup === 'webgpu') {
-        const qualityCheckResult = await kokoroProvider.synthesize({
-          id: 'kokoro-quality-check',
-          text: KOKORO_QUALITY_CHECK_SENTENCE,
-        });
+        let webGpuQualityCheckFailed = false;
 
-        if ('url' in qualityCheckResult) {
+        try {
+          const qualityCheckResult = await kokoroProvider.synthesizeWithRuntime({
+            id: 'kokoro-quality-check',
+            text: KOKORO_QUALITY_CHECK_SENTENCE,
+          }, {}, 'webgpu');
+
           URL.revokeObjectURL(qualityCheckResult.url);
+        } catch (qualityCheckError) {
+          webGpuQualityCheckFailed = true;
+
+          try {
+            const wasmQualityCheckResult = await kokoroProvider.synthesizeWithRuntime({
+              id: 'kokoro-quality-check',
+              text: KOKORO_QUALITY_CHECK_SENTENCE,
+            }, {}, 'wasm');
+
+            URL.revokeObjectURL(wasmQualityCheckResult.url);
+            const errorMessage = qualityCheckError instanceof Error ? qualityCheckError.message : 'unknown_error';
+            markWebGpuUnstableForCurrentProfile(errorMessage);
+          } catch {
+            throw qualityCheckError;
+          }
         }
 
-        if (kokoroProvider.getRuntimeDevice() === 'wasm') {
+        if (webGpuQualityCheckFailed || kokoroProvider.getRuntimeDevice() === 'wasm') {
           console.warn(WEBGPU_QUALITY_CHECK_WARNING);
         }
       }

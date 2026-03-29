@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const warmupMock = vi.fn();
 const getRuntimeDeviceMock = vi.fn();
 const synthesizeMock = vi.fn();
+const synthesizeWithRuntimeMock = vi.fn();
 
 vi.mock('./providers/kokoroProvider', () => ({
   canImportKokoroModule: vi.fn(async () => true),
@@ -11,6 +12,7 @@ vi.mock('./providers/kokoroProvider', () => ({
     warmup: warmupMock,
     getRuntimeDevice: getRuntimeDeviceMock,
     synthesize: synthesizeMock,
+    synthesizeWithRuntime: synthesizeWithRuntimeMock,
     };
   }),
 }));
@@ -29,13 +31,20 @@ describe('selectTTSProvider', () => {
     warmupMock.mockReset();
     getRuntimeDeviceMock.mockReset();
     synthesizeMock.mockReset();
+    synthesizeWithRuntimeMock.mockReset();
     getRuntimeDeviceMock.mockReturnValue('wasm');
     synthesizeMock.mockResolvedValue({
       segmentId: 'seg-id',
       blob: new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/wav' }),
       url: 'blob:test',
     });
+    synthesizeWithRuntimeMock.mockResolvedValue({
+      segmentId: 'seg-id',
+      blob: new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/wav' }),
+      url: 'blob:test-runtime',
+    });
     (globalThis as { navigator?: Navigator }).navigator = {} as Navigator;
+    window.localStorage.clear();
   });
 
   it('falls back intentionally when Kokoro init is skipped', async () => {
@@ -105,7 +114,7 @@ describe('selectTTSProvider', () => {
       .mockReturnValueOnce('webgpu')
       .mockReturnValueOnce('wasm')
       .mockReturnValueOnce('wasm');
-    synthesizeMock.mockResolvedValue({
+    synthesizeWithRuntimeMock.mockResolvedValue({
       segmentId: 'kokoro-quality-check',
       blob: new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/wav' }),
       url: 'blob:quality-check',
@@ -117,16 +126,43 @@ describe('selectTTSProvider', () => {
       preferredDevice: 'webgpu',
     });
 
-    expect(synthesizeMock).toHaveBeenCalledWith({
+    expect(synthesizeWithRuntimeMock).toHaveBeenCalledWith({
       id: 'kokoro-quality-check',
       text: 'This is a Kokoro test in English.',
-    });
+    }, {}, 'webgpu');
     expect(warnSpy).toHaveBeenCalledWith('WebGPU output quality check failed; switched to WASM.');
     expect(revokeSpy).toHaveBeenCalledWith('blob:quality-check');
     expect(selection.runtime).toBe('wasm');
 
     warnSpy.mockRestore();
     URL.revokeObjectURL = originalRevoke;
+    (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } }).gpu = originalGpu;
+  });
+
+  it('marks WebGPU unstable and defaults to wasm when WebGPU quality check fails but wasm succeeds', async () => {
+    const originalGpu = (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } }).gpu;
+    (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } }).gpu = {
+      requestAdapter: vi.fn(async () => ({})),
+    };
+    warmupMock.mockResolvedValue(undefined);
+    getRuntimeDeviceMock.mockReturnValue('webgpu');
+    synthesizeWithRuntimeMock
+      .mockRejectedValueOnce(new Error('webgpu decode failed'))
+      .mockResolvedValueOnce({
+        segmentId: 'kokoro-quality-check',
+        blob: new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/wav' }),
+        url: 'blob:quality-check-wasm',
+      });
+
+    const { selectTTSProvider } = await import('./providerSelector');
+    await selectTTSProvider();
+
+    synthesizeWithRuntimeMock.mockReset();
+    getRuntimeDeviceMock.mockReturnValue('wasm');
+
+    const followUpSelection = await selectTTSProvider();
+    expect(followUpSelection.runtime).toBe('wasm');
+
     (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } }).gpu = originalGpu;
   });
 });

@@ -260,6 +260,7 @@ type DevTtsDiagnostics = {
   kokoroPackageLoadable: boolean;
   webgpuSupported: boolean;
   deviceMemoryGb?: number;
+  forcedDeviceOverride: 'webgpu' | 'wasm' | 'none';
   selectedProvider: string;
   selectedDtype: RuntimeDType;
   fallbackCode?: TTSFallbackError['code'];
@@ -307,6 +308,19 @@ const checkWebGpuSupport = async (): Promise<boolean> => {
   const gpuNavigator = navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } };
   const adapter = await gpuNavigator.gpu?.requestAdapter();
   return Boolean(adapter);
+};
+
+const getDevDeviceOverride = (): 'webgpu' | 'wasm' | null => {
+  if (!import.meta.env.DEV || typeof window === 'undefined') {
+    return null;
+  }
+
+  const value = new URLSearchParams(window.location.search).get('ttsDevice');
+  if (value === 'webgpu' || value === 'wasm') {
+    return value;
+  }
+
+  return null;
 };
 
 const getDeviceMemoryGb = (): number | undefined => {
@@ -487,9 +501,10 @@ function App() {
 
     const initializeProvider = async () => {
       const skipKokoroInit = isPagesStyleBase && shouldSkipKokoroInitOnPages;
-      const preferredDevice = await checkWebGpuSupport() ? 'webgpu' : 'wasm';
+      const forcedDeviceOverride = getDevDeviceOverride();
       const selectedProvider = await selectTTSProvider({
-        preferredDevice,
+        preferredDevice: forcedDeviceOverride ?? undefined,
+        allowWebGpuIfUnstable: forcedDeviceOverride === 'webgpu',
         skipKokoroInit,
         skipKokoroInitReason: skipKokoroInit
           ? 'GitHub Pages MVP mode: Kokoro init skipped intentionally while bundling is being finalized.'
@@ -516,6 +531,7 @@ function App() {
           kokoroPackageLoadable,
           webgpuSupported: await checkWebGpuSupport(),
           deviceMemoryGb: getDeviceMemoryGb(),
+          forcedDeviceOverride: forcedDeviceOverride ?? 'none',
           selectedProvider: providerName,
           selectedDtype: selectedProvider.dtype,
           fallbackCode: selectedProvider.fallbackError?.code,
@@ -874,6 +890,7 @@ function App() {
             <li>kokoroPackageLoadable: {String(devTtsDiagnostics.kokoroPackageLoadable)}</li>
             <li>webgpuSupported: {String(devTtsDiagnostics.webgpuSupported)}</li>
             <li>deviceMemoryGb: {devTtsDiagnostics.deviceMemoryGb ?? 'unknown'}</li>
+            <li>forcedDeviceOverride: {devTtsDiagnostics.forcedDeviceOverride}</li>
             <li>selectedProvider: {devTtsDiagnostics.selectedProvider}</li>
             <li>selectedDtype: {devTtsDiagnostics.selectedDtype}</li>
             <li>fallbackCode: {devTtsDiagnostics.fallbackCode ?? 'none'}</li>
