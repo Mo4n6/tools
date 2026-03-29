@@ -190,7 +190,7 @@ function App() {
   const [isVoiceReadyForPlayback, setIsVoiceReadyForPlayback] = useState(false);
   const [voiceReadinessHelperText, setVoiceReadinessHelperText] = useState<string | null>('Loading voices…');
   const [devTtsDiagnostics, setDevTtsDiagnostics] = useState<DevTtsDiagnostics | null>(null);
-  const [voice, setVoice] = useState(storedPreferences?.voice ?? 'af_alloy');
+  const [voice, setVoice] = useState(storedPreferences?.voice ?? '');
   const [availableVoices, setAvailableVoices] = useState<TTSVoice[]>([]);
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
@@ -313,11 +313,15 @@ function App() {
           return;
         }
 
-        const fallbackVoice = voices.find((providerVoice) => providerVoice.id === 'af_alloy') ?? voices[0];
+        const fallbackVoice = providerLabel === 'kokoro'
+          ? voices.find((providerVoice) => providerVoice.id === 'af_alloy') ?? voices[0]
+          : voices[0];
         setVoiceReadinessHelperText('Select a valid voice.');
         setVoice(fallbackVoice.id);
         setVoiceFallbackWarning(
-          `Selected voice "${selectedVoice}" is unavailable for ${providerLabel}; switched to "${fallbackVoice.name}".`,
+          selectedVoice
+            ? `Selected voice "${selectedVoice}" is unavailable for ${providerLabel}; switched to "${fallbackVoice.name}".`
+            : `No voice selected for ${providerLabel}; switched to "${fallbackVoice.name}".`,
         );
       } catch {
         if (active) {
