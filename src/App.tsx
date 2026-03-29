@@ -17,6 +17,7 @@ const shouldSkipKokoroInitOnPages = import.meta.env.VITE_SKIP_KOKORO_INIT_ON_PAG
 type SourceType = 'text' | 'file' | 'url';
 const sourceTabs: SourceType[] = isUrlIngestEnabled ? ['text', 'file', 'url'] : ['text', 'file'];
 const TTS_PREFS_STORAGE_KEY = 'reader-tts-preferences';
+const VOICE_MIGRATION_DONE_STORAGE_KEY = 'voice_migration_done';
 
 const LEGACY_VOICE_MIGRATIONS: Record<string, string> = {
   Alloy: 'af_alloy',
@@ -109,6 +110,22 @@ const loadTtsPreferences = (): LoadedTtsPreferences | null => {
   } catch {
     return null;
   }
+};
+
+const loadVoiceMigrationDone = (): boolean => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  return window.localStorage.getItem(VOICE_MIGRATION_DONE_STORAGE_KEY) === 'true';
+};
+
+const persistVoiceMigrationDone = (): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(VOICE_MIGRATION_DONE_STORAGE_KEY, 'true');
 };
 
 const getDefaultKokoroVoiceId = (voices: TTSVoice[]): string => (
@@ -206,6 +223,7 @@ function App() {
   const [showInformationalFallbackBanner, setShowInformationalFallbackBanner] = useState(false);
   const [providerFallbackError, setProviderFallbackError] = useState<TTSFallbackError | null>(null);
   const [voiceFallbackWarning, setVoiceFallbackWarning] = useState<string | null>(null);
+  const [voiceMigrationInfo, setVoiceMigrationInfo] = useState<string | null>(null);
   const [isVoiceReadyForPlayback, setIsVoiceReadyForPlayback] = useState(false);
   const [voiceReadinessHelperText, setVoiceReadinessHelperText] = useState<string | null>('Loading voices…');
   const [ttsInitStatusLine, setTtsInitStatusLine] = useState<TtsInitStatusLine | null>(null);
@@ -214,8 +232,9 @@ function App() {
   const [availableVoices, setAvailableVoices] = useState<TTSVoice[]>([]);
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
-  const [shouldSuppressNextWebSpeechMigrationWarning, setShouldSuppressNextWebSpeechMigrationWarning] = useState(
-    storedPreferences?.migratedLegacyWebSpeechVoice ?? false,
+  const [hasCompletedVoiceMigration, setHasCompletedVoiceMigration] = useState(loadVoiceMigrationDone);
+  const [hasPendingWebSpeechMigrationNormalization, setHasPendingWebSpeechMigrationNormalization] = useState(
+    Boolean(storedPreferences?.migratedLegacyWebSpeechVoice) && !loadVoiceMigrationDone(),
   );
 
   const playbackSegments = useMemo(
@@ -350,11 +369,17 @@ function App() {
           : voices[0];
         setVoiceReadinessHelperText('Select a valid voice.');
         setVoice(fallbackVoice.id);
-        const suppressWarning = providerLabel === 'web-speech' && shouldSuppressNextWebSpeechMigrationWarning;
-        if (suppressWarning) {
+        const autoFixedLegacyMigration = providerLabel === 'web-speech' && hasPendingWebSpeechMigrationNormalization;
+        if (autoFixedLegacyMigration) {
           setVoiceFallbackWarning(null);
-          setShouldSuppressNextWebSpeechMigrationWarning(false);
+          setHasPendingWebSpeechMigrationNormalization(false);
+          if (!hasCompletedVoiceMigration) {
+            setVoiceMigrationInfo(`Updated legacy voice preference to "${fallbackVoice.name}" for Web Speech.`);
+            persistVoiceMigrationDone();
+            setHasCompletedVoiceMigration(true);
+          }
         } else {
+          setVoiceMigrationInfo(null);
           setVoiceFallbackWarning(
             selectedVoice
               ? `Selected voice "${selectedVoice}" is unavailable for ${providerLabel}; switched to "${fallbackVoice.name}".`
@@ -375,7 +400,7 @@ function App() {
     return () => {
       active = false;
     };
-  }, [provider, providerLabel, shouldSuppressNextWebSpeechMigrationWarning, voice]);
+  }, [hasCompletedVoiceMigration, hasPendingWebSpeechMigrationNormalization, provider, providerLabel, voice]);
 
   useEffect(() => {
     let active = true;
@@ -491,6 +516,12 @@ function App() {
       {voiceFallbackWarning ? (
         <div className="mb-4 rounded-md border border-amber-600 bg-amber-950/30 px-3 py-2 text-sm text-amber-100">
           {voiceFallbackWarning}
+        </div>
+      ) : null}
+
+      {voiceMigrationInfo ? (
+        <div className="mb-4 rounded-md border border-sky-700 bg-sky-950/30 px-3 py-2 text-sm text-sky-100">
+          {voiceMigrationInfo}
         </div>
       ) : null}
 
