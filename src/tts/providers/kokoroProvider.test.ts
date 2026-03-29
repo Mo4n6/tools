@@ -61,4 +61,31 @@ describe('KokoroProvider runtime downgrade', () => {
       reason: 'empty_audio',
     }));
   });
+
+  it('normalizes missing blob type to audio/wav when bytes are playable', async () => {
+    fromPretrainedMock.mockResolvedValue({
+      device: 'wasm',
+      voices: { af_heart: { name: 'Heart' } },
+      generate: vi.fn(async () => new Blob([buildWavBytes()], { type: '' })),
+    });
+
+    const { KokoroProvider } = await import('./kokoroProvider');
+    const provider = new KokoroProvider({ device: 'wasm' });
+    const result = await provider.synthesize({ id: 'seg-2', text: 'hello' });
+    expect('blob' in result && result.blob.type).toBe('audio/wav');
+  });
+
+  it('throws typed tts.synth_failure for unsupported blob mime types', async () => {
+    fromPretrainedMock.mockResolvedValue({
+      device: 'wasm',
+      voices: { af_heart: { name: 'Heart' } },
+      generate: vi.fn(async () => new Blob([buildWavBytes()], { type: 'text/plain' })),
+    });
+
+    const { KokoroProvider } = await import('./kokoroProvider');
+    const provider = new KokoroProvider({ device: 'wasm' });
+    await expect(provider.synthesize({ id: 'seg-3', text: 'hello' }))
+      .rejects
+      .toMatchObject({ code: 'tts.synth_failure', message: expect.stringContaining('unsupported_mime_type') });
+  });
 });

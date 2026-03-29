@@ -42,6 +42,17 @@ type KokoroEngine = {
 };
 
 const MIN_REASONABLE_AUDIO_BYTES = 64;
+const KNOWN_PLAYABLE_BLOB_TYPES = new Set(['audio/wav', 'audio/wave', 'audio/x-wav']);
+const NORMALIZED_PLAYABLE_BLOB_TYPE = 'audio/wav';
+
+class TTSSynthFailureError extends Error {
+  readonly code = 'tts.synth_failure' as const;
+
+  constructor(reason: string) {
+    super(`KOKORO_AUDIO_INVALID: ${reason}`);
+    this.name = 'TTSSynthFailureError';
+  }
+}
 
 const loadKokoroModule = async (): Promise<KokoroModule> => {
   const module = await import('kokoro-js');
@@ -70,6 +81,21 @@ const toAudioBlob = (audio: Blob | ArrayBuffer | Uint8Array): Blob => {
   const bytes = new Uint8Array(audio.byteLength);
   bytes.set(audio);
   return new Blob([bytes], { type: 'audio/wav' });
+};
+
+const normalizePlayableAudioBlob = (blob: Blob): Blob => {
+  const normalizedType = blob.type.trim().toLowerCase();
+  if (KNOWN_PLAYABLE_BLOB_TYPES.has(normalizedType)) {
+    return normalizedType === NORMALIZED_PLAYABLE_BLOB_TYPE
+      ? blob
+      : new Blob([blob], { type: NORMALIZED_PLAYABLE_BLOB_TYPE });
+  }
+
+  if (normalizedType.length === 0 || normalizedType === 'application/octet-stream') {
+    return new Blob([blob], { type: NORMALIZED_PLAYABLE_BLOB_TYPE });
+  }
+
+  return blob;
 };
 
 export const canImportKokoroModule = async (): Promise<boolean> => {
@@ -202,7 +228,7 @@ export class KokoroProvider implements TTSProvider {
       speed: options.rate,
     });
 
-    const blob = toAudioBlob(output);
+    const blob = normalizePlayableAudioBlob(toAudioBlob(output));
     await this.validateAudioBlob(blob);
 
     return {
@@ -225,7 +251,7 @@ export class KokoroProvider implements TTSProvider {
       return false;
     }
 
-    return error.message.startsWith('KOKORO_AUDIO_INVALID:');
+    return error.message.startsWith('KOKORO_AUDIO_INVALID:') || (error as { code?: string }).code === 'tts.synth_failure';
   }
 
   private toDowngradeReason(error: unknown): string {
@@ -276,11 +302,15 @@ export class KokoroProvider implements TTSProvider {
 
   private async validateAudioBlob(blob: Blob): Promise<void> {
     if (blob.size === 0) {
-      throw new Error('KOKORO_AUDIO_INVALID: empty_audio');
+      throw new TTSSynthFailureError('empty_audio');
     }
 
     if (blob.size < MIN_REASONABLE_AUDIO_BYTES) {
-      throw new Error(`KOKORO_AUDIO_INVALID: suspicious_size_${blob.size}`);
+      throw new TTSSynthFailureError(`suspicious_size_${blob.size}`);
+    }
+
+    if (!KNOWN_PLAYABLE_BLOB_TYPES.has(blob.type.trim().toLowerCase())) {
+      throw new TTSSynthFailureError(`unsupported_mime_type_${blob.type || 'missing'}`);
     }
 
     const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -294,7 +324,7 @@ export class KokoroProvider implements TTSProvider {
       && bytes[10] === 0x56
       && bytes[11] === 0x45;
     if (!hasWavHeader) {
-      throw new Error('KOKORO_AUDIO_INVALID: obvious_corruption_signal');
+      throw new TTSSynthFailureError('obvious_corruption_signal');
     }
 
     if (typeof AudioContext === 'undefined') {
@@ -309,7 +339,7 @@ export class KokoroProvider implements TTSProvider {
         await context.close();
       }
     } catch {
-      throw new Error('KOKORO_AUDIO_INVALID: decode_error');
+      throw new TTSSynthFailureError('decode_error');
     }
   }
 
