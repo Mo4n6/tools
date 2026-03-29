@@ -31,7 +31,7 @@ function inferIsMarkdown(fileName: string): boolean {
 }
 
 function inferIsHtml(file: Pick<File, 'name' | 'type'>): boolean {
-  return HTML_EXTENSION.test(file.name) || file.type === 'text/html';
+  return HTML_EXTENSION.test(file.name) || file.type.toLowerCase().startsWith('text/html');
 }
 
 function inferIsPlainTextLike(file: Blob): boolean {
@@ -49,7 +49,13 @@ function hasLikelyBinaryContent(rawText: string): boolean {
 function extractReadableTextFromHtml(rawHtml: string): { title?: string; textContent: string } {
   const parsed = new DOMParser().parseFromString(rawHtml, 'text/html');
   const title = parsed.title?.trim() || undefined;
-  const textContent = parsed.body.textContent?.trim() ?? '';
+  const blockedNodes = parsed.body.querySelectorAll('script, style, noscript, template');
+
+  for (const blockedNode of blockedNodes) {
+    blockedNode.remove();
+  }
+
+  const textContent = (parsed.body.textContent ?? '').replace(/\s+/g, ' ').trim();
 
   return { title, textContent };
 }
