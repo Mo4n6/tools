@@ -1,4 +1,4 @@
-# codextest
+# kokoro-reader
 
 ## GitHub Pages deployment
 
@@ -6,7 +6,7 @@ This repository deploys to GitHub Pages on every push to `main` using `.github/w
 
 ### Pages URL
 
-- `https://<your-github-username>.github.io/codextest/`
+- `https://<your-github-username>.github.io/kokoro-reader/`
 
 ### MVP scope supported on Pages
 

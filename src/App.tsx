@@ -509,7 +509,7 @@ function App() {
   return (
     <main className="mx-auto min-h-screen max-w-7xl p-6 text-slate-100">
       <header className="mb-6">
-        <h1 className="text-3xl font-bold">Reader Workbench</h1>
+        <h1 className="text-3xl font-bold">Kokoro Reader</h1>
         <p className="mt-2 text-sm text-slate-400">
           Scaffold for source ingestion, normalization preview, and spoken playback.
         </p>

@@ -2,8 +2,9 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 const productionBase = (() => {
-  const repository = process.env.GITHUB_REPOSITORY?.split('/')[1] ?? 'codextest';
-  return `/${repository}/`;
+  const repository = process.env.GITHUB_REPOSITORY?.split('/')[1] ?? 'kokoro-reader';
+  const normalizedRepository = repository === 'codextest' ? 'kokoro-reader' : repository;
+  return `/${normalizedRepository}/`;
 })();
 
 export default defineConfig(({ mode }) => ({
