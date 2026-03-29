@@ -47,11 +47,27 @@ export interface TTSProviderSelection {
   provider: TTSProvider;
   providerType: 'kokoro' | 'web-speech';
   runtime: 'webgpu' | 'wasm' | 'system';
+  dtype: KokoroProviderOptions['dtype'] | 'n/a';
   fallbackToWebSpeech: boolean;
   fallbackIntentional?: boolean;
   fallbackReason?: string;
   fallbackError?: TTSFallbackError;
 }
+
+const resolveKokoroDtype = (
+  device: KokoroDevice,
+  configuredDtype?: KokoroProviderOptions['dtype']
+): NonNullable<KokoroProviderOptions['dtype']> => {
+  if (configuredDtype) {
+    return configuredDtype;
+  }
+
+  if (device === 'webgpu') {
+    return 'fp16';
+  }
+
+  return 'q8';
+};
 
 const logFallbackRecordForDev = (fallbackError: TTSFallbackError): void => {
   if (!import.meta.env.DEV) {
@@ -88,6 +104,7 @@ export const selectTTSProvider = async (
       provider: new WebSpeechProvider(),
       providerType: 'web-speech',
       runtime: 'system',
+      dtype: 'n/a',
       fallbackToWebSpeech: true,
       fallbackIntentional: true,
       fallbackReason: reason,
@@ -144,9 +161,10 @@ export const selectTTSProvider = async (
       }
     }
 
+    const selectedDtype = resolveKokoroDtype(requestedDevice, options.kokoro?.dtype);
     const kokoroProvider = new KokoroProvider({
       modelRepo: options.kokoro?.modelRepo ?? DEFAULT_KOKORO_MODEL,
-      dtype: options.kokoro?.dtype ?? 'q8',
+      dtype: selectedDtype,
       device: requestedDevice,
     });
 
@@ -157,6 +175,7 @@ export const selectTTSProvider = async (
         provider: kokoroProvider,
         providerType: 'kokoro',
         runtime: runtimeDevice,
+        dtype: selectedDtype,
         fallbackToWebSpeech: false,
       };
     } catch (error) {
@@ -184,6 +203,7 @@ export const selectTTSProvider = async (
         provider: new WebSpeechProvider(),
         providerType: 'web-speech',
         runtime: 'system',
+        dtype: 'n/a',
         fallbackToWebSpeech: true,
         fallbackReason: fallbackError.message,
         fallbackError,
@@ -218,6 +238,7 @@ export const selectTTSProvider = async (
     provider: new WebSpeechProvider(),
     providerType: 'web-speech',
     runtime: 'system',
+    dtype: 'n/a',
     fallbackToWebSpeech: true,
     fallbackReason: fallbackError.message,
     fallbackError,
