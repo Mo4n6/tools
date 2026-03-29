@@ -1,6 +1,6 @@
 import { ChangeEvent, useEffect, useState } from 'react';
 import { ttsManifest } from './licenses/ttsManifest';
-import { ingestFile, ingestText, ingestUrl } from './lib/ingest/ingest';
+import { ingestInput } from './features/ingest/urlAdapter';
 import { PlayerControls } from './features/player/PlayerControls';
 import { DocumentModel, PlaybackQueueStatus, SourceType } from './types/reader';
 
@@ -23,24 +23,69 @@ function App() {
   const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
   const [voice, setVoice] = useState('alloy');
   const [rate, setRate] = useState(1);
-  const [pitch, setPitch] = useState(1);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
 
   useEffect(() => {
     let active = true;
 
-    const runIngest = async () => {
-      const nextModel = sourceType === 'text'
-        ? await ingestText(textInput)
-        : sourceType === 'url'
-          ? await ingestUrl(urlInput)
-          : selectedFile
-            ? await ingestFile(selectedFile)
-            : await ingestText('');
+    const toDocumentModel = (
+      source: DocumentModel['source'],
+      normalized: Awaited<ReturnType<typeof ingestInput>>,
+      warnings: DocumentModel['warnings'] = [],
+    ): DocumentModel => ({
+      title: normalized.title || 'Untitled Source',
+      source,
+      segments: normalized.segments.map((segment) => ({
+        id: segment.id,
+        text: segment.text,
+        type: segment.blockType === 'heading'
+          ? 'heading'
+          : segment.blockType === 'paragraph'
+            ? 'paragraph'
+            : segment.blockType === 'list_item'
+              ? 'list-item'
+              : 'other',
+        sourceOffsets: segment.sourceOffset ?? { start: 0, end: segment.text.length },
+      })),
+      warnings,
+    });
 
-      if (active) {
-        setDocumentModel(nextModel);
-        setCurrentSegmentIndex((index) => Math.min(index, Math.max(nextModel.segments.length - 1, 0)));
+    const runIngest = async () => {
+      try {
+        const nextModel = sourceType === 'text'
+          ? toDocumentModel({ type: 'text', value: textInput }, await ingestInput({ type: 'paste', payload: textInput }))
+          : sourceType === 'url'
+            ? toDocumentModel(
+              { type: 'url', value: urlInput },
+              await ingestInput({ type: 'url', payload: urlInput }),
+              [{ code: 'URL_INGEST_MODE', message: 'URL ingestion uses backend extraction.', severity: 'info' }],
+            )
+            : selectedFile
+              ? toDocumentModel(
+                { type: 'file', value: selectedFile.name, name: selectedFile.name },
+                await ingestInput({ type: 'file', payload: selectedFile }),
+              )
+              : toDocumentModel({ type: 'file', value: '' }, await ingestInput({ type: 'paste', payload: '' }));
+
+        if (active) {
+          setDocumentModel(nextModel);
+          setCurrentSegmentIndex((index) => Math.min(index, Math.max(nextModel.segments.length - 1, 0)));
+        }
+      } catch (error) {
+        if (active) {
+          const message = error instanceof Error ? error.message : 'Unknown ingestion error.';
+          setDocumentModel({
+            title: 'Ingestion failed',
+            source: sourceType === 'url'
+              ? { type: 'url', value: urlInput }
+              : sourceType === 'file'
+                ? { type: 'file', value: selectedFile?.name ?? '', name: selectedFile?.name }
+                : { type: 'text', value: textInput },
+            segments: [],
+            warnings: [{ code: 'INGEST_ERROR', message, severity: 'error' }],
+          });
+          setCurrentSegmentIndex(0);
+        }
       }
     };
 
