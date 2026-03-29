@@ -506,6 +506,28 @@ function App() {
     setSourceType('file');
   };
 
+  const runtimeStatus = useMemo(() => {
+    if (providerLabel === 'web-speech') {
+      return {
+        label: 'Web Speech (System TTS)',
+        colorClassName: 'border-amber-600/70 bg-amber-500/15 text-amber-200',
+      };
+    }
+
+    const isGpuRuntime = devTtsDiagnostics?.webgpuSupported ?? false;
+    if (isGpuRuntime) {
+      return {
+        label: 'Kokoro • WebGPU',
+        colorClassName: 'border-emerald-600/70 bg-emerald-500/15 text-emerald-200',
+      };
+    }
+
+    return {
+      label: 'Kokoro • WASM',
+      colorClassName: 'border-sky-600/70 bg-sky-500/15 text-sky-200',
+    };
+  }, [devTtsDiagnostics?.webgpuSupported, providerLabel]);
+
   return (
     <main className="mx-auto min-h-screen max-w-7xl p-6 text-slate-100">
       <header className="mb-6">
@@ -513,8 +535,13 @@ function App() {
         <p className="mt-2 text-sm text-slate-400">
           Scaffold for source ingestion, normalization preview, and spoken playback.
         </p>
-        <p className="mt-2 text-xs text-slate-300">
-          Active voice provider: <span className="font-semibold">{providerLabel}</span>
+        <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-300">
+          <span>
+            Active voice provider: <span className="font-semibold">{providerLabel}</span>
+          </span>
+          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${runtimeStatus.colorClassName}`}>
+            Runtime: {runtimeStatus.label}
+          </span>
         </p>
         <p className="mt-2 text-xs text-slate-400">
           tts init: providerSelected={ttsInitStatusLine?.providerSelected ?? 'pending'} · skipKokoroInit={String(ttsInitStatusLine?.skipKokoroInit ?? false)} · kokoroImportable={ttsInitStatusLine ? String(ttsInitStatusLine.kokoroImportable) : 'pending'} · fallbackCode={ttsInitStatusLine?.fallbackCode ?? 'pending'}
