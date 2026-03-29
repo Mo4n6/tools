@@ -13,7 +13,7 @@ import type { TTSProvider, TTSVoice } from './tts/types';
 
 const isUrlIngestEnabled = import.meta.env.VITE_ENABLE_URL_INGEST !== 'false';
 const isPagesStyleBase = import.meta.env.BASE_URL !== '/';
-const shouldSkipKokoroInitOnPages = import.meta.env.VITE_SKIP_KOKORO_INIT_ON_PAGES !== 'false';
+const shouldSkipKokoroInitOnPages = import.meta.env.VITE_SKIP_KOKORO_INIT_ON_PAGES === 'true';
 type SourceType = 'text' | 'file' | 'url';
 const sourceTabs: SourceType[] = isUrlIngestEnabled ? ['text', 'file', 'url'] : ['text', 'file'];
 const TTS_PREFS_STORAGE_KEY = 'reader-tts-preferences';
