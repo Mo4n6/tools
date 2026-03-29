@@ -92,11 +92,11 @@ describe('selectTTSProvider', () => {
       preferredDevice: 'webgpu',
     });
 
-    expect(KokoroProvider).toHaveBeenCalledWith(expect.objectContaining({ dtype: 'fp16', device: 'webgpu' }));
+    expect(KokoroProvider).toHaveBeenCalledWith(expect.objectContaining({ dtype: 'q8', device: 'webgpu' }));
     expect(selection.fallbackToWebSpeech).toBe(false);
     expect(selection.providerType).toBe('kokoro');
     expect(selection.runtime).toBe('wasm');
-    expect(selection.dtype).toBe('fp16');
+    expect(selection.dtype).toBe('q8');
 
     (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } }).gpu = originalGpu;
   });
