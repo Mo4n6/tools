@@ -60,7 +60,12 @@ export const classifyTTSFailure = (
       code: 'KOKORO_MODULE_RESOLUTION_FAILED',
       message,
       cause: error,
-      hints: ['Ensure kokoro-js is installed and resolvable by the bundler.'],
+      hints: [
+        'Verify `kokoro-js` is present in `dependencies`.',
+        'Confirm build target supports ESM module resolution.',
+        'Ensure import path is not transformed incorrectly by bundler.',
+        'Check dynamic import chunk is emitted and served from correct `base` path on GitHub Pages.',
+      ],
     };
   }
 

@@ -6,6 +6,7 @@ import type { NormalizedDocument } from './domain/segments';
 import { usePlayerController } from './features/player/playerMachine';
 import { selectTTSProvider } from './tts/providerSelector';
 import { setupLocalDebugPerfTelemetry } from './tts/perfTelemetry';
+import type { TTSFallbackError } from './tts/errors';
 import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
 import type { TTSProvider } from './tts/types';
 
@@ -73,7 +74,7 @@ function App() {
   const [provider, setProvider] = useState<TTSProvider>(() => new WebSpeechProvider());
   const [providerLabel, setProviderLabel] = useState('web-speech');
   const [showFallbackBanner, setShowFallbackBanner] = useState(false);
-  const [providerFallbackReason, setProviderFallbackReason] = useState<string | null>(null);
+  const [providerFallbackError, setProviderFallbackError] = useState<TTSFallbackError | null>(null);
   const [voice, setVoice] = useState(storedPreferences?.voice ?? 'alloy');
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
@@ -102,7 +103,7 @@ function App() {
         setProvider(selectedProvider.provider);
         setProviderLabel(resolveProviderLabel(selectedProvider.provider));
         setShowFallbackBanner(selectedProvider.fallbackToWebSpeech);
-        setProviderFallbackReason(selectedProvider.fallbackReason ?? null);
+        setProviderFallbackError(selectedProvider.fallbackError ?? null);
       }
     };
 
@@ -213,8 +214,19 @@ function App() {
       {showFallbackBanner ? (
         <div className="mb-4 rounded-md border border-amber-700 bg-amber-950/40 px-3 py-2 text-sm text-amber-200">
           Running in fallback voice mode due to device capability.
-          {providerFallbackReason ? (
-            <p className="mt-1 text-xs text-amber-300">Reason: {providerFallbackReason}</p>
+          {providerFallbackError ? (
+            <>
+              <p className="mt-1 text-xs text-amber-300">
+                {providerFallbackError.code}: {providerFallbackError.message}
+              </p>
+              {import.meta.env.DEV && providerFallbackError.hints?.length ? (
+                <ul className="mt-1 list-disc pl-5 text-xs text-amber-300">
+                  {providerFallbackError.hints.map((hint) => (
+                    <li key={hint}>{hint}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
           ) : null}
         </div>
       ) : null}
