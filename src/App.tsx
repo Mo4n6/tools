@@ -292,12 +292,12 @@ function App() {
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
   const [hasCompletedVoiceMigration, setHasCompletedVoiceMigration] = useState(loadVoiceMigrationDone);
-  const [hasPendingWebSpeechMigrationNormalization, setHasPendingWebSpeechMigrationNormalization] = useState(
+  const [hasPendingVoiceMigrationNormalization, setHasPendingVoiceMigrationNormalization] = useState(
     Boolean(storedPreferences?.migratedLegacyWebSpeechVoice) && !loadVoiceMigrationDone(),
   );
 
-  const shouldSuppressNextWebSpeechMigrationWarning = (
-    hasPendingWebSpeechMigrationNormalization && !hasCompletedVoiceMigration
+  const shouldSuppressNextVoiceMigrationWarning = (
+    hasPendingVoiceMigrationNormalization && !hasCompletedVoiceMigration
   );
 
   const playbackSegments = useMemo(
@@ -445,9 +445,16 @@ function App() {
         }
 
         const selectedVoice = voice;
-        const isSelectedVoiceAvailable = voices.some((providerVoice) => providerVoice.id === selectedVoice);
+        const normalizedSelectedVoice = providerLabel === 'kokoro'
+          ? normalizeKokoroVoiceId(selectedVoice)
+          : selectedVoice;
+        const isSelectedVoiceAvailable = voices.some((providerVoice) => providerVoice.id === normalizedSelectedVoice);
         if (isSelectedVoiceAvailable) {
+          if (normalizedSelectedVoice !== selectedVoice) {
+            setVoice(normalizedSelectedVoice);
+          }
           setVoiceReadinessHelperText(null);
+          setVoiceFallbackWarning(null);
           setIsVoiceReadyForPlayback(true);
           return;
         }
@@ -465,12 +472,12 @@ function App() {
           };
           window.localStorage.setItem(TTS_PREFS_STORAGE_KEY, JSON.stringify(normalizedPreferences));
         }
-        const suppressWarning = providerLabel === 'web-speech' && shouldSuppressNextWebSpeechMigrationWarning;
+        const suppressWarning = providerLabel === 'kokoro' && shouldSuppressNextVoiceMigrationWarning;
         if (suppressWarning) {
           setVoiceFallbackWarning(null);
-          setHasPendingWebSpeechMigrationNormalization(false);
+          setHasPendingVoiceMigrationNormalization(false);
           if (!hasCompletedVoiceMigration) {
-            setVoiceMigrationInfo(`Updated legacy voice preference to "${fallbackVoice.name}" for Web Speech.`);
+            setVoiceMigrationInfo('Voice preference migrated to Kokoro default.');
             persistVoiceMigrationDone();
             setHasCompletedVoiceMigration(true);
           }
@@ -496,7 +503,7 @@ function App() {
     return () => {
       active = false;
     };
-  }, [hasCompletedVoiceMigration, hasPendingWebSpeechMigrationNormalization, provider, providerLabel, voice]);
+  }, [hasCompletedVoiceMigration, hasPendingVoiceMigrationNormalization, provider, providerLabel, voice]);
 
   useEffect(() => {
     let active = true;
