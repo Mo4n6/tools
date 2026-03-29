@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { perfTelemetry } from '../../tts/perfTelemetry';
 import type { TTSSynthesisOptions, TTSSynthesisResult, TTSProvider } from '../../tts/types';
 
 export type PlayerMachineState = 'idle' | 'loading' | 'playing' | 'paused' | 'error' | 'finished';
@@ -112,6 +113,10 @@ export function usePlayerController({
   const nextPrefetchInFlightRef = useRef<Set<string>>(new Set());
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const transitioningRef = useRef(false);
+  const firstAudioLoggedRef = useRef(false);
+  const playRequestStartRef = useRef<number | null>(null);
+  const queueTransitionCountRef = useRef(0);
+  const queueUnderrunCountRef = useRef(0);
 
   const bumpQueueVersion = useCallback(() => {
     queueVersionRef.current += 1;
@@ -162,7 +167,13 @@ export function usePlayerController({
     setQueueEntry({ segmentId: segment.id, synthesisStatus: 'loading', audioUrl: existing?.audioUrl ?? null });
 
     try {
+      const synthStartedAt = perfTelemetry.now();
       const result = await provider.synthesize({ id: segment.id, text: segment.text }, synthesisOptions);
+      perfTelemetry.sink.log({
+        type: 'tts.segment_synth',
+        segmentId: segment.id,
+        durationMs: Math.round(perfTelemetry.now() - synthStartedAt),
+      });
       setQueueEntry({ segmentId: segment.id, synthesisStatus: 'ready', audioUrl: result.url });
       return result;
     } catch (error) {
@@ -222,6 +233,9 @@ export function usePlayerController({
     const boundedIndex = Math.max(0, Math.min(segmentIndex, segments.length - 1));
     dispatch({ type: 'SET_STATE', state: 'loading' });
     dispatch({ type: 'RESET_ERROR' });
+    if (!firstAudioLoggedRef.current && playRequestStartRef.current == null) {
+      playRequestStartRef.current = perfTelemetry.now();
+    }
 
     const segment = segments[boundedIndex];
     const result = await synthesizeSegment(boundedIndex);
@@ -261,6 +275,19 @@ export function usePlayerController({
 
         dispatch({ type: 'SET_INDEX', index: nextIndex });
         persistCursor(nextIndex, 0);
+        queueTransitionCountRef.current += 1;
+        const nextSegment = segments[nextIndex];
+        const nextQueueEntry = nextSegment ? queueRef.current.get(nextSegment.id) : undefined;
+        if (nextSegment && nextQueueEntry?.synthesisStatus !== 'ready') {
+          queueUnderrunCountRef.current += 1;
+          perfTelemetry.sink.log({
+            type: 'tts.queue_underrun',
+            segmentId: nextSegment.id,
+            queueUnderruns: queueUnderrunCountRef.current,
+            queueTransitions: queueTransitionCountRef.current,
+            underrunRate: queueUnderrunCountRef.current / queueTransitionCountRef.current,
+          });
+        }
         await playIndex(nextIndex, 0);
         transitioningRef.current = false;
       })();
@@ -278,6 +305,15 @@ export function usePlayerController({
     }
 
     await audio.play();
+    if (!firstAudioLoggedRef.current && playRequestStartRef.current != null) {
+      perfTelemetry.sink.log({
+        type: 'tts.first_audio',
+        durationMs: Math.round(perfTelemetry.now() - playRequestStartRef.current),
+        segmentId: segment.id,
+      });
+      firstAudioLoggedRef.current = true;
+      playRequestStartRef.current = null;
+    }
     dispatch({ type: 'SET_STATE', state: 'playing' });
     await prefetchUpcoming(boundedIndex);
   }, [cleanupAudio, persistCursor, prefetchUpcoming, segments, synthesizeSegment]);

@@ -1,4 +1,5 @@
 import { DEFAULT_KOKORO_MODEL } from '../modelArtifacts';
+import { perfTelemetry } from '../perfTelemetry';
 import { TTSProvider, TTSSegment, TTSSynthesisOptions, TTSSynthesisResult, TTSVoice } from '../types';
 
 export type KokoroDevice = 'wasm' | 'webgpu';
@@ -93,10 +94,27 @@ export class KokoroProvider implements TTSProvider {
   }
 
   private async loadKokoroEngine(): Promise<KokoroEngine> {
+    const startedAt = perfTelemetry.now();
     const module = await import('kokoro-js') as KokoroModule;
-    return module.createKokoroTTS({
+    const engine = await module.createKokoroTTS({
       model: this.model,
       device: this.device,
     });
+    const durationMs = Math.round(perfTelemetry.now() - startedAt);
+    const deviceMemoryGb = typeof navigator !== 'undefined'
+      ? (navigator as Navigator & { deviceMemory?: number }).deviceMemory
+      : undefined;
+
+    perfTelemetry.sink.log({
+      type: 'tts.model_load',
+      provider: 'kokoro',
+      device: this.device,
+      model: this.model,
+      durationMs,
+      peakMemoryMb: perfTelemetry.readPeakMemoryMb(),
+      deviceMemoryGb,
+    });
+
+    return engine;
   }
 }
