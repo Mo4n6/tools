@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "check:tts-manifest": "node scripts/check-tts-manifest.mjs",
-    "check:browser-imports": "node scripts/check-browser-imports.mjs"
+    "check:browser-imports": "node scripts/check-browser-imports.mjs",
+    "check:kokoro-chunk": "node scripts/check-kokoro-chunk.mjs"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
