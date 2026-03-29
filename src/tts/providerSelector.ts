@@ -45,6 +45,8 @@ export interface TTSProviderSelectorOptions {
 
 export interface TTSProviderSelection {
   provider: TTSProvider;
+  providerType: 'kokoro' | 'web-speech';
+  runtime: 'webgpu' | 'wasm' | 'system';
   fallbackToWebSpeech: boolean;
   fallbackIntentional?: boolean;
   fallbackReason?: string;
@@ -84,6 +86,8 @@ export const selectTTSProvider = async (
 
     return {
       provider: new WebSpeechProvider(),
+      providerType: 'web-speech',
+      runtime: 'system',
       fallbackToWebSpeech: true,
       fallbackIntentional: true,
       fallbackReason: reason,
@@ -130,6 +134,8 @@ export const selectTTSProvider = async (
 
         return {
           provider: new WebSpeechProvider(),
+          providerType: 'web-speech',
+          runtime: 'system',
           fallbackToWebSpeech: true,
           fallbackReason: fallbackError.message,
           fallbackError,
@@ -145,7 +151,12 @@ export const selectTTSProvider = async (
 
     try {
       await kokoroProvider.warmup();
-      return { provider: kokoroProvider, fallbackToWebSpeech: false };
+      return {
+        provider: kokoroProvider,
+        providerType: 'kokoro',
+        runtime: requestedDevice,
+        fallbackToWebSpeech: false,
+      };
     } catch (error) {
       const fallbackError = classifyTTSFailure(error, {
         error,
@@ -169,6 +180,8 @@ export const selectTTSProvider = async (
       logFallbackRecordForDev(fallbackError);
       return {
         provider: new WebSpeechProvider(),
+        providerType: 'web-speech',
+        runtime: 'system',
         fallbackToWebSpeech: true,
         fallbackReason: fallbackError.message,
         fallbackError,
@@ -201,6 +214,8 @@ export const selectTTSProvider = async (
 
   return {
     provider: new WebSpeechProvider(),
+    providerType: 'web-speech',
+    runtime: 'system',
     fallbackToWebSpeech: true,
     fallbackReason: fallbackError.message,
     fallbackError,

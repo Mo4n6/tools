@@ -153,9 +153,13 @@ const getDefaultKokoroVoiceId = (voices: TTSVoice[]): string => (
   voices.find((providerVoice) => providerVoice.id === 'af_alloy')?.id ?? voices[0]?.id ?? ''
 );
 
-const resolveProviderLabel = (activeProvider: TTSProvider): string => (
-  activeProvider instanceof WebSpeechProvider ? 'web-speech' : 'kokoro'
-);
+
+type ProviderRuntimeMetadata = {
+  providerType: 'kokoro' | 'web-speech';
+  runtime: 'webgpu' | 'wasm' | 'system';
+  fallbackToWebSpeech: boolean;
+  fallbackError?: TTSFallbackError;
+};
 
 type TtsInitStatusLine = {
   providerSelected: string;
@@ -240,6 +244,11 @@ function App() {
   const storedPreferences = useMemo(loadTtsPreferences, []);
   const [provider, setProvider] = useState<TTSProvider>(() => new WebSpeechProvider());
   const [providerLabel, setProviderLabel] = useState('web-speech');
+  const [providerRuntimeMetadata, setProviderRuntimeMetadata] = useState<ProviderRuntimeMetadata>({
+    providerType: 'web-speech',
+    runtime: 'system',
+    fallbackToWebSpeech: false,
+  });
   const [showFallbackBanner, setShowFallbackBanner] = useState(false);
   const [showInformationalFallbackBanner, setShowInformationalFallbackBanner] = useState(false);
   const [providerFallbackError, setProviderFallbackError] = useState<TTSFallbackError | null>(null);
@@ -288,7 +297,7 @@ function App() {
           ? 'GitHub Pages MVP mode: Kokoro init skipped intentionally while bundling is being finalized.'
           : undefined,
       });
-      const providerName = resolveProviderLabel(selectedProvider.provider);
+      const providerName = selectedProvider.providerType;
 
       const kokoroPackageLoadable = await emitDevKokoroImportCheck();
 
@@ -328,6 +337,12 @@ function App() {
       if (active) {
         setProvider(selectedProvider.provider);
         setProviderLabel(providerName);
+        setProviderRuntimeMetadata({
+          providerType: selectedProvider.providerType,
+          runtime: selectedProvider.runtime,
+          fallbackToWebSpeech: selectedProvider.fallbackToWebSpeech,
+          fallbackError: selectedProvider.fallbackError,
+        });
         if (providerName === 'kokoro') {
           setVoice((currentVoice) => normalizeKokoroVoiceId(currentVoice));
         }
@@ -507,15 +522,14 @@ function App() {
   };
 
   const runtimeStatus = useMemo(() => {
-    if (providerLabel === 'web-speech') {
+    if (providerRuntimeMetadata.providerType === 'web-speech') {
       return {
         label: 'Web Speech (System TTS)',
         colorClassName: 'border-amber-600/70 bg-amber-500/15 text-amber-200',
       };
     }
 
-    const isGpuRuntime = devTtsDiagnostics?.webgpuSupported ?? false;
-    if (isGpuRuntime) {
+    if (providerRuntimeMetadata.runtime === 'webgpu') {
       return {
         label: 'Kokoro • WebGPU',
         colorClassName: 'border-emerald-600/70 bg-emerald-500/15 text-emerald-200',
@@ -526,7 +540,7 @@ function App() {
       label: 'Kokoro • WASM',
       colorClassName: 'border-sky-600/70 bg-sky-500/15 text-sky-200',
     };
-  }, [devTtsDiagnostics?.webgpuSupported, providerLabel]);
+  }, [providerRuntimeMetadata.providerType, providerRuntimeMetadata.runtime]);
 
   return (
     <main className="mx-auto min-h-screen max-w-7xl p-6 text-slate-100">
@@ -537,11 +551,12 @@ function App() {
         </p>
         <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-300">
           <span>
-            Active voice provider: <span className="font-semibold">{providerLabel}</span>
+            Active voice provider: <span className="font-semibold">{providerRuntimeMetadata.providerType}</span>
           </span>
           <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${runtimeStatus.colorClassName}`}>
             Runtime: {runtimeStatus.label}
           </span>
+          <span>fallbackToWebSpeech={String(providerRuntimeMetadata.fallbackToWebSpeech)}</span>
         </p>
         <p className="mt-2 text-xs text-slate-400">
           tts init: providerSelected={ttsInitStatusLine?.providerSelected ?? 'pending'} · skipKokoroInit={String(ttsInitStatusLine?.skipKokoroInit ?? false)} · kokoroImportable={ttsInitStatusLine ? String(ttsInitStatusLine.kokoroImportable) : 'pending'} · fallbackCode={ttsInitStatusLine?.fallbackCode ?? 'pending'}

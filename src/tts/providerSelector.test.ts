@@ -30,6 +30,8 @@ describe('selectTTSProvider', () => {
     });
 
     expect(selection.fallbackToWebSpeech).toBe(true);
+    expect(selection.providerType).toBe('web-speech');
+    expect(selection.runtime).toBe('system');
     expect(selection.fallbackIntentional).toBe(true);
     expect(selection.fallbackReason).toContain('manual skip for test');
   });
@@ -44,5 +46,7 @@ describe('selectTTSProvider', () => {
 
     expect(warmupMock).toHaveBeenCalledTimes(1);
     expect(selection.fallbackToWebSpeech).toBe(false);
+    expect(selection.providerType).toBe('kokoro');
+    expect(selection.runtime).toBe('wasm');
   });
 });
