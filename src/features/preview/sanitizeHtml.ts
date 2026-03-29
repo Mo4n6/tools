@@ -4,8 +4,8 @@ const FORBID_TAGS = ['script', 'style', 'iframe', 'object', 'embed', 'link', 'me
 const FORBID_ATTR = ['style'];
 const ALLOWED_URI_REGEXP = /^(?:(?:https?|mailto|tel|ftp):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i;
 
-let purifier: ReturnType<typeof createDOMPurify> | null = null;
-let hooksRegistered = false;
+const hasBrowserWindow = typeof globalThis.window !== 'undefined';
+const purifier = hasBrowserWindow ? createDOMPurify(globalThis.window) : null;
 
 function isElementNode(node: unknown): node is Element {
   if (!node || typeof node !== 'object') {
@@ -40,9 +40,9 @@ function scrubSvgXLinkHref(node: Element): void {
   }
 }
 
-function getPurifier(): ReturnType<typeof createDOMPurify> | null {
-  if (purifier) {
-    return purifier;
+purifier?.addHook('afterSanitizeAttributes', (node) => {
+  if (!isElementNode(node)) {
+    return;
   }
 
   if (typeof globalThis.window === 'undefined') {
@@ -72,13 +72,11 @@ function getPurifier(): ReturnType<typeof createDOMPurify> | null {
 }
 
 export function sanitizeHtml(html: string): string {
-  const activePurifier = getPurifier();
-
-  if (!activePurifier) {
+  if (!purifier) {
     return html;
   }
 
-  return activePurifier.sanitize(html, {
+  return purifier.sanitize(html, {
     FORBID_TAGS,
     FORBID_ATTR,
     ALLOWED_URI_REGEXP,
