@@ -104,8 +104,9 @@ export class KokoroProvider implements TTSProvider {
 
   private async loadKokoroEngine(): Promise<KokoroEngine> {
     const startedAt = perfTelemetry.now();
-    const module = await import('kokoro-js') as KokoroModule;
-    const engine = await module.createKokoroTTS({
+    const module = await import('kokoro-js');
+    const kokoroModule = module as KokoroModule;
+    const engine = await kokoroModule.createKokoroTTS({
       model: this.model,
       device: this.device,
     });
