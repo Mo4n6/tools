@@ -20,13 +20,8 @@ const TTS_PREFS_STORAGE_KEY = 'reader-tts-preferences';
 
 const LEGACY_VOICE_MIGRATIONS: Record<string, string> = {
   Alloy: 'af_alloy',
-  Verse: 'af_verse',
-  Lumen: 'af_lumen',
   alloy: 'af_alloy',
-  verse: 'af_verse',
-  lumen: 'af_lumen',
 };
-const KOKORO_VOICE_IDS = ['af_alloy', 'af_verse', 'af_lumen'] as const;
 
 const normalizeKokoroVoiceId = (voice: string): string => LEGACY_VOICE_MIGRATIONS[voice] ?? voice;
 
@@ -65,14 +60,6 @@ const getWebSpeechVoiceIds = (): string[] => {
   return window.speechSynthesis.getVoices().map((voice) => voice.voiceURI);
 };
 
-const getDefaultVoiceForProvider = (provider: string, providerVoiceIds: string[]): string | null => {
-  if (provider === 'kokoro') {
-    return 'af_alloy';
-  }
-
-  return providerVoiceIds[0] ?? null;
-};
-
 const loadTtsPreferences = (): StoredTtsPreferences | null => {
   if (typeof window === 'undefined') {
     return null;
@@ -90,12 +77,11 @@ const loadTtsPreferences = (): StoredTtsPreferences | null => {
     }
 
     const provider = parsed.provider;
-    const providerVoiceIds = provider === 'web-speech' ? getWebSpeechVoiceIds() : [...KOKORO_VOICE_IDS];
     const migratedVoice = migrateStoredVoice(parsed.voice);
-    const isVoiceAvailable = providerVoiceIds.includes(migratedVoice);
-    const correctedVoice = isVoiceAvailable
-      ? migratedVoice
-      : getDefaultVoiceForProvider(provider, providerVoiceIds) ?? migratedVoice;
+    const webSpeechVoiceIds = provider === 'web-speech' ? getWebSpeechVoiceIds() : [];
+    const correctedVoice = provider === 'web-speech'
+      ? (webSpeechVoiceIds.includes(migratedVoice) ? migratedVoice : webSpeechVoiceIds[0] ?? migratedVoice)
+      : migratedVoice;
 
     const correctedPreferences: StoredTtsPreferences = {
       voice: correctedVoice,
@@ -327,9 +313,7 @@ function App() {
           return;
         }
 
-        const fallbackVoice = providerLabel === 'kokoro'
-          ? voices.find((providerVoice) => providerVoice.id === 'af_alloy') ?? voices[0]
-          : voices[0];
+        const fallbackVoice = voices.find((providerVoice) => providerVoice.id === 'af_alloy') ?? voices[0];
         setVoiceReadinessHelperText('Select a valid voice.');
         setVoice(fallbackVoice.id);
         setVoiceFallbackWarning(
