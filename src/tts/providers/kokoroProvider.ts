@@ -42,6 +42,8 @@ type KokoroEngine = {
   synthesize: (text: string, options: { voice?: string; speed?: number }) => Promise<Blob | ArrayBuffer | Uint8Array>;
 };
 
+const MIN_REASONABLE_AUDIO_BYTES = 64;
+
 const loadKokoroModule = async (): Promise<KokoroModule> => {
   const module = await import('kokoro-js');
   return module as KokoroModule;
@@ -87,6 +89,7 @@ export class KokoroProvider implements TTSProvider {
   private readonly device: KokoroDevice;
   private runtimeDevice?: KokoroDevice;
   private enginePromise?: Promise<KokoroEngine>;
+  private wasmFallbackEnginePromise?: Promise<KokoroEngine>;
 
   constructor(options: KokoroProviderOptions = {}) {
     this.modelRepo = options.modelRepo ?? DEFAULT_KOKORO_MODEL;
@@ -116,20 +119,24 @@ export class KokoroProvider implements TTSProvider {
   }
 
   async synthesize(segment: TTSSegment, options: TTSSynthesisOptions = {}): Promise<TTSSynthesisResult> {
-    const engine = await this.getEngine();
+    try {
+      return await this.synthesizeWithEngine(await this.getEngine(), segment, options);
+    } catch (error) {
+      if (!this.shouldDowngradeToWasm(error)) {
+        throw error;
+      }
 
-    const output = await engine.synthesize(segment.text, {
-      voice: options.voice,
-      speed: options.rate,
-    });
+      const reason = this.toDowngradeReason(error);
+      perfTelemetry.sink.log({
+        type: 'tts.runtime_downgrade',
+        transition: 'webgpu->wasm',
+        reason,
+        segmentId: segment.id,
+      });
 
-    const blob = toAudioBlob(output);
-
-    return {
-      segmentId: segment.id,
-      blob,
-      url: URL.createObjectURL(blob),
-    };
+      const wasmEngine = await this.getWasmFallbackEngine();
+      return this.synthesizeWithEngine(wasmEngine, segment, options);
+    }
   }
 
   private getEngine(): Promise<KokoroEngine> {
@@ -184,6 +191,127 @@ export class KokoroProvider implements TTSProvider {
     });
 
     return engine;
+  }
+
+  private async synthesizeWithEngine(
+    engine: KokoroEngine,
+    segment: TTSSegment,
+    options: TTSSynthesisOptions
+  ): Promise<TTSSynthesisResult> {
+    const output = await engine.synthesize(segment.text, {
+      voice: options.voice,
+      speed: options.rate,
+    });
+
+    const blob = toAudioBlob(output);
+    await this.validateAudioBlob(blob);
+
+    return {
+      segmentId: segment.id,
+      blob,
+      url: URL.createObjectURL(blob),
+    };
+  }
+
+  private shouldDowngradeToWasm(error: unknown): boolean {
+    if (this.getRuntimeDevice() !== 'webgpu') {
+      return false;
+    }
+
+    if (this.device !== 'webgpu') {
+      return false;
+    }
+
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    return error.message.startsWith('KOKORO_AUDIO_INVALID:');
+  }
+
+  private toDowngradeReason(error: unknown): string {
+    if (error instanceof Error && error.message.startsWith('KOKORO_AUDIO_INVALID:')) {
+      return error.message.replace('KOKORO_AUDIO_INVALID:', '').trim();
+    }
+
+    return 'synthesis_validation_failed';
+  }
+
+  private getWasmFallbackEngine(): Promise<KokoroEngine> {
+    if (!this.wasmFallbackEnginePromise) {
+      this.wasmFallbackEnginePromise = this.loadKokoroEngineForDevice('wasm');
+      this.runtimeDevice = 'wasm';
+    }
+
+    return this.wasmFallbackEnginePromise;
+  }
+
+  private async loadKokoroEngineForDevice(device: KokoroDevice): Promise<KokoroEngine> {
+    const kokoroModule = await importKokoroModule();
+    const runtimeEngine = await kokoroModule.KokoroTTS.from_pretrained(this.modelRepo, {
+      dtype: this.dtype,
+      device,
+    });
+
+    return {
+      listVoices: async () =>
+        Object.entries(runtimeEngine.voices ?? {}).map(([id, voice]) => ({
+          id,
+          name: voice.name ?? id,
+          language: voice.language,
+        })),
+      synthesize: async (text, options) => {
+        const audio = await runtimeEngine.generate(text, {
+          voice: options.voice,
+          speed: options.speed,
+        });
+
+        if (audio instanceof Blob || audio instanceof ArrayBuffer || audio instanceof Uint8Array) {
+          return audio;
+        }
+
+        return audio.toWav();
+      },
+    };
+  }
+
+  private async validateAudioBlob(blob: Blob): Promise<void> {
+    if (blob.size === 0) {
+      throw new Error('KOKORO_AUDIO_INVALID: empty_audio');
+    }
+
+    if (blob.size < MIN_REASONABLE_AUDIO_BYTES) {
+      throw new Error(`KOKORO_AUDIO_INVALID: suspicious_size_${blob.size}`);
+    }
+
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const hasWavHeader = bytes.length >= 12
+      && bytes[0] === 0x52
+      && bytes[1] === 0x49
+      && bytes[2] === 0x46
+      && bytes[3] === 0x46
+      && bytes[8] === 0x57
+      && bytes[9] === 0x41
+      && bytes[10] === 0x56
+      && bytes[11] === 0x45;
+    if (!hasWavHeader) {
+      throw new Error('KOKORO_AUDIO_INVALID: obvious_corruption_signal');
+    }
+
+    if (typeof AudioContext === 'undefined') {
+      return;
+    }
+
+    try {
+      const context = new AudioContext();
+      try {
+        await context.decodeAudioData(bytes.buffer.slice(0));
+      } finally {
+        await context.close();
+      }
+    } catch {
+      throw new Error('KOKORO_AUDIO_INVALID: decode_error');
+    }
   }
 
   private validateStartupOptions(): void {

@@ -46,6 +46,7 @@ type Action =
 
 const DEFAULT_LOOKAHEAD = 2;
 const UNKNOWN_PROVIDER_ID = 'unknown-provider';
+const UNKNOWN_RUNTIME_SIGNATURE = 'unknown-runtime';
 
 function getProviderId(provider: TTSProvider): string {
   const providerWithId = provider as TTSProvider & { providerId?: string; id?: string };
@@ -60,12 +61,28 @@ function getProviderId(provider: TTSProvider): string {
 
 function buildSynthesisCacheKey(
   providerId: string,
+  providerRuntimeSignature: string,
   segmentId: string,
   options?: TTSSynthesisOptions,
 ): string {
   const voice = options?.voice ?? '';
   const rate = options?.rate ?? '';
-  return `${providerId}|${segmentId}|${voice}|${rate}`;
+  return `${providerId}|${providerRuntimeSignature}|${segmentId}|${voice}|${rate}`;
+}
+
+function getProviderRuntimeSignature(provider: TTSProvider): string {
+  const providerWithRuntime = provider as TTSProvider & {
+    getRuntimeDevice?: () => string;
+    runtimeDevice?: string;
+    device?: string;
+    dtype?: string;
+  };
+  const runtime = providerWithRuntime.getRuntimeDevice?.()
+    ?? providerWithRuntime.runtimeDevice
+    ?? providerWithRuntime.device
+    ?? UNKNOWN_RUNTIME_SIGNATURE;
+  const dtype = providerWithRuntime.dtype ?? 'unknown-dtype';
+  return `${runtime}|${dtype}`;
 }
 
 function createInitialState(cursor?: PlayerResumeCursor): PlayerInternalState {
@@ -168,10 +185,11 @@ export function usePlayerController({
     queueVersionRef.current += 1;
   }, []);
 
-  const providerId = useMemo(() => getProviderId(provider), [provider]);
+  const providerId = getProviderId(provider);
+  const providerRuntimeSignature = getProviderRuntimeSignature(provider);
   const getCacheKey = useCallback((segmentId: string) => {
-    return buildSynthesisCacheKey(providerId, segmentId, synthesisOptions);
-  }, [providerId, synthesisOptions]);
+    return buildSynthesisCacheKey(providerId, providerRuntimeSignature, segmentId, synthesisOptions);
+  }, [providerId, providerRuntimeSignature, synthesisOptions]);
 
   const setQueueEntry = useCallback((entry: QueueSegmentModel) => {
     queueRef.current.set(entry.cacheKey, entry);
@@ -586,7 +604,8 @@ export function usePlayerController({
 
   useEffect(() => {
     const synthesisIdentity = JSON.stringify({
-      provider,
+      providerId,
+      providerRuntimeSignature,
       voice: synthesisOptions?.voice ?? null,
       rate: synthesisOptions?.rate ?? null,
     });
@@ -614,7 +633,7 @@ export function usePlayerController({
     bumpQueueVersion();
     dispatch({ type: 'SET_STATE', state: 'idle' });
     dispatch({ type: 'RESET_ERROR' });
-  }, [bumpQueueVersion, cleanupAudio, cleanupNativeSpeech, provider, synthesisOptions?.rate, synthesisOptions?.voice]);
+  }, [bumpQueueVersion, cleanupAudio, cleanupNativeSpeech, providerId, providerRuntimeSignature, synthesisOptions?.rate, synthesisOptions?.voice]);
 
   useEffect(() => {
     return () => {

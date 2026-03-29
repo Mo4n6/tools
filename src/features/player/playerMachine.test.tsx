@@ -194,4 +194,68 @@ describe('usePlayerController transitions', () => {
     expect(getController().queue[0]?.audioUrl).toBeNull();
     Object.assign(globalThis, { URL: originalURL });
   });
+
+  it('clears synthesized queue when provider runtime signature changes', async () => {
+    const originalURL = globalThis.URL;
+    const revokeObjectURL = vi.fn();
+    Object.assign(globalThis, {
+      URL: {
+        revokeObjectURL,
+      },
+    });
+
+    const provider = {
+      runtimeDevice: 'webgpu' as 'webgpu' | 'wasm',
+      dtype: 'q8',
+      getRuntimeDevice() {
+        return this.runtimeDevice;
+      },
+      listVoices: vi.fn(async () => []),
+      warmup: vi.fn(async () => undefined),
+      synthesize: vi.fn(async ({ id }: { id: string }) => ({
+        segmentId: id,
+        blob: new Blob(['ok'], { type: 'audio/mpeg' }),
+        url: `blob:${id}`,
+      })),
+    } as TTSProvider & { runtimeDevice: 'webgpu' | 'wasm'; dtype: string; getRuntimeDevice: () => string };
+
+    let controller: UsePlayerControllerResult | null = null;
+    const getController = (): UsePlayerControllerResult => {
+      if (!controller) {
+        throw new Error('Controller was not initialized');
+      }
+      return controller;
+    };
+
+    await act(async () => {
+      root.render(
+        <HookHarness
+          provider={provider}
+          synthesisOptions={{ voice: 'voice-a', rate: 1 }}
+          onController={(value) => { controller = value; }}
+        />,
+      );
+    });
+
+    await act(async () => {
+      await getController().play();
+    });
+    expect(getController().queue[0]?.audioUrl).toBe('blob:seg-1');
+
+    await act(async () => {
+      provider.runtimeDevice = 'wasm';
+      root.render(
+        <HookHarness
+          provider={provider}
+          synthesisOptions={{ voice: 'voice-a', rate: 1 }}
+          onController={(value) => { controller = value; }}
+        />,
+      );
+    });
+
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:seg-1');
+    expect(getController().queue[0]?.synthesisStatus).toBe('idle');
+    expect(getController().queue[0]?.audioUrl).toBeNull();
+    Object.assign(globalThis, { URL: originalURL });
+  });
 });

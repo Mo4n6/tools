@@ -10,22 +10,7 @@ import type { TTSFallbackError } from './tts/errors';
 import { canImportKokoroModule } from './tts/providers/kokoroProvider';
 import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
 import type { TTSProvider, TTSVoice } from './tts/types';
-
-const CONTINUOUS_CHUNK_TARGET_CHARS = 1400;
-const CONTINUOUS_CHUNK_MIN_CHARS = 260;
-
-function endsWithTerminalPunctuation(text: string): boolean {
-  return /[.!?…:;]$/.test(text.trim());
-}
-
-function normalizeContinuousJoin(previousText: string, nextText: string): string {
-  if (!previousText) {
-    return nextText;
-  }
-
-  const separator = endsWithTerminalPunctuation(previousText) ? ' ' : ', ';
-  return `${separator}${nextText}`;
-}
+import { chunkSegmentsByPolicy, defaultChunkingPolicy } from './domain/chunking/policy';
 
 type PlaybackAnchor = {
   segmentId: string;
@@ -45,57 +30,27 @@ function buildContinuousPlayback(segments: SpeakableSegment[]): {
   playbackSegments: Array<{ id: string; text: string }>;
   seekAnchors: PlaybackAnchor[];
 } {
-  const playbackSegments: Array<{ id: string; text: string }> = [];
+  const chunkedSegments = chunkSegmentsByPolicy(segments, defaultChunkingPolicy);
+  const playbackSegments = chunkedSegments.map(({ id, text }) => ({ id, text }));
+
   const seekAnchors: PlaybackAnchor[] = [];
 
-  let chunkText = '';
-  let chunkCharLength = 0;
-  let chunkStartIndex = 0;
-  let chunkAnchors: PlaybackAnchor[] = [];
+  chunkedSegments.forEach((chunk, playbackSegmentIndex) => {
+    let runningOffset = 0;
 
-  const flushChunk = (endIndex: number) => {
-    if (!chunkText) {
-      return;
-    }
-    const playbackSegmentIndex = playbackSegments.length;
-    playbackSegments.push({
-      id: `chunk_${chunkStartIndex}_${endIndex}`,
-      text: chunkText,
-    });
-    seekAnchors.push(
-      ...chunkAnchors.map((anchor) => ({
-        ...anchor,
+    chunk.pieces.forEach((piece) => {
+      seekAnchors.push({
+        segmentId: piece.segmentId,
         playbackSegmentIndex,
-      })),
-    );
-
-    chunkText = '';
-    chunkCharLength = 0;
-    chunkAnchors = [];
-  };
-
-  segments.forEach((segment, index) => {
-    const segmentPrefix = normalizeContinuousJoin(chunkText, segment.text).slice(chunkText.length);
-    const addition = segmentPrefix.length;
-    const exceedsTarget = chunkText.length > 0 && chunkCharLength + addition > CONTINUOUS_CHUNK_TARGET_CHARS;
-    if (exceedsTarget && chunkCharLength >= CONTINUOUS_CHUNK_MIN_CHARS) {
-      flushChunk(index - 1);
-      chunkStartIndex = index;
-    }
-
-    const appendText = normalizeContinuousJoin(chunkText, segment.text).slice(chunkText.length);
-    chunkAnchors.push({
-      segmentId: segment.id,
-      playbackSegmentIndex: -1,
-      playbackCharOffset: chunkCharLength + appendText.length - segment.text.length,
+        playbackCharOffset: runningOffset,
+      });
+      runningOffset += piece.text.length + defaultChunkingPolicy.prosodySpacing.length;
     });
-    chunkText += appendText;
-    chunkCharLength += appendText.length;
   });
 
-  flushChunk(segments.length - 1);
   return { playbackSegments, seekAnchors };
 }
+
 
 const isUrlIngestEnabled = import.meta.env.VITE_ENABLE_URL_INGEST !== 'false';
 const isPagesStyleBase = import.meta.env.BASE_URL !== '/';
@@ -161,6 +116,50 @@ const migrateStoredVoice = (voice: string): string => normalizeKokoroVoiceId(voi
 const getDefaultKokoroVoice = (voices: TTSVoice[]): TTSVoice | undefined => (
   voices.find((providerVoice) => providerVoice.id === 'af_alloy') ?? voices[0]
 );
+
+const normalizeLanguageTag = (language?: string): string => (
+  (language ?? '').trim().toLowerCase()
+);
+
+const getLanguageRoot = (language?: string): string => {
+  const normalized = normalizeLanguageTag(language);
+  return normalized.split(/[-_]/)[0] ?? '';
+};
+
+const isVoiceLanguageMatch = (voiceLanguage: string | undefined, targetLanguage: string): boolean => {
+  const normalizedTarget = normalizeLanguageTag(targetLanguage);
+  if (!normalizedTarget) {
+    return false;
+  }
+
+  const normalizedVoiceLanguage = normalizeLanguageTag(voiceLanguage);
+  if (!normalizedVoiceLanguage) {
+    return false;
+  }
+
+  return (
+    normalizedVoiceLanguage === normalizedTarget
+    || getLanguageRoot(normalizedVoiceLanguage) === getLanguageRoot(normalizedTarget)
+  );
+};
+
+const getEnglishVoices = (voices: TTSVoice[]): TTSVoice[] => voices.filter((providerVoice) => (
+  isVoiceLanguageMatch(providerVoice.language, 'en')
+));
+
+const getPreferredVoicesForLanguage = (voices: TTSVoice[], language: string): TTSVoice[] => {
+  const languageMatches = voices.filter((providerVoice) => isVoiceLanguageMatch(providerVoice.language, language));
+  if (languageMatches.length > 0) {
+    return languageMatches;
+  }
+
+  const englishVoices = getEnglishVoices(voices);
+  if (englishVoices.length > 0) {
+    return englishVoices;
+  }
+
+  return voices;
+};
 
 const getWebSpeechVoiceIds = (): string[] => {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
@@ -242,13 +241,17 @@ const persistVoiceMigrationDone = (): void => {
 type ProviderRuntimeMetadata = {
   providerType: 'kokoro' | 'web-speech';
   runtime: 'webgpu' | 'wasm' | 'system';
+  dtype: TtsSelectionDtype;
   fallbackToWebSpeech: boolean;
   fallbackError?: TTSFallbackError;
 };
 
+type TtsSelectionDtype = 'fp32' | 'fp16' | 'q8' | 'q4' | 'n/a';
+
 type TtsInitStatusLine = {
   providerSelected: string;
   runtime: ProviderRuntimeMetadata['runtime'];
+  dtype: TtsSelectionDtype;
   skipKokoroInit: boolean;
   kokoroImportable: boolean;
   fallbackCode: TTSFallbackError['code'] | 'none';
@@ -259,6 +262,7 @@ type DevTtsDiagnostics = {
   webgpuSupported: boolean;
   deviceMemoryGb?: number;
   selectedProvider: string;
+  selectedDtype: TtsSelectionDtype;
   fallbackCode?: TTSFallbackError['code'];
   fallbackReason?: string;
   fallbackHint?: string;
@@ -359,6 +363,7 @@ function App() {
   const [providerRuntimeMetadata, setProviderRuntimeMetadata] = useState<ProviderRuntimeMetadata>({
     providerType: 'web-speech',
     runtime: 'system',
+    dtype: 'n/a',
     fallbackToWebSpeech: false,
   });
   const [showFallbackBanner, setShowFallbackBanner] = useState(false);
@@ -374,6 +379,7 @@ function App() {
   const [showDetails, setShowDetails] = useState(!isProduction);
   const [voice, setVoice] = useState(storedPreferences?.voice ?? '');
   const [availableVoices, setAvailableVoices] = useState<TTSVoice[]>([]);
+  const [selectedVoiceLanguage, setSelectedVoiceLanguage] = useState('auto');
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
   const [playbackModeOverride, setPlaybackModeOverride] = useState<PlaybackMode | null>(null);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
@@ -454,6 +460,7 @@ function App() {
         setTtsInitStatusLine({
           providerSelected: providerName,
           runtime: selectedProvider.runtime,
+          dtype: selectedProvider.dtype,
           skipKokoroInit,
           kokoroImportable: kokoroPackageLoadable,
           fallbackCode: selectedProvider.fallbackError?.code ?? 'none',
@@ -467,6 +474,7 @@ function App() {
           webgpuSupported: await checkWebGpuSupport(),
           deviceMemoryGb: getDeviceMemoryGb(),
           selectedProvider: providerName,
+          selectedDtype: selectedProvider.dtype,
           fallbackCode: selectedProvider.fallbackError?.code,
           fallbackReason: fallbackSummary.reason,
           fallbackHint: fallbackSummary.hint,
@@ -490,6 +498,7 @@ function App() {
         setProviderRuntimeMetadata({
           providerType: selectedProvider.providerType,
           runtime: selectedProvider.runtime,
+          dtype: selectedProvider.dtype,
           fallbackToWebSpeech: selectedProvider.fallbackToWebSpeech,
           fallbackError: selectedProvider.fallbackError,
         });
@@ -550,7 +559,8 @@ function App() {
         const normalizedSelectedVoice = providerLabel === 'kokoro'
           ? normalizeKokoroVoiceId(selectedVoice)
           : selectedVoice;
-        const isSelectedVoiceAvailable = voices.some((providerVoice) => providerVoice.id === normalizedSelectedVoice);
+        const preferredVoices = getPreferredVoicesForLanguage(voices, effectiveVoiceLanguage);
+        const isSelectedVoiceAvailable = preferredVoices.some((providerVoice) => providerVoice.id === normalizedSelectedVoice);
         if (isSelectedVoiceAvailable) {
           if (normalizedSelectedVoice !== selectedVoice) {
             setVoice(normalizedSelectedVoice);
@@ -562,8 +572,8 @@ function App() {
         }
 
         const fallbackVoice = providerLabel === 'kokoro'
-          ? getDefaultKokoroVoice(voices) ?? voices[0]
-          : voices[0];
+          ? getDefaultKokoroVoice(preferredVoices) ?? preferredVoices[0]
+          : preferredVoices[0];
         setVoiceReadinessHelperText('Select a valid voice.');
         setVoice(fallbackVoice.id);
         if (typeof window !== 'undefined') {
@@ -605,7 +615,14 @@ function App() {
     return () => {
       active = false;
     };
-  }, [hasCompletedVoiceMigration, hasPendingVoiceMigrationNormalization, provider, providerLabel, voice]);
+  }, [
+    effectiveVoiceLanguage,
+    hasCompletedVoiceMigration,
+    hasPendingVoiceMigrationNormalization,
+    provider,
+    providerLabel,
+    voice,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -741,12 +758,13 @@ function App() {
           <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${runtimeStatus.colorClassName}`}>
             Runtime: {runtimeStatus.label}
           </span>
+          <span>dtype={providerRuntimeMetadata.dtype}</span>
           <span>fallbackToWebSpeech={String(providerRuntimeMetadata.fallbackToWebSpeech)}</span>
           </p>
         ) : null}
         {shouldShowAdvancedDetails ? (
           <p className="mt-2 text-xs text-slate-400">
-            tts init: providerSelected={ttsInitStatusLine?.providerSelected ?? 'pending'} · runtime={ttsInitStatusLine?.runtime ?? 'pending'} · skipKokoroInit={String(ttsInitStatusLine?.skipKokoroInit ?? false)} · kokoroImportable={ttsInitStatusLine ? String(ttsInitStatusLine.kokoroImportable) : 'pending'} · fallbackCode={ttsInitStatusLine?.fallbackCode ?? 'pending'}
+            tts init: providerSelected={ttsInitStatusLine?.providerSelected ?? 'pending'} · runtime={ttsInitStatusLine?.runtime ?? 'pending'} · dtype={ttsInitStatusLine?.dtype ?? 'pending'} · skipKokoroInit={String(ttsInitStatusLine?.skipKokoroInit ?? false)} · kokoroImportable={ttsInitStatusLine ? String(ttsInitStatusLine.kokoroImportable) : 'pending'} · fallbackCode={ttsInitStatusLine?.fallbackCode ?? 'pending'}
           </p>
         ) : null}
       </header>
@@ -811,6 +829,7 @@ function App() {
             <li>webgpuSupported: {String(devTtsDiagnostics.webgpuSupported)}</li>
             <li>deviceMemoryGb: {devTtsDiagnostics.deviceMemoryGb ?? 'unknown'}</li>
             <li>selectedProvider: {devTtsDiagnostics.selectedProvider}</li>
+            <li>selectedDtype: {devTtsDiagnostics.selectedDtype}</li>
             <li>fallbackCode: {devTtsDiagnostics.fallbackCode ?? 'none'}</li>
             <li>fallbackReason: {devTtsDiagnostics.fallbackReason ?? 'none'}</li>
             <li>fallbackHint: {devTtsDiagnostics.fallbackHint ?? 'none'}</li>
@@ -962,7 +981,9 @@ function App() {
               playbackMode={playbackMode}
               machineError={player.error}
               voice={voice}
-              voices={availableVoices.map(({ id, name }) => ({ id, name }))}
+              voices={filteredVoices}
+              selectedLanguage={selectedVoiceLanguage}
+              languageOptions={languageOptions}
               rate={rate}
               isVoiceReadyForPlayback={isVoiceReadyForPlayback}
               voiceReadinessHelperText={voiceReadinessHelperText}
@@ -993,6 +1014,7 @@ function App() {
                 void player.seekSegment(player.currentSegmentIndex, 0);
               }}
               onVoiceChange={setVoice}
+              onLanguageChange={setSelectedVoiceLanguage}
               onRateChange={setRate}
               onPlaybackModeChange={setPlaybackModeOverride}
             />
