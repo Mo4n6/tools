@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
+    "check:merge-leftovers": "node scripts/check-merge-leftovers.mjs",
+    "ci:prebuild": "npm run typecheck && npm run check:merge-leftovers",
     "build": "tsc -b && vite build",
     "build:gh-pages": "VITE_ENABLE_URL_INGEST=false npm run build",
     "preview": "vite preview",
