@@ -139,6 +139,7 @@ export interface TTSProviderSelectorOptions {
   skipKokoroInit?: boolean;
   skipKokoroInitReason?: string;
   allowWebGpuIfUnstable?: boolean;
+  skipWebGpuQualityCheck?: boolean;
 }
 
 export interface TTSProviderSelection {
@@ -285,7 +286,7 @@ export const selectTTSProvider = async (
       await kokoroProvider.warmup();
       const runtimeAfterWarmup = kokoroProvider.getRuntimeDevice();
 
-      if (runtimeAfterWarmup === 'webgpu') {
+      if (runtimeAfterWarmup === 'webgpu' && !options.skipWebGpuQualityCheck) {
         let webGpuQualityCheckFailed = false;
 
         try {
