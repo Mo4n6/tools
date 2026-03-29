@@ -1,5 +1,6 @@
 import { KokoroDevice, KokoroProvider, KokoroProviderOptions } from './providers/kokoroProvider';
 import { WebSpeechProvider } from './providers/webSpeechProvider';
+import { DEFAULT_KOKORO_MODEL } from './modelArtifacts';
 import { TTSProvider } from './types';
 
 const DEFAULT_MEMORY_GB_THRESHOLD = 4;
@@ -44,7 +45,7 @@ export const selectTTSProvider = async (
 
   if (shouldUseKokoro) {
     return new KokoroProvider({
-      model: options.kokoro?.model ?? 'q8',
+      model: options.kokoro?.model ?? DEFAULT_KOKORO_MODEL,
       device: requestedDevice,
     });
   }

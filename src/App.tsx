@@ -1,4 +1,5 @@
 import { ChangeEvent, useEffect, useState } from 'react';
+import { ttsManifest } from './licenses/ttsManifest';
 import { ingestFile, ingestText, ingestUrl } from './lib/ingest/ingest';
 import { DocumentModel, PlaybackQueueStatus, SourceType } from './types/reader';
 
@@ -22,6 +23,7 @@ function App() {
   const [voice, setVoice] = useState('alloy');
   const [rate, setRate] = useState(1);
   const [pitch, setPitch] = useState(1);
+  const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -77,6 +79,45 @@ function App() {
           Scaffold for source ingestion, normalization preview, and spoken playback.
         </p>
       </header>
+
+
+      {showModelLicenseInfo ? (
+        <div className="fixed inset-0 z-20 flex items-center justify-center bg-slate-950/80 p-4">
+          <div className="w-full max-w-2xl rounded-xl border border-border bg-panel p-5 shadow-2xl">
+            <div className="mb-3 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold">Model &amp; License Info</h2>
+                <p className="mt-1 text-sm text-slate-300">Loaded from <code>docs/licenses/tts-manifest.json</code>.</p>
+              </div>
+              <button
+                type="button"
+                className="rounded-md border border-border px-3 py-1 text-sm text-slate-200"
+                onClick={() => setShowModelLicenseInfo(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="space-y-3">
+              {ttsManifest.artifacts.map((artifact) => (
+                <article key={artifact.id} className="rounded-md border border-border bg-slate-900/70 p-3 text-sm">
+                  <p><span className="font-semibold">Package/model:</span> {artifact.packageOrModelName}</p>
+                  <p><span className="font-semibold">Version/hash:</span> {artifact.versionOrHash}</p>
+                  <p><span className="font-semibold">License:</span> {artifact.license}</p>
+                  <p>
+                    <span className="font-semibold">Source URL:</span>{' '}
+                    <a className="text-sky-300 underline" href={artifact.sourceUrl} rel="noreferrer" target="_blank">
+                      {artifact.sourceUrl}
+                    </a>
+                  </p>
+                  {artifact.attributionText ? (
+                    <p><span className="font-semibold">Attribution:</span> {artifact.attributionText}</p>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <section className="grid gap-4 lg:grid-cols-3">
         <article className="rounded-xl border border-border bg-panel p-4 shadow-lg shadow-black/20">

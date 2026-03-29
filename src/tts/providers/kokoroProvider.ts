@@ -1,3 +1,4 @@
+import { DEFAULT_KOKORO_MODEL } from '../modelArtifacts';
 import { TTSProvider, TTSSegment, TTSSynthesisOptions, TTSSynthesisResult, TTSVoice } from '../types';
 
 export type KokoroDevice = 'wasm' | 'webgpu';
@@ -24,8 +25,6 @@ type KokoroEngine = {
   ) => Promise<Blob | ArrayBuffer | Uint8Array>;
 };
 
-const DEFAULT_MODEL = 'q8';
-
 const toAudioBlob = (audio: Blob | ArrayBuffer | Uint8Array): Blob => {
   if (audio instanceof Blob) {
     return audio;
@@ -46,7 +45,7 @@ export class KokoroProvider implements TTSProvider {
   private enginePromise?: Promise<KokoroEngine>;
 
   constructor(options: KokoroProviderOptions = {}) {
-    this.model = options.model ?? DEFAULT_MODEL;
+    this.model = options.model ?? DEFAULT_KOKORO_MODEL;
     this.device = options.device ?? 'wasm';
   }
 

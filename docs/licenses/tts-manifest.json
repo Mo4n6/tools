@@ -1,0 +1,12 @@
+{
+  "artifacts": [
+    {
+      "id": "kokoro-js:q8",
+      "packageOrModelName": "kokoro-js / q8",
+      "versionOrHash": "q8",
+      "license": "Apache-2.0",
+      "sourceUrl": "https://github.com/hexgrad/kokoro",
+      "attributionText": "Kokoro model by hexgrad, used via kokoro-js (Apache-2.0)."
+    }
+  ]
+}
