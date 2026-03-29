@@ -65,6 +65,44 @@ describe('KokoroProvider runtime downgrade', () => {
       transition: 'webgpu->wasm',
       segmentId: 'seg-1',
       reason: 'empty_audio',
+      triggerCategory: 'validation',
+    }));
+  });
+
+  it('retries with wasm when webgpu throws a non-validation runtime error', async () => {
+    const logSpy = vi.spyOn(perfTelemetry.sink, 'log');
+    fromPretrainedMock.mockImplementation(async (_modelId: string, options: { device?: string }) => {
+      if (options.device === 'webgpu') {
+        return {
+          device: 'webgpu',
+          voices: { af_heart: { name: 'Heart' } },
+          generate: vi.fn(async () => {
+            throw new Error('WebGPU backend error: device lost while executing graph');
+          }),
+        };
+      }
+
+      return {
+        device: 'wasm',
+        voices: { af_heart: { name: 'Heart' } },
+        generate: vi.fn(async () => buildWavBytes()),
+      };
+    });
+
+    const { KokoroProvider } = await import('./kokoroProvider');
+    const provider = new KokoroProvider({ device: 'webgpu' });
+    await provider.warmup();
+
+    const result = await provider.synthesize({ id: 'seg-runtime-1', text: 'hello runtime fallback' });
+    expect('url' in result && result.url.length > 0).toBe(true);
+    expect(provider.getRuntimeDevice()).toBe('wasm');
+    expect(fromPretrainedMock).toHaveBeenCalledTimes(2);
+    expect(logSpy).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'tts.runtime_downgrade',
+      transition: 'webgpu->wasm',
+      segmentId: 'seg-runtime-1',
+      reason: 'runtime_device_lost',
+      triggerCategory: 'runtime_exception',
     }));
   });
 

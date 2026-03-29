@@ -56,6 +56,12 @@ class TTSSynthFailureError extends Error {
   }
 }
 
+type DowngradeTrigger = {
+  shouldDowngrade: boolean;
+  category?: 'validation' | 'runtime_exception';
+  reason?: string;
+};
+
 const loadKokoroModule = async (): Promise<KokoroModule> => {
   const module = await import('kokoro-js');
   return module as KokoroModule;
@@ -149,15 +155,16 @@ export class KokoroProvider implements TTSProvider {
     try {
       return await this.synthesizeWithEngine(await this.getEngine(), segment, options);
     } catch (error) {
-      if (!this.shouldDowngradeToWasm(error)) {
+      const downgradeTrigger = this.getDowngradeTrigger(error);
+      if (!downgradeTrigger.shouldDowngrade) {
         throw error;
       }
 
-      const reason = this.toDowngradeReason(error);
       perfTelemetry.sink.log({
         type: 'tts.runtime_downgrade',
         transition: 'webgpu->wasm',
-        reason,
+        reason: downgradeTrigger.reason ?? 'synthesis_validation_failed',
+        triggerCategory: downgradeTrigger.category ?? 'validation',
         segmentId: segment.id,
       });
 
@@ -253,20 +260,37 @@ export class KokoroProvider implements TTSProvider {
     };
   }
 
-  private shouldDowngradeToWasm(error: unknown): boolean {
+  private getDowngradeTrigger(error: unknown): DowngradeTrigger {
     if (this.getRuntimeDevice() !== 'webgpu') {
-      return false;
+      return { shouldDowngrade: false };
     }
 
     if (this.device !== 'webgpu') {
-      return false;
+      return { shouldDowngrade: false };
     }
 
     if (!(error instanceof Error)) {
-      return false;
+      return { shouldDowngrade: false };
     }
 
-    return error.message.startsWith('KOKORO_AUDIO_INVALID:') || (error as { code?: string }).code === 'tts.synth_failure';
+    if (error.message.startsWith('KOKORO_AUDIO_INVALID:') || (error as { code?: string }).code === 'tts.synth_failure') {
+      return {
+        shouldDowngrade: true,
+        category: 'validation',
+        reason: this.toDowngradeReason(error),
+      };
+    }
+
+    const runtimeReason = this.toRuntimeDowngradeReason(error);
+    if (runtimeReason) {
+      return {
+        shouldDowngrade: true,
+        category: 'runtime_exception',
+        reason: runtimeReason,
+      };
+    }
+
+    return { shouldDowngrade: false };
   }
 
   private toDowngradeReason(error: unknown): string {
@@ -275,6 +299,43 @@ export class KokoroProvider implements TTSProvider {
     }
 
     return 'synthesis_validation_failed';
+  }
+
+  private toRuntimeDowngradeReason(error: Error): string | undefined {
+    const errorCode = (error as { code?: string }).code?.toLowerCase() ?? '';
+    const errorName = error.name.toLowerCase();
+    const normalizedMessage = error.message.toLowerCase();
+    const combined = `${errorName} ${errorCode} ${normalizedMessage}`;
+
+    if (combined.includes('device lost') || combined.includes('devicelost')) {
+      return 'runtime_device_lost';
+    }
+
+    if (combined.includes('adapter reset') || combined.includes('adapterreset')) {
+      return 'runtime_adapter_reset';
+    }
+
+    if (
+      combined.includes('out of memory')
+      || combined.includes('out-of-memory')
+      || combined.includes('oom')
+      || combined.includes('memory allocation failed')
+      || combined.includes('insufficient memory')
+    ) {
+      return 'runtime_oom';
+    }
+
+    if (
+      combined.includes('backend error')
+      || combined.includes('backenderror')
+      || combined.includes('internal backend')
+      || combined.includes('wgpu')
+      || combined.includes('dawn')
+    ) {
+      return 'runtime_backend_error';
+    }
+
+    return undefined;
   }
 
   private getWasmFallbackEngine(): Promise<KokoroEngine> {
