@@ -32,14 +32,17 @@ class MockAudio {
 
 function HookHarness({
   provider,
+  synthesisOptions,
   onController,
 }: {
   provider: TTSProvider;
+  synthesisOptions?: { voice?: string; rate?: number };
   onController: (controller: UsePlayerControllerResult) => void;
 }): React.JSX.Element {
   const controller = usePlayerController({
     provider,
     segments,
+    synthesisOptions,
     persistKey: 'player-machine-test',
     prefetchCount: 0,
   });
@@ -129,5 +132,66 @@ describe('usePlayerController transitions', () => {
     expect(getController().state).toBe('error');
     expect(getController().error).toContain('boom synthesis');
     expect(getController().currentSegmentIndex).toBe(1);
+  });
+
+  it('clears synthesized queue when synthesis options change', async () => {
+    const originalURL = globalThis.URL;
+    const revokeObjectURL = vi.fn();
+    Object.assign(globalThis, {
+      URL: {
+        revokeObjectURL,
+      },
+    });
+
+    const provider: TTSProvider = {
+      listVoices: vi.fn(async () => []),
+      warmup: vi.fn(async () => undefined),
+      synthesize: vi.fn(async ({ id }) => ({
+        segmentId: id,
+        blob: new Blob(['ok'], { type: 'audio/mpeg' }),
+        url: `blob:${id}`,
+      })),
+    };
+
+    let controller: UsePlayerControllerResult | null = null;
+    const getController = (): UsePlayerControllerResult => {
+      if (!controller) {
+        throw new Error('Controller was not initialized');
+      }
+      return controller;
+    };
+
+    await act(async () => {
+      root.render(
+        <HookHarness
+          provider={provider}
+          synthesisOptions={{ voice: 'voice-a', rate: 1 }}
+          onController={(value) => { controller = value; }}
+        />,
+      );
+    });
+
+    await act(async () => {
+      await getController().play();
+    });
+
+    expect(getController().queue[0]?.synthesisStatus).toBe('ready');
+    expect(getController().queue[0]?.audioUrl).toBe('blob:seg-1');
+
+    await act(async () => {
+      root.render(
+        <HookHarness
+          provider={provider}
+          synthesisOptions={{ voice: 'voice-b', rate: 1 }}
+          onController={(value) => { controller = value; }}
+        />,
+      );
+    });
+
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:seg-1');
+    expect(getController().state).toBe('idle');
+    expect(getController().queue[0]?.synthesisStatus).toBe('idle');
+    expect(getController().queue[0]?.audioUrl).toBeNull();
+    Object.assign(globalThis, { URL: originalURL });
   });
 });

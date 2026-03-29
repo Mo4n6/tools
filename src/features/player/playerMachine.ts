@@ -119,6 +119,7 @@ export function usePlayerController({
   const playRequestStartRef = useRef<number | null>(null);
   const queueTransitionCountRef = useRef(0);
   const queueUnderrunCountRef = useRef(0);
+  const synthesisIdentityRef = useRef<string | null>(null);
 
   const bumpQueueVersion = useCallback(() => {
     queueVersionRef.current += 1;
@@ -493,6 +494,38 @@ export function usePlayerController({
   useEffect(() => {
     persistCursor(machine.currentSegmentIndex, machine.charOffset);
   }, [machine.charOffset, machine.currentSegmentIndex, persistCursor]);
+
+  useEffect(() => {
+    const synthesisIdentity = JSON.stringify({
+      provider,
+      voice: synthesisOptions?.voice ?? null,
+      rate: synthesisOptions?.rate ?? null,
+    });
+
+    if (synthesisIdentityRef.current === null) {
+      synthesisIdentityRef.current = synthesisIdentity;
+      return;
+    }
+
+    if (synthesisIdentityRef.current === synthesisIdentity) {
+      return;
+    }
+
+    synthesisIdentityRef.current = synthesisIdentity;
+    transitioningRef.current = false;
+    cleanupAudio();
+    cleanupNativeSpeech();
+    nextPrefetchInFlightRef.current.clear();
+    queueRef.current.forEach((entry) => {
+      if (entry.audioUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(entry.audioUrl);
+      }
+    });
+    queueRef.current.clear();
+    bumpQueueVersion();
+    dispatch({ type: 'SET_STATE', state: 'idle' });
+    dispatch({ type: 'RESET_ERROR' });
+  }, [bumpQueueVersion, cleanupAudio, cleanupNativeSpeech, provider, synthesisOptions?.rate, synthesisOptions?.voice]);
 
   useEffect(() => {
     return () => {
