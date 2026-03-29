@@ -168,7 +168,8 @@ function App() {
   const [showInformationalFallbackBanner, setShowInformationalFallbackBanner] = useState(false);
   const [providerFallbackError, setProviderFallbackError] = useState<TTSFallbackError | null>(null);
   const [voiceFallbackWarning, setVoiceFallbackWarning] = useState<string | null>(null);
-  const [isPlaybackReady, setIsPlaybackReady] = useState(false);
+  const [isVoiceReadyForPlayback, setIsVoiceReadyForPlayback] = useState(false);
+  const [voiceReadinessHelperText, setVoiceReadinessHelperText] = useState('Loading voices…');
   const [devTtsDiagnostics, setDevTtsDiagnostics] = useState<DevTtsDiagnostics | null>(null);
   const [voice, setVoice] = useState(storedPreferences?.voice ?? 'af_alloy');
   const [availableVoices, setAvailableVoices] = useState<TTSVoice[]>([]);
@@ -266,10 +267,9 @@ function App() {
     let active = true;
 
     const ensureVoiceAvailable = async () => {
-      let awaitingVoiceReconciliation = false;
-
       if (active) {
-        setIsPlaybackReady(false);
+        setIsVoiceReadyForPlayback(false);
+        setVoiceReadinessHelperText('Loading voices…');
       }
 
       try {
@@ -282,19 +282,22 @@ function App() {
 
         if (voices.length === 0) {
           setVoiceFallbackWarning('No voices were returned by the active provider.');
+          setVoiceReadinessHelperText('Select a valid voice.');
           return;
         }
 
         const selectedVoice = voice;
         const isSelectedVoiceAvailable = voices.some((providerVoice) => providerVoice.id === selectedVoice);
         if (isSelectedVoiceAvailable) {
+          setVoiceReadinessHelperText(null);
+          setIsVoiceReadyForPlayback(true);
           return;
         }
 
         const fallbackVoice = providerLabel === 'kokoro'
           ? voices.find((providerVoice) => providerVoice.id === 'af_alloy') ?? voices[0]
           : voices[0];
-        awaitingVoiceReconciliation = true;
+        setVoiceReadinessHelperText('Select a valid voice.');
         setVoice(fallbackVoice.id);
         setVoiceFallbackWarning(
           `Selected voice "${selectedVoice}" is unavailable for ${providerLabel}; switched to "${fallbackVoice.name}".`,
@@ -303,10 +306,7 @@ function App() {
         if (active) {
           setAvailableVoices([]);
           setVoiceFallbackWarning('Unable to validate voices for the active provider.');
-        }
-      } finally {
-        if (active && !awaitingVoiceReconciliation) {
-          setIsPlaybackReady(true);
+          setVoiceReadinessHelperText('Select a valid voice.');
         }
       }
     };
@@ -432,7 +432,7 @@ function App() {
         </div>
       ) : null}
 
-      {!isPlaybackReady ? (
+      {!isVoiceReadyForPlayback ? (
         <div className="mb-4 rounded-md border border-sky-700 bg-sky-950/30 px-3 py-2 text-sm text-sky-100">
           Preparing voices for the active provider. Playback will be enabled once voice validation completes.
         </div>
@@ -607,9 +607,11 @@ function App() {
               voice={voice}
               voices={availableVoices}
               rate={rate}
-              playDisabled={!isPlaybackReady}
+              isVoiceReadyForPlayback={isVoiceReadyForPlayback}
+              voiceReadinessHelperText={voiceReadinessHelperText}
+              playDisabled={!isVoiceReadyForPlayback}
               onPlay={() => {
-                if (!isPlaybackReady) {
+                if (!isVoiceReadyForPlayback) {
                   setVoiceFallbackWarning(
                     'Playback is temporarily disabled while voice validation is still in progress.',
                   );

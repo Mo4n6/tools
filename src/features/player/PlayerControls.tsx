@@ -9,6 +9,8 @@ type PlayerControlsProps = {
   voice: string;
   voices: Array<{ id: string; name: string }>;
   rate: number;
+  isVoiceReadyForPlayback?: boolean;
+  voiceReadinessHelperText?: string | null;
   playDisabled?: boolean;
   onPlay: () => void;
   onPause: () => void;
@@ -40,6 +42,8 @@ export function PlayerControls({
   voice,
   voices,
   rate,
+  isVoiceReadyForPlayback = true,
+  voiceReadinessHelperText = null,
   playDisabled = false,
   onPlay,
   onPause,
@@ -142,6 +146,11 @@ export function PlayerControls({
           ))
         )}
       </select>
+      {!isVoiceReadyForPlayback && voiceReadinessHelperText ? (
+        <p className="text-xs text-amber-300" role="status">
+          {voiceReadinessHelperText}
+        </p>
+      ) : null}
 
       <label className="block text-sm text-slate-300" htmlFor="rate-control">
         Rate control: {rate.toFixed(1)}x
