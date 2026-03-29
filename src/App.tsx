@@ -2,7 +2,7 @@ import { ChangeEvent, useEffect, useMemo, useState } from 'react';
 import { ttsManifest } from './licenses/ttsManifest';
 import { ingestInput } from './features/ingest/urlAdapter';
 import { PlayerControls } from './features/player/PlayerControls';
-import { DocumentModel, SourceType } from './types/reader';
+import type { NormalizedDocument } from './domain/segments';
 import { usePlayerController } from './features/player/playerMachine';
 import { selectTTSProvider } from './tts/providerSelector';
 import { setupLocalDebugPerfTelemetry } from './tts/perfTelemetry';
@@ -10,6 +10,7 @@ import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
 import type { TTSProvider } from './tts/types';
 
 const isUrlExtractorEnabled = import.meta.env.VITE_ENABLE_URL_EXTRACTOR !== 'false';
+type SourceType = 'text' | 'file' | 'url';
 const sourceTabs: SourceType[] = isUrlExtractorEnabled ? ['text', 'file', 'url'] : ['text', 'file'];
 const TTS_PREFS_STORAGE_KEY = 'reader-tts-preferences';
 
@@ -17,6 +18,25 @@ type StoredTtsPreferences = {
   voice: string;
   rate: number;
   provider: string;
+};
+
+type DocumentSource = {
+  type: SourceType;
+  value: string;
+  name?: string;
+};
+
+type DocumentWarning = {
+  code: string;
+  message: string;
+  severity: 'info' | 'warning' | 'error';
+};
+
+type IngestedState = {
+  title: string;
+  source: DocumentSource;
+  document: NormalizedDocument;
+  warnings: DocumentWarning[];
 };
 
 const loadTtsPreferences = (): StoredTtsPreferences | null => {
@@ -42,10 +62,10 @@ function App() {
   const [urlInput, setUrlInput] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedFileName, setSelectedFileName] = useState('');
-  const [documentModel, setDocumentModel] = useState<DocumentModel>({
+  const [ingested, setIngested] = useState<IngestedState>({
     title: 'Untitled Source',
     source: { type: 'text', value: '' },
-    segments: [],
+    document: { title: 'Untitled Source', segments: [] },
     warnings: [],
   });
 
@@ -57,14 +77,9 @@ function App() {
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
 
-  const playerSegments = useMemo(
-    () => documentModel.segments.map((segment) => ({ id: segment.id, text: segment.text })),
-    [documentModel.segments],
-  );
-
   const player = usePlayerController({
     provider,
-    segments: playerSegments,
+    segments: ingested.document.segments,
     synthesisOptions: { voice, rate },
   });
 
@@ -108,59 +123,48 @@ function App() {
   useEffect(() => {
     let active = true;
 
-    const toDocumentModel = (
-      source: DocumentModel['source'],
-      normalized: Awaited<ReturnType<typeof ingestInput>>,
-      warnings: DocumentModel['warnings'] = [],
-    ): DocumentModel => ({
+    const toIngestedState = (
+      source: DocumentSource,
+      normalized: NormalizedDocument,
+      warnings: DocumentWarning[] = [],
+    ): IngestedState => ({
       title: normalized.title || 'Untitled Source',
       source,
-      segments: normalized.segments.map((segment) => ({
-        id: segment.id,
-        text: segment.text,
-        type: segment.blockType === 'heading'
-          ? 'heading'
-          : segment.blockType === 'paragraph'
-            ? 'paragraph'
-            : segment.blockType === 'list_item'
-              ? 'list-item'
-              : 'other',
-        sourceOffsets: segment.sourceOffset ?? { start: 0, end: segment.text.length },
-      })),
+      document: normalized,
       warnings,
     });
 
     const runIngest = async () => {
       try {
         const nextModel = sourceType === 'text'
-          ? toDocumentModel({ type: 'text', value: textInput }, await ingestInput({ type: 'paste', payload: textInput }))
+          ? toIngestedState({ type: 'text', value: textInput }, await ingestInput({ type: 'paste', payload: textInput }))
           : sourceType === 'url' && isUrlExtractorEnabled
-            ? toDocumentModel(
+            ? toIngestedState(
               { type: 'url', value: urlInput },
               await ingestInput({ type: 'url', payload: urlInput }),
               [{ code: 'URL_INGEST_MODE', message: 'URL ingestion uses backend extraction.', severity: 'info' }],
             )
             : selectedFile
-              ? toDocumentModel(
+              ? toIngestedState(
                 { type: 'file', value: selectedFile.name, name: selectedFile.name },
                 await ingestInput({ type: 'file', payload: selectedFile }),
               )
-              : toDocumentModel({ type: 'file', value: '' }, await ingestInput({ type: 'paste', payload: '' }));
+              : toIngestedState({ type: 'file', value: '' }, await ingestInput({ type: 'paste', payload: '' }));
 
         if (active) {
-          setDocumentModel(nextModel);
+          setIngested(nextModel);
         }
       } catch (error) {
         if (active) {
           const message = error instanceof Error ? error.message : 'Unknown ingestion error.';
-          setDocumentModel({
+          setIngested({
             title: 'Ingestion failed',
             source: sourceType === 'url'
               ? { type: 'url', value: urlInput }
               : sourceType === 'file'
                 ? { type: 'file', value: selectedFile?.name ?? '', name: selectedFile?.name }
                 : { type: 'text', value: textInput },
-            segments: [],
+            document: { title: 'Ingestion failed', segments: [] },
             warnings: [{ code: 'INGEST_ERROR', message, severity: 'error' }],
           });
         }
@@ -311,9 +315,9 @@ function App() {
 
         <article className="rounded-xl border border-border bg-panel p-4 shadow-lg shadow-black/20">
           <h2 className="text-lg font-semibold">Preview panel</h2>
-          <p className="mt-2 text-sm text-slate-400">Normalized segments: {documentModel.segments.length}</p>
+          <p className="mt-2 text-sm text-slate-400">Normalized segments: {ingested.document.segments.length}</p>
           <div className="mt-3 max-h-[420px] space-y-2 overflow-auto pr-1">
-            {documentModel.segments.map((segment, index) => (
+            {ingested.document.segments.map((segment, index) => (
               <div
                 key={segment.id}
                 className={`rounded-md border p-2 text-sm ${
@@ -323,15 +327,15 @@ function App() {
                 }`}
               >
                 <div className="mb-1 flex items-center justify-between text-xs text-slate-400">
-                  <span>{segment.type}</span>
+                  <span>{segment.blockType}</span>
                   <span>
-                    {segment.sourceOffsets.start}-{segment.sourceOffsets.end}
+                    {segment.sourceOffset?.start ?? 0}-{segment.sourceOffset?.end ?? segment.text.length}
                   </span>
                 </div>
                 <p>{segment.text}</p>
               </div>
             ))}
-            {documentModel.warnings.map((warning) => (
+            {ingested.warnings.map((warning) => (
               <p key={warning.code} className="rounded border border-amber-700 bg-amber-950/40 p-2 text-xs text-amber-200">
                 {warning.message}
               </p>
@@ -345,7 +349,7 @@ function App() {
             <PlayerControls
               queueStatus={player.state}
               currentSegmentIndex={player.currentSegmentIndex}
-              segmentCount={documentModel.segments.length}
+              segmentCount={ingested.document.segments.length}
               voice={voice}
               rate={rate}
               onTogglePlayPause={() => {
