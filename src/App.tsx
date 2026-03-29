@@ -18,6 +18,12 @@ type SourceType = 'text' | 'file' | 'url';
 const sourceTabs: SourceType[] = isUrlIngestEnabled ? ['text', 'file', 'url'] : ['text', 'file'];
 const TTS_PREFS_STORAGE_KEY = 'reader-tts-preferences';
 
+const LEGACY_VOICE_MIGRATIONS: Record<string, string> = {
+  alloy: 'af_alloy',
+  verse: 'af_verse',
+  lumen: 'af_lumen',
+};
+
 type StoredTtsPreferences = {
   voice: string;
   rate: number;
@@ -43,6 +49,8 @@ type IngestedState = {
   warnings: DocumentWarning[];
 };
 
+const migrateStoredVoice = (voice: string): string => LEGACY_VOICE_MIGRATIONS[voice] ?? voice;
+
 const loadTtsPreferences = (): StoredTtsPreferences | null => {
   if (typeof window === 'undefined') {
     return null;
@@ -50,7 +58,15 @@ const loadTtsPreferences = (): StoredTtsPreferences | null => {
 
   try {
     const raw = window.localStorage.getItem(TTS_PREFS_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as StoredTtsPreferences) : null;
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as StoredTtsPreferences;
+    return {
+      ...parsed,
+      voice: migrateStoredVoice(parsed.voice),
+    };
   } catch {
     return null;
   }
@@ -139,8 +155,9 @@ function App() {
   const [showFallbackBanner, setShowFallbackBanner] = useState(false);
   const [showInformationalFallbackBanner, setShowInformationalFallbackBanner] = useState(false);
   const [providerFallbackError, setProviderFallbackError] = useState<TTSFallbackError | null>(null);
+  const [voiceFallbackWarning, setVoiceFallbackWarning] = useState<string | null>(null);
   const [devTtsDiagnostics, setDevTtsDiagnostics] = useState<DevTtsDiagnostics | null>(null);
-  const [voice, setVoice] = useState(storedPreferences?.voice ?? 'alloy');
+  const [voice, setVoice] = useState(storedPreferences?.voice ?? 'af_alloy');
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
 
@@ -227,6 +244,46 @@ function App() {
 
     window.localStorage.setItem(TTS_PREFS_STORAGE_KEY, JSON.stringify(payload));
   }, [providerLabel, rate, voice]);
+
+  useEffect(() => {
+    let active = true;
+
+    const ensureVoiceAvailable = async () => {
+      try {
+        const voices = await provider.listVoices();
+        if (!active) {
+          return;
+        }
+
+        if (voices.length === 0) {
+          setVoiceFallbackWarning('No voices were returned by the active provider.');
+          return;
+        }
+
+        const isSelectedVoiceAvailable = voices.some((providerVoice) => providerVoice.id === voice);
+        if (isSelectedVoiceAvailable) {
+          setVoiceFallbackWarning(null);
+          return;
+        }
+
+        const fallbackVoice = voices[0];
+        setVoice(fallbackVoice.id);
+        setVoiceFallbackWarning(
+          `Selected voice "${voice}" is unavailable for ${providerLabel}; switched to "${fallbackVoice.name}".`,
+        );
+      } catch {
+        if (active) {
+          setVoiceFallbackWarning('Unable to validate voices for the active provider.');
+        }
+      }
+    };
+
+    void ensureVoiceAvailable();
+
+    return () => {
+      active = false;
+    };
+  }, [provider, providerLabel]);
 
   useEffect(() => {
     let active = true;
@@ -333,6 +390,12 @@ function App() {
               ) : null}
             </>
           ) : null}
+        </div>
+      ) : null}
+
+      {voiceFallbackWarning ? (
+        <div className="mb-4 rounded-md border border-amber-600 bg-amber-950/30 px-3 py-2 text-sm text-amber-100">
+          {voiceFallbackWarning}
         </div>
       ) : null}
 

@@ -18,9 +18,9 @@ type PlayerControlsProps = {
 };
 
 const VOICE_OPTIONS = [
-  { value: 'alloy', label: 'Alloy' },
-  { value: 'verse', label: 'Verse' },
-  { value: 'lumen', label: 'Lumen' },
+  { value: 'af_alloy', label: 'Alloy' },
+  { value: 'af_verse', label: 'Verse' },
+  { value: 'af_lumen', label: 'Lumen' },
 ];
 
 const RATE_MIN = 0.5;
