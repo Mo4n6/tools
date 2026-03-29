@@ -145,7 +145,7 @@ export function PlayerControls({
       <select
         id="language-picker"
         aria-label="Language selector"
-        className="w-full rounded-md border border-emerald-500/30 bg-[#091229] p-2 text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+        className="w-full rounded-md border border-emerald-500/30 bg-[#0a160f] p-2 text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
         value={selectedLanguage}
         onChange={(event) => onLanguageChange(event.target.value)}
       >
@@ -158,7 +158,7 @@ export function PlayerControls({
       <select
         id="voice-picker"
         aria-label="Voice selector"
-        className="w-full rounded-md border border-emerald-500/30 bg-[#091229] p-2 text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+        className="w-full rounded-md border border-emerald-500/30 bg-[#0a160f] p-2 text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
         value={voice}
         disabled={voices.length === 0}
         onChange={(event) => onVoiceChange(event.target.value)}
@@ -205,7 +205,7 @@ export function PlayerControls({
       <select
         id="playback-mode-control"
         aria-label="Playback mode"
-        className="w-full rounded-md border border-emerald-500/30 bg-[#091229] p-2 text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+        className="w-full rounded-md border border-emerald-500/30 bg-[#0a160f] p-2 text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
         value={playbackMode}
         onChange={(event) => onPlaybackModeChange(event.target.value as PlaybackMode)}
       >
@@ -214,7 +214,7 @@ export function PlayerControls({
       </select>
 
       <div
-        className="rounded-md border border-emerald-500/30 bg-[#091229] p-3 text-sm"
+        className="rounded-md border border-emerald-500/30 bg-[#0a160f] p-3 text-sm"
         aria-live="polite"
         aria-label={`Progress indicator, segment ${progressText}`}
       >
