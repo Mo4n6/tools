@@ -3,9 +3,11 @@ import { perfTelemetry } from '../perfTelemetry';
 import { TTSProvider, TTSSegment, TTSSynthesisOptions, TTSSynthesisResult, TTSVoice } from '../types';
 
 export type KokoroDevice = 'wasm' | 'webgpu';
+export type KokoroDType = 'fp32' | 'fp16' | 'q8' | 'q4';
 
 export interface KokoroProviderOptions {
-  model?: string;
+  modelRepo?: string;
+  dtype?: KokoroDType;
   device?: KokoroDevice;
 }
 
@@ -65,13 +67,16 @@ export const canImportKokoroModule = async (): Promise<boolean> => {
 };
 
 export class KokoroProvider implements TTSProvider {
-  private readonly model: string;
+  private readonly modelRepo: string;
+  private readonly dtype: KokoroDType;
   private readonly device: KokoroDevice;
   private enginePromise?: Promise<KokoroEngine>;
 
   constructor(options: KokoroProviderOptions = {}) {
-    this.model = options.model ?? DEFAULT_KOKORO_MODEL;
+    this.modelRepo = options.modelRepo ?? DEFAULT_KOKORO_MODEL;
+    this.dtype = options.dtype ?? 'q8';
     this.device = options.device ?? 'wasm';
+    this.validateStartupOptions();
   }
 
   async warmup(): Promise<void> {
@@ -118,8 +123,8 @@ export class KokoroProvider implements TTSProvider {
   private async loadKokoroEngine(): Promise<KokoroEngine> {
     const startedAt = perfTelemetry.now();
     const kokoroModule = await importKokoroModule();
-    const runtimeEngine = await kokoroModule.KokoroTTS.from_pretrained(this.model, {
-      dtype: 'q8',
+    const runtimeEngine = await kokoroModule.KokoroTTS.from_pretrained(this.modelRepo, {
+      dtype: this.dtype,
       device: this.device,
     });
     const engine: KokoroEngine = {
@@ -151,12 +156,20 @@ export class KokoroProvider implements TTSProvider {
       type: 'tts.model_load',
       provider: 'kokoro',
       device: this.device,
-      model: this.model,
+      model: this.modelRepo,
       durationMs,
       peakMemoryMb: perfTelemetry.readPeakMemoryMb(),
       deviceMemoryGb,
     });
 
     return engine;
+  }
+
+  private validateStartupOptions(): void {
+    if (!this.modelRepo.includes('/')) {
+      throw new Error(
+        'KOKORO_MODEL_ID_INVALID: modelRepo must include a "/" (for example "onnx-community/Kokoro-82M-ONNX").'
+      );
+    }
   }
 }

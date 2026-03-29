@@ -1,5 +1,6 @@
 export type TTSFallbackCode =
   | 'KOKORO_MODULE_RESOLUTION_FAILED'
+  | 'KOKORO_MODEL_ID_INVALID'
   | 'KOKORO_MODEL_FETCH_FAILED'
   | 'WEBGPU_UNAVAILABLE'
   | 'DEVICE_MEMORY_TOO_LOW'
@@ -66,6 +67,15 @@ export const classifyTTSFailure = (
         'Ensure import path is not transformed incorrectly by bundler.',
         'Check dynamic import chunk is emitted and served from correct `base` path on GitHub Pages.',
       ],
+    };
+  }
+
+  if (message.includes('KOKORO_MODEL_ID_INVALID')) {
+    return {
+      code: 'KOKORO_MODEL_ID_INVALID',
+      message,
+      cause: error,
+      hints: ['Use a repo id in the form "owner/name", for example "onnx-community/Kokoro-82M-ONNX".'],
     };
   }
 

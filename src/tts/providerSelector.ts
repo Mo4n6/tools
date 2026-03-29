@@ -106,7 +106,8 @@ export const selectTTSProvider = async (
     }
 
     const kokoroProvider = new KokoroProvider({
-      model: options.kokoro?.model ?? DEFAULT_KOKORO_MODEL,
+      modelRepo: options.kokoro?.modelRepo ?? DEFAULT_KOKORO_MODEL,
+      dtype: options.kokoro?.dtype ?? 'q8',
       device: requestedDevice,
     });
 
