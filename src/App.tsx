@@ -126,7 +126,7 @@ type DevTtsDiagnostics = {
   webgpuSupported: boolean;
   deviceMemoryGb?: number;
   selectedProvider: string;
-  fallbackCode?: string;
+  fallbackCode?: TTSFallbackError['code'];
   fallbackReason?: string;
   fallbackHint?: string;
 };

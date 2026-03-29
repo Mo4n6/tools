@@ -64,21 +64,30 @@ export const selectTTSProvider = async (
 ): Promise<TTSProviderSelection> => {
   if (options.skipKokoroInit) {
     const reason = options.skipKokoroInitReason ?? 'Kokoro initialization intentionally skipped.';
+    const fallbackError: TTSFallbackError = {
+      code: 'KOKORO_INIT_SKIPPED',
+      message: reason,
+      hints: ['Enable Kokoro initialization to attempt neural TTS before fallback.'],
+    };
+
     perfTelemetry.sink.log({
       type: 'tts.degraded_mode',
       from: 'kokoro',
       to: 'web-speech',
       providerFrom: 'kokoro',
       providerTo: 'web-speech',
-      fallbackCode: 'KOKORO_INIT_SKIPPED',
-      fallbackMessage: reason,
+      fallbackCode: fallbackError.code,
+      fallbackMessage: fallbackError.message,
+      fallbackError,
     });
+    logFallbackRecordForDev(fallbackError);
 
     return {
       provider: new WebSpeechProvider(),
       fallbackToWebSpeech: true,
       fallbackIntentional: true,
       fallbackReason: reason,
+      fallbackError,
     };
   }
 

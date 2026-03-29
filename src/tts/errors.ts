@@ -5,6 +5,7 @@ export type TTSFallbackCode =
   | 'WEBGPU_UNAVAILABLE'
   | 'DEVICE_MEMORY_TOO_LOW'
   | 'KOKORO_WARMUP_FAILED'
+  | 'KOKORO_INIT_SKIPPED'
   | 'UNKNOWN';
 
 export interface TTSFallbackError {
