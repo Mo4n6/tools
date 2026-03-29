@@ -1,4 +1,5 @@
 export type InputKind = 'text' | 'markdown' | 'url_article';
+export type PlaybackMode = 'segmented' | 'continuous';
 
 export type SegmentBlockType = 'heading' | 'paragraph' | 'list_item' | 'blockquote' | 'code';
 
