@@ -6,6 +6,7 @@ import type { NormalizedDocument, PlaybackMode, SpeakableSegment } from './domai
 import { usePlayerController } from './features/player/playerMachine';
 import { selectTTSProvider } from './tts/providerSelector';
 import { perfTelemetry, setupLocalDebugPerfTelemetry } from './tts/perfTelemetry';
+import { classifyPerfDebugEvent, type PerfDebugEntry } from './tts/perfDebugClassifier';
 import type { TTSFallbackError } from './tts/errors';
 import { canImportKokoroModule } from './tts/providers/kokoroProvider';
 import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
@@ -381,6 +382,8 @@ function App() {
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
   const [playbackModeOverride, setPlaybackModeOverride] = useState<PlaybackMode | null>(null);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
+  const [runtimeWarnings, setRuntimeWarnings] = useState<PerfDebugEntry[]>([]);
+  const [fatalPlaybackBlockers, setFatalPlaybackBlockers] = useState<PerfDebugEntry[]>([]);
   const [hasCompletedVoiceMigration, setHasCompletedVoiceMigration] = useState(loadVoiceMigrationDone);
   const [hasPendingVoiceMigrationNormalization, setHasPendingVoiceMigrationNormalization] = useState(
     Boolean(storedPreferences?.migratedLegacyWebSpeechVoice) && !loadVoiceMigrationDone(),
@@ -462,6 +465,14 @@ function App() {
         if (event.type === 'tts.first_audio') {
           setFirstAudioTimingMs((currentTiming) => currentTiming ?? event.durationMs);
         }
+
+        const perfDebugEntry = classifyPerfDebugEvent(event);
+        if (perfDebugEntry?.category === 'runtime-warning') {
+          setRuntimeWarnings((currentEntries) => [...currentEntries.slice(-19), perfDebugEntry]);
+        } else if (perfDebugEntry?.category === 'fatal-playback-blocker') {
+          setFatalPlaybackBlockers((currentEntries) => [...currentEntries.slice(-19), perfDebugEntry]);
+        }
+
         previousSink.log(event);
       },
     };
@@ -869,6 +880,47 @@ function App() {
             <li>fallbackReason: {devTtsDiagnostics.fallbackReason ?? 'none'}</li>
             <li>fallbackHint: {devTtsDiagnostics.fallbackHint ?? 'none'}</li>
           </ul>
+        </aside>
+      ) : null}
+
+      {import.meta.env.DEV ? (
+        <aside className="mb-4 rounded-md border border-indigo-700 bg-indigo-950/30 px-3 py-2 text-xs text-indigo-100">
+          <p className="font-semibold">Perf/debug panel</p>
+          <p className="mt-1 text-indigo-200">
+            Runtime warnings (WebGPU/ORT) are informational. Fatal playback blockers are shown separately.
+          </p>
+          <div className="mt-2 grid gap-3 md:grid-cols-2">
+            <div>
+              <p className="font-medium text-indigo-100">Informational runtime warnings ({runtimeWarnings.length})</p>
+              {runtimeWarnings.length ? (
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {runtimeWarnings.map((entry, index) => (
+                    <li key={`${entry.message}-${entry.segmentId ?? 'none'}-${index}`}>
+                      {entry.message}
+                      {entry.segmentId ? ` (segment: ${entry.segmentId})` : ''}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-1 text-indigo-300">None captured.</p>
+              )}
+            </div>
+            <div>
+              <p className="font-medium text-rose-200">Fatal playback blockers ({fatalPlaybackBlockers.length})</p>
+              {fatalPlaybackBlockers.length ? (
+                <ul className="mt-1 list-disc space-y-1 pl-5 text-rose-100">
+                  {fatalPlaybackBlockers.map((entry, index) => (
+                    <li key={`${entry.message}-${entry.segmentId ?? 'none'}-${index}`}>
+                      {entry.message}
+                      {entry.segmentId ? ` (segment: ${entry.segmentId})` : ''}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-1 text-indigo-300">None captured.</p>
+              )}
+            </div>
+          </div>
         </aside>
       ) : null}
 
