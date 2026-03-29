@@ -31,6 +31,10 @@ type StoredTtsPreferences = {
   provider: string;
 };
 
+type LoadedTtsPreferences = StoredTtsPreferences & {
+  migratedLegacyWebSpeechVoice: boolean;
+};
+
 type DocumentSource = {
   type: SourceType;
   value: string;
@@ -60,7 +64,7 @@ const getWebSpeechVoiceIds = (): string[] => {
   return window.speechSynthesis.getVoices().map((voice) => voice.voiceURI);
 };
 
-const loadTtsPreferences = (): StoredTtsPreferences | null => {
+const loadTtsPreferences = (): LoadedTtsPreferences | null => {
   if (typeof window === 'undefined') {
     return null;
   }
@@ -88,6 +92,7 @@ const loadTtsPreferences = (): StoredTtsPreferences | null => {
       rate: parsed.rate,
       provider,
     };
+    const migratedLegacyWebSpeechVoice = provider === 'web-speech' && correctedVoice !== parsed.voice;
 
     if (
       correctedPreferences.voice !== parsed.voice
@@ -97,11 +102,18 @@ const loadTtsPreferences = (): StoredTtsPreferences | null => {
       window.localStorage.setItem(TTS_PREFS_STORAGE_KEY, JSON.stringify(correctedPreferences));
     }
 
-    return correctedPreferences;
+    return {
+      ...correctedPreferences,
+      migratedLegacyWebSpeechVoice,
+    };
   } catch {
     return null;
   }
 };
+
+const getDefaultKokoroVoiceId = (voices: TTSVoice[]): string => (
+  voices.find((providerVoice) => providerVoice.id === 'af_alloy')?.id ?? voices[0]?.id ?? ''
+);
 
 const resolveProviderLabel = (activeProvider: TTSProvider): string => (
   activeProvider instanceof WebSpeechProvider ? 'web-speech' : 'kokoro'
@@ -202,6 +214,9 @@ function App() {
   const [availableVoices, setAvailableVoices] = useState<TTSVoice[]>([]);
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
+  const [shouldSuppressNextWebSpeechMigrationWarning, setShouldSuppressNextWebSpeechMigrationWarning] = useState(
+    storedPreferences?.migratedLegacyWebSpeechVoice ?? false,
+  );
 
   const playbackSegments = useMemo(
     () => ingested.document.segments.map((segment) => ({ id: segment.id, text: segment.text })),
@@ -331,15 +346,21 @@ function App() {
         }
 
         const fallbackVoice = providerLabel === 'kokoro'
-          ? voices.find((providerVoice) => providerVoice.id === 'af_alloy') ?? voices[0]
+          ? voices.find((providerVoice) => providerVoice.id === getDefaultKokoroVoiceId(voices)) ?? voices[0]
           : voices[0];
         setVoiceReadinessHelperText('Select a valid voice.');
         setVoice(fallbackVoice.id);
-        setVoiceFallbackWarning(
-          selectedVoice
-            ? `Selected voice "${selectedVoice}" is unavailable for ${providerLabel}; switched to "${fallbackVoice.name}".`
-            : `No voice selected for ${providerLabel}; switched to "${fallbackVoice.name}".`,
-        );
+        const suppressWarning = providerLabel === 'web-speech' && shouldSuppressNextWebSpeechMigrationWarning;
+        if (suppressWarning) {
+          setVoiceFallbackWarning(null);
+          setShouldSuppressNextWebSpeechMigrationWarning(false);
+        } else {
+          setVoiceFallbackWarning(
+            selectedVoice
+              ? `Selected voice "${selectedVoice}" is unavailable for ${providerLabel}; switched to "${fallbackVoice.name}".`
+              : `No voice selected for ${providerLabel}; switched to "${fallbackVoice.name}".`,
+          );
+        }
       } catch {
         if (active) {
           setAvailableVoices([]);
@@ -354,7 +375,7 @@ function App() {
     return () => {
       active = false;
     };
-  }, [provider, providerLabel, voice]);
+  }, [provider, providerLabel, shouldSuppressNextWebSpeechMigrationWarning, voice]);
 
   useEffect(() => {
     let active = true;
