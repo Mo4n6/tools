@@ -63,9 +63,19 @@ const loadTtsPreferences = (): StoredTtsPreferences | null => {
     }
 
     const parsed = JSON.parse(raw) as StoredTtsPreferences;
+    const migratedVoice = migrateStoredVoice(parsed.voice);
+    if (migratedVoice !== parsed.voice) {
+      const migratedPreferences: StoredTtsPreferences = {
+        ...parsed,
+        voice: migratedVoice,
+      };
+      window.localStorage.setItem(TTS_PREFS_STORAGE_KEY, JSON.stringify(migratedPreferences));
+      return migratedPreferences;
+    }
+
     return {
       ...parsed,
-      voice: migrateStoredVoice(parsed.voice),
+      voice: migratedVoice,
     };
   } catch {
     return null;
