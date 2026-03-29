@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const warmupMock = vi.fn();
+const getRuntimeDeviceMock = vi.fn();
 
 vi.mock('./providers/kokoroProvider', () => ({
   canImportKokoroModule: vi.fn(async () => true),
   KokoroProvider: vi.fn().mockImplementation(() => ({
     warmup: warmupMock,
+    getRuntimeDevice: getRuntimeDeviceMock,
   })),
 }));
 
@@ -19,6 +21,8 @@ describe('selectTTSProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     warmupMock.mockReset();
+    getRuntimeDeviceMock.mockReset();
+    getRuntimeDeviceMock.mockReturnValue('wasm');
   });
 
   it('falls back intentionally when Kokoro init is skipped', async () => {
@@ -38,6 +42,7 @@ describe('selectTTSProvider', () => {
 
   it('initializes Kokoro provider when warmup succeeds', async () => {
     warmupMock.mockResolvedValue(undefined);
+    getRuntimeDeviceMock.mockReturnValue('wasm');
     const { selectTTSProvider } = await import('./providerSelector');
 
     const selection = await selectTTSProvider({
@@ -45,6 +50,20 @@ describe('selectTTSProvider', () => {
     });
 
     expect(warmupMock).toHaveBeenCalledTimes(1);
+    expect(selection.fallbackToWebSpeech).toBe(false);
+    expect(selection.providerType).toBe('kokoro');
+    expect(selection.runtime).toBe('wasm');
+  });
+
+  it('uses runtime device reported by Kokoro after warmup downgrade', async () => {
+    warmupMock.mockResolvedValue(undefined);
+    getRuntimeDeviceMock.mockReturnValue('wasm');
+    const { selectTTSProvider } = await import('./providerSelector');
+
+    const selection = await selectTTSProvider({
+      preferredDevice: 'webgpu',
+    });
+
     expect(selection.fallbackToWebSpeech).toBe(false);
     expect(selection.providerType).toBe('kokoro');
     expect(selection.runtime).toBe('wasm');

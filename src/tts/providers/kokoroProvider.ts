@@ -22,6 +22,12 @@ type KokoroModule = {
 
 type KokoroRuntimeEngine = {
   voices?: Record<string, { name: string; language?: string }>;
+  device?: string | null;
+  backend?: string | null;
+  config?: {
+    device?: string | null;
+    backend?: string | null;
+  };
   generate: (
     text: string,
     options: {
@@ -79,6 +85,7 @@ export class KokoroProvider implements TTSProvider {
   private readonly modelRepo: string;
   private readonly dtype: KokoroDType;
   private readonly device: KokoroDevice;
+  private runtimeDevice?: KokoroDevice;
   private enginePromise?: Promise<KokoroEngine>;
 
   constructor(options: KokoroProviderOptions = {}) {
@@ -90,6 +97,10 @@ export class KokoroProvider implements TTSProvider {
 
   async warmup(): Promise<void> {
     await this.getEngine();
+  }
+
+  getRuntimeDevice(): KokoroDevice {
+    return this.runtimeDevice ?? this.device;
   }
 
   async listVoices(): Promise<TTSVoice[]> {
@@ -136,6 +147,7 @@ export class KokoroProvider implements TTSProvider {
       dtype: this.dtype,
       device: this.device,
     });
+    this.runtimeDevice = this.resolveRuntimeDevice(runtimeEngine);
     const engine: KokoroEngine = {
       listVoices: async () =>
         Object.entries(runtimeEngine.voices ?? {}).map(([id, voice]) => ({
@@ -164,7 +176,7 @@ export class KokoroProvider implements TTSProvider {
     perfTelemetry.sink.log({
       type: 'tts.model_load',
       provider: 'kokoro',
-      device: this.device,
+      device: this.runtimeDevice,
       model: this.modelRepo,
       durationMs,
       peakMemoryMb: perfTelemetry.readPeakMemoryMb(),
@@ -180,5 +192,14 @@ export class KokoroProvider implements TTSProvider {
         'KOKORO_MODEL_ID_INVALID: modelRepo must include a "/" (for example "onnx-community/Kokoro-82M-ONNX").'
       );
     }
+  }
+
+  private resolveRuntimeDevice(runtimeEngine: KokoroRuntimeEngine): KokoroDevice {
+    const candidateDevice = runtimeEngine.device ?? runtimeEngine.backend ?? runtimeEngine.config?.device ?? runtimeEngine.config?.backend;
+    if (candidateDevice === 'webgpu' || candidateDevice === 'wasm') {
+      return candidateDevice;
+    }
+
+    return this.device;
   }
 }

@@ -151,10 +151,11 @@ export const selectTTSProvider = async (
 
     try {
       await kokoroProvider.warmup();
+      const runtimeDevice = kokoroProvider.getRuntimeDevice();
       return {
         provider: kokoroProvider,
         providerType: 'kokoro',
-        runtime: requestedDevice,
+        runtime: runtimeDevice,
         fallbackToWebSpeech: false,
       };
     } catch (error) {
