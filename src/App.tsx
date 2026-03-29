@@ -1,6 +1,7 @@
 import { ChangeEvent, useEffect, useState } from 'react';
 import { ttsManifest } from './licenses/ttsManifest';
 import { ingestFile, ingestText, ingestUrl } from './lib/ingest/ingest';
+import { PlayerControls } from './features/player/PlayerControls';
 import { DocumentModel, PlaybackQueueStatus, SourceType } from './types/reader';
 
 const sourceTabs: SourceType[] = ['text', 'file', 'url'];
@@ -208,68 +209,22 @@ function App() {
 
         <article className="rounded-xl border border-border bg-panel p-4 shadow-lg shadow-black/20">
           <h2 className="text-lg font-semibold">Playback panel</h2>
-          <div className="mt-3 space-y-3">
-            <label className="block text-sm text-slate-300">
-              Voice picker
-              <select
-                className="mt-1 w-full rounded-md border border-border bg-slate-900 p-2"
-                value={voice}
-                onChange={(event) => setVoice(event.target.value)}
-              >
-                <option value="alloy">Alloy</option>
-                <option value="verse">Verse</option>
-                <option value="lumen">Lumen</option>
-              </select>
-            </label>
-
-            <label className="block text-sm text-slate-300">
-              Rate: {rate.toFixed(1)}x
-              <input
-                className="mt-1 w-full"
-                type="range"
-                min={0.5}
-                max={2}
-                step={0.1}
-                value={rate}
-                onChange={(event) => setRate(Number(event.target.value))}
-              />
-            </label>
-
-            <label className="block text-sm text-slate-300">
-              Pitch: {pitch.toFixed(1)}
-              <input
-                className="mt-1 w-full"
-                type="range"
-                min={0.5}
-                max={2}
-                step={0.1}
-                value={pitch}
-                onChange={(event) => setPitch(Number(event.target.value))}
-              />
-            </label>
-
-            <div className="rounded-md border border-border bg-slate-900 p-3 text-sm">
-              <p>Status: <span className="font-semibold capitalize">{queueStatus}</span></p>
-              <p>Current segment index: {currentSegmentIndex}</p>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2">
-              <button className="rounded-md border border-border px-2 py-1" onClick={() => moveSegment('prev')} type="button">
-                ◀ Prev
-              </button>
-              <button
-                className="rounded-md border border-sky-500 bg-sky-900/60 px-2 py-1"
-                onClick={() => setQueueStatus((status) => (status === 'playing' ? 'paused' : 'playing'))}
-                type="button"
-              >
-                {queueStatus === 'playing' ? 'Pause' : 'Play'}
-              </button>
-              <button className="rounded-md border border-border px-2 py-1" onClick={() => moveSegment('next')} type="button">
-                Next ▶
-              </button>
-            </div>
+          <div className="space-y-3">
+            <PlayerControls
+              queueStatus={queueStatus}
+              currentSegmentIndex={currentSegmentIndex}
+              segmentCount={documentModel.segments.length}
+              voice={voice}
+              rate={rate}
+              onTogglePlayPause={() => setQueueStatus((status) => (status === 'playing' ? 'paused' : 'playing'))}
+              onPrevSegment={() => moveSegment('prev')}
+              onNextSegment={() => moveSegment('next')}
+              onVoiceChange={setVoice}
+              onRateChange={setRate}
+            />
             <button
-              className="w-full rounded-md border border-border px-2 py-1"
+              aria-label="Reset playback queue"
+              className="w-full rounded-md border border-border px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
               onClick={() => {
                 setQueueStatus('ready');
                 setCurrentSegmentIndex(0);
