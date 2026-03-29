@@ -35,6 +35,9 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v6
 
+      - name: Prebuild guard (typecheck + merge leftovers)
+        run: npm run ci:prebuild
+
       - name: Build
         run: npm run build
         env:
