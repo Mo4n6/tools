@@ -197,15 +197,17 @@ const persistVoiceMigrationDone = (): void => {
 type ProviderRuntimeMetadata = {
   providerType: 'kokoro' | 'web-speech';
   runtime: 'webgpu' | 'wasm' | 'system';
-  dtype: 'fp32' | 'fp16' | 'q8' | 'q4' | 'n/a';
+  dtype: TtsSelectionDtype;
   fallbackToWebSpeech: boolean;
   fallbackError?: TTSFallbackError;
 };
 
+type TtsSelectionDtype = 'fp32' | 'fp16' | 'q8' | 'q4' | 'n/a';
+
 type TtsInitStatusLine = {
   providerSelected: string;
   runtime: ProviderRuntimeMetadata['runtime'];
-  dtype: ProviderRuntimeMetadata['dtype'];
+  dtype: TtsSelectionDtype;
   skipKokoroInit: boolean;
   kokoroImportable: boolean;
   fallbackCode: TTSFallbackError['code'] | 'none';
@@ -216,7 +218,7 @@ type DevTtsDiagnostics = {
   webgpuSupported: boolean;
   deviceMemoryGb?: number;
   selectedProvider: string;
-  selectedDtype: ProviderRuntimeMetadata['dtype'];
+  selectedDtype: TtsSelectionDtype;
   fallbackCode?: TTSFallbackError['code'];
   fallbackReason?: string;
   fallbackHint?: string;
