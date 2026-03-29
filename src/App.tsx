@@ -508,25 +508,49 @@ function App() {
 
   const initializeProvider = useCallback(async (activeCheck: () => boolean) => {
       const skipKokoroInit = isPagesStyleBase && shouldSkipKokoroInitOnPages;
-      const forcedDeviceOverride = getDevDeviceOverride();
     
-      // GREMLIN MODE ACTIVATED — extra nuclear flags
-      const urlParams = new URLSearchParams(window.location.search);
-      const forceWebGpu = forcedDeviceOverride === 'webgpu' || urlParams.get('forceWebGpu') === 'true';
-      const skipAllQualityChecks = forceWebGpu || urlParams.get('skipQuality') === 'true';
+      const urlParams = typeof window !== 'undefined' 
+        ? new URLSearchParams(window.location.search) 
+        : new URLSearchParams();
+    
+      const forcedDeviceOverride = getDevDeviceOverride(); // your existing function
+    
+      // Support both ?ttsDevice=webgpu and ?forceWebGpu=true
+      let preferredDevice: 'webgpu' | 'wasm' | undefined = undefined;
+    
+      if (forcedDeviceOverride === 'webgpu' || urlParams.get('forceWebGpu') === 'true') {
+        preferredDevice = 'webgpu';
+      } else if (forcedDeviceOverride === 'wasm' || urlParams.get('forceWasm') === 'true') {
+        preferredDevice = 'wasm';
+      }
+    
+      // Extra nuclear flags
+      const skipAllQualityChecks = 
+        (preferredDevice === 'webgpu') || 
+        urlParams.get('skipQuality') === 'true' || 
+        urlParams.get('skipWebGpuQualityCheck') === 'true';
+    
+      const allowUnstable = 
+        (preferredDevice === 'webgpu') || 
+        urlParams.get('allowUnstable') === 'true';
+    
+      console.log('🚀 GREMLIN TTS INIT:', { 
+        preferredDevice, 
+        skipAllQualityChecks, 
+        allowUnstable 
+      });
     
       const selectedProvider = await selectTTSProvider({
-        preferredDevice: forceWebGpu ? 'webgpu' : forcedDeviceOverride,
-        
-        // THESE TWO ARE THE REAL KILLERS
-        allowWebGpuIfUnstable: true,                    // ← ignore previous unstable mark
-        skipWebGpuQualityCheck: skipAllQualityChecks,   // ← completely disable the near_silent_audio gate
+        preferredDevice,                    // ← now correctly typed (undefined | 'webgpu' | 'wasm')
+        allowWebGpuIfUnstable: allowUnstable,
+        skipWebGpuQualityCheck: skipAllQualityChecks,
     
         skipKokoroInit,
         skipKokoroInitReason: skipKokoroInit
-          ? 'GitHub Pages MVP mode: Kokoro init skipped intentionally...'
+          ? 'GitHub Pages MVP mode: Kokoro init skipped intentionally while bundling is being finalized.'
           : undefined,
       });
+    
       const providerName = selectedProvider.providerType;
 
       const kokoroPackageLoadable = await emitDevKokoroImportCheck();
