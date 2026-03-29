@@ -1,8 +1,12 @@
-import { ChangeEvent, useEffect, useState } from 'react';
+import { ChangeEvent, useEffect, useMemo, useState } from 'react';
 import { ttsManifest } from './licenses/ttsManifest';
 import { ingestInput } from './features/ingest/urlAdapter';
 import { PlayerControls } from './features/player/PlayerControls';
-import { DocumentModel, PlaybackQueueStatus, SourceType } from './types/reader';
+import { DocumentModel, SourceType } from './types/reader';
+import { usePlayerController } from './features/player/playerMachine';
+import { selectTTSProvider } from './tts/providerSelector';
+import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
+import type { TTSProvider } from './tts/types';
 
 const isUrlExtractorEnabled = import.meta.env.VITE_ENABLE_URL_EXTRACTOR !== 'false';
 const sourceTabs: SourceType[] = isUrlExtractorEnabled ? ['text', 'file', 'url'] : ['text', 'file'];
@@ -20,11 +24,38 @@ function App() {
     warnings: [],
   });
 
-  const [queueStatus, setQueueStatus] = useState<PlaybackQueueStatus>('idle');
-  const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
+  const [provider, setProvider] = useState<TTSProvider>(() => new WebSpeechProvider());
   const [voice, setVoice] = useState('alloy');
   const [rate, setRate] = useState(1);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
+
+  const playerSegments = useMemo(
+    () => documentModel.segments.map((segment) => ({ id: segment.id, text: segment.text })),
+    [documentModel.segments],
+  );
+
+  const player = usePlayerController({
+    provider,
+    segments: playerSegments,
+    synthesisOptions: { voice, rate },
+  });
+
+  useEffect(() => {
+    let active = true;
+
+    const initializeProvider = async () => {
+      const selectedProvider = await selectTTSProvider();
+      if (active) {
+        setProvider(selectedProvider);
+      }
+    };
+
+    void initializeProvider();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -70,7 +101,6 @@ function App() {
 
         if (active) {
           setDocumentModel(nextModel);
-          setCurrentSegmentIndex((index) => Math.min(index, Math.max(nextModel.segments.length - 1, 0)));
         }
       } catch (error) {
         if (active) {
@@ -85,7 +115,6 @@ function App() {
             segments: [],
             warnings: [{ code: 'INGEST_ERROR', message, severity: 'error' }],
           });
-          setCurrentSegmentIndex(0);
         }
       }
     };
@@ -108,14 +137,6 @@ function App() {
     setSelectedFile(file);
     setSelectedFileName(file.name);
     setSourceType('file');
-  };
-
-  const moveSegment = (direction: 'prev' | 'next') => {
-    if (direction === 'prev') {
-      setCurrentSegmentIndex((index) => Math.max(0, index - 1));
-      return;
-    }
-    setCurrentSegmentIndex((index) => Math.min(documentModel.segments.length - 1, index + 1));
   };
 
   return (
@@ -239,7 +260,7 @@ function App() {
               <div
                 key={segment.id}
                 className={`rounded-md border p-2 text-sm ${
-                  currentSegmentIndex === index
+                  player.currentSegmentIndex === index
                     ? 'border-sky-500 bg-sky-950/40'
                     : 'border-border bg-slate-900/70'
                 }`}
@@ -265,14 +286,30 @@ function App() {
           <h2 className="text-lg font-semibold">Playback panel</h2>
           <div className="space-y-3">
             <PlayerControls
-              queueStatus={queueStatus}
-              currentSegmentIndex={currentSegmentIndex}
+              queueStatus={player.state}
+              currentSegmentIndex={player.currentSegmentIndex}
               segmentCount={documentModel.segments.length}
               voice={voice}
               rate={rate}
-              onTogglePlayPause={() => setQueueStatus((status) => (status === 'playing' ? 'paused' : 'playing'))}
-              onPrevSegment={() => moveSegment('prev')}
-              onNextSegment={() => moveSegment('next')}
+              onTogglePlayPause={() => {
+                if (player.state === 'playing' || player.state === 'loading') {
+                  player.pause();
+                  return;
+                }
+
+                if (player.state === 'paused') {
+                  void player.resume();
+                  return;
+                }
+
+                void player.play();
+              }}
+              onPrevSegment={() => {
+                void player.skipPrevious();
+              }}
+              onNextSegment={() => {
+                void player.skipNext();
+              }}
               onVoiceChange={setVoice}
               onRateChange={setRate}
             />
@@ -280,8 +317,7 @@ function App() {
               aria-label="Reset playback queue"
               className="w-full rounded-md border border-border px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
               onClick={() => {
-                setQueueStatus('ready');
-                setCurrentSegmentIndex(0);
+                void player.seekSegment(0, 0);
               }}
               type="button"
             >

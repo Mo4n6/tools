@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { PlaybackQueueStatus } from '../../types/reader';
+import type { PlayerMachineState } from './playerMachine';
 
 type PlayerControlsProps = {
-  queueStatus: PlaybackQueueStatus;
+  queueStatus: PlayerMachineState;
   currentSegmentIndex: number;
   segmentCount: number;
   voice: string;
@@ -46,7 +46,7 @@ export function PlayerControls({
   onRateChange,
 }: PlayerControlsProps) {
   const [liveMessage, setLiveMessage] = useState('Playback idle.');
-  const isPlaying = queueStatus === 'playing';
+  const isPlaying = queueStatus === 'playing' || queueStatus === 'loading';
   const progressText = useMemo(() => {
     if (segmentCount === 0) {
       return '0 / 0';
