@@ -17,6 +17,7 @@ const shouldSkipKokoroInitOnPages = import.meta.env.VITE_SKIP_KOKORO_INIT_ON_PAG
 type SourceType = 'text' | 'file' | 'url';
 const sourceTabs: SourceType[] = isUrlIngestEnabled ? ['text', 'file', 'url'] : ['text', 'file'];
 const TTS_PREFS_STORAGE_KEY = 'reader-tts-preferences';
+const VOICE_MIGRATION_DONE_STORAGE_KEY = 'reader-web-speech-voice-migration-done';
 const KNOWN_PROVIDER_LABELS = ['web-speech', 'kokoro'] as const;
 type KnownProviderLabel = (typeof KNOWN_PROVIDER_LABELS)[number];
 
@@ -255,6 +256,10 @@ function App() {
   const [hasCompletedVoiceMigration, setHasCompletedVoiceMigration] = useState(loadVoiceMigrationDone);
   const [hasPendingWebSpeechMigrationNormalization, setHasPendingWebSpeechMigrationNormalization] = useState(
     Boolean(storedPreferences?.migratedLegacyWebSpeechVoice) && !loadVoiceMigrationDone(),
+  );
+
+  const shouldSuppressNextWebSpeechMigrationWarning = (
+    hasPendingWebSpeechMigrationNormalization && !hasCompletedVoiceMigration
   );
 
   const playbackSegments = useMemo(
