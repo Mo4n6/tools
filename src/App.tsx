@@ -1053,7 +1053,7 @@ function App() {
           <label className="mt-3 block text-sm text-emerald-200/90">
             Upload file
             <input
-              className="mt-1 block w-full rounded-md border border-emerald-500/30 bg-[#0a160f] p-2 text-emerald-100 file:mr-3 file:rounded-sm file:border file:border-emerald-500/45 file:bg-[#07110a] file:px-3 file:py-1 file:text-emerald-100 hover:file:border-emerald-400/60"
+              className="mt-1 block w-full rounded-md border border-emerald-500/30 bg-[#0a160f] p-2 text-emerald-100"
               type="file"
               onChange={onFileChange}
             />
