@@ -66,11 +66,6 @@ const loadUnstableWebGpuProfiles = (): Record<string, { markedAt: string; reason
   }
 };
 
-const isWebGpuMarkedUnstableForCurrentProfile = (): boolean => {
-  const profileKey = getBrowserGpuProfileKey();
-  return Boolean(loadUnstableWebGpuProfiles()[profileKey]);
-};
-
 const markWebGpuUnstableForCurrentProfile = (reason: string): void => {
   if (typeof window === 'undefined') {
     return;
@@ -152,6 +147,11 @@ export interface TTSProviderSelection {
   fallbackIntentional?: boolean;
   fallbackReason?: string;
   fallbackError?: TTSFallbackError;
+  webGpuAvoidance?: {
+    reason: 'adapter_unavailable' | 'unstable_profile' | 'memory_gate';
+    message: string;
+    profileMarkedAt?: string;
+  };
 }
 
 const resolveKokoroDtype = (
@@ -222,21 +222,40 @@ export const selectTTSProvider = async (
 
   const minimumMemoryGb = options.minimumMemoryGb ?? DEFAULT_MEMORY_GB_THRESHOLD;
   const webGpuSupport = await getWebGpuSupport();
-  const hasKnownUnstableWebGpuRuntime = isWebGpuMarkedUnstableForCurrentProfile();
+  const currentProfileKey = getBrowserGpuProfileKey();
+  const unstableProfiles = loadUnstableWebGpuProfiles();
+  const unstableProfileRecord = unstableProfiles[currentProfileKey];
+  const hasKnownUnstableWebGpuRuntime = Boolean(unstableProfileRecord);
   const shouldAvoidWebGpuForProfile = hasKnownUnstableWebGpuRuntime && !options.allowWebGpuIfUnstable;
   const requestedDevice =
     options.preferredDevice
     ?? options.kokoro?.device
     ?? (webGpuSupport.adapterAvailable && !shouldAvoidWebGpuForProfile ? 'webgpu' : 'wasm');
-  const runtimeReason = requestedDevice === 'wasm'
-    ? (shouldAvoidWebGpuForProfile
-      ? 'WebGPU was previously marked unstable in this browser profile, so Kokoro was started in CPU mode.'
-      : (!webGpuSupport.adapterAvailable
-        ? 'WebGPU adapter is unavailable on this device/browser, so Kokoro is using CPU mode.'
-        : undefined))
-    : undefined;
   const availableMemoryGb = getDeviceMemoryGb();
   const memorySufficient = hasEnoughMemory(minimumMemoryGb);
+  const webGpuAvoidance =
+    requestedDevice === 'wasm'
+      ? (shouldAvoidWebGpuForProfile
+        ? {
+          reason: 'unstable_profile' as const,
+          message: 'WebGPU was previously marked unstable in this browser profile, so Kokoro was started in CPU mode.',
+          profileMarkedAt: unstableProfileRecord?.markedAt,
+        }
+        : (!webGpuSupport.adapterAvailable
+          ? {
+            reason: 'adapter_unavailable' as const,
+            message: 'WebGPU adapter is unavailable on this device/browser, so Kokoro is using CPU mode.',
+          }
+          : (!memorySufficient
+            ? {
+              reason: 'memory_gate' as const,
+              message: `Device memory is below ${minimumMemoryGb}GB, so Kokoro is using CPU mode.`,
+            }
+            : undefined)))
+      : undefined;
+  const runtimeReason = requestedDevice === 'wasm'
+    ? webGpuAvoidance?.message
+    : undefined;
 
   const shouldUseKokoro = memorySufficient && (requestedDevice === 'wasm' || webGpuSupport.adapterAvailable);
 
@@ -333,6 +352,7 @@ export const selectTTSProvider = async (
         runtime: runtimeDevice,
         dtype: selectedDtype,
         runtimeReason,
+        webGpuAvoidance,
         fallbackToWebSpeech: false,
       };
     } catch (error) {
@@ -391,5 +411,6 @@ export const selectTTSProvider = async (
     fallbackToWebSpeech: true,
     fallbackReason: fallbackError.message,
     fallbackError,
+    webGpuAvoidance,
   });
 };

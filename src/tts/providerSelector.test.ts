@@ -165,4 +165,33 @@ describe('selectTTSProvider', () => {
 
     (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } }).gpu = originalGpu;
   });
+
+  it('reports unstable_profile reason when current browser profile is marked unstable', async () => {
+    const unstableKey = 'reader-tts-webgpu-unstable-profiles-v1';
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value: 'vitest-agent',
+    });
+    (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } }).gpu = {
+      requestAdapter: vi.fn(async () => ({})),
+    };
+    window.localStorage.setItem(unstableKey, JSON.stringify({
+      'vitest-agent::unknown-gpu': {
+        markedAt: '2026-03-01T00:00:00.000Z',
+        reason: 'webgpu decode failed',
+      },
+    }));
+    warmupMock.mockResolvedValue(undefined);
+    getRuntimeDeviceMock.mockReturnValue('wasm');
+
+    const { selectTTSProvider } = await import('./providerSelector');
+    const selection = await selectTTSProvider();
+
+    expect(selection.webGpuAvoidance).toEqual({
+      reason: 'unstable_profile',
+      message: 'WebGPU was previously marked unstable in this browser profile, so Kokoro was started in CPU mode.',
+      profileMarkedAt: '2026-03-01T00:00:00.000Z',
+    });
+    expect(selection.runtimeReason).toContain('previously marked unstable');
+  });
 });

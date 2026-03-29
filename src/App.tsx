@@ -244,6 +244,11 @@ type ProviderRuntimeMetadata = {
   runtime: 'webgpu' | 'wasm' | 'system';
   dtype: RuntimeDType;
   runtimeReason?: string;
+  webGpuAvoidance?: {
+    reason: 'adapter_unavailable' | 'unstable_profile' | 'memory_gate';
+    message: string;
+    profileMarkedAt?: string;
+  };
   fallbackToWebSpeech: boolean;
   fallbackError?: TTSFallbackError;
 };
@@ -379,6 +384,7 @@ function App() {
     runtime: 'system',
     dtype: 'n/a',
     runtimeReason: undefined,
+    webGpuAvoidance: undefined,
     fallbackToWebSpeech: false,
   });
   const [showFallbackBanner, setShowFallbackBanner] = useState(false);
@@ -566,6 +572,7 @@ function App() {
           runtime: selectedProvider.runtime,
           dtype: selectedProvider.dtype,
           runtimeReason: selectedProvider.runtimeReason,
+          webGpuAvoidance: selectedProvider.webGpuAvoidance,
           fallbackToWebSpeech: selectedProvider.fallbackToWebSpeech,
           fallbackError: selectedProvider.fallbackError,
         });
@@ -876,7 +883,24 @@ function App() {
       {providerRuntimeMetadata.providerType === 'kokoro' && providerRuntimeMetadata.runtimeReason ? (
         <div className="mb-4 rounded-md border border-emerald-500/50 bg-[#07110a] px-3 py-2 text-sm text-emerald-100">
           <p>Runtime note: {providerRuntimeMetadata.runtimeReason}</p>
-          {providerRuntimeMetadata.runtimeReason.includes('marked unstable') ? (
+          {providerRuntimeMetadata.webGpuAvoidance?.reason === 'unstable_profile' ? (
+            <>
+              <p className="mt-1 text-xs text-emerald-300/80">
+                Profile marked unstable at:{' '}
+                <span className="font-semibold">
+                  {providerRuntimeMetadata.webGpuAvoidance.profileMarkedAt ?? 'unknown'}
+                </span>
+              </p>
+              <button
+                type="button"
+                className="mt-2 rounded-md border border-emerald-400/70 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-100 hover:border-emerald-300"
+                onClick={retryWebGpuForCurrentProfile}
+              >
+                Clear unstable profile + retry WebGPU
+              </button>
+            </>
+          ) : null}
+          {providerRuntimeMetadata.webGpuAvoidance?.reason !== 'unstable_profile' && providerRuntimeMetadata.runtimeReason.includes('marked unstable') ? (
             <button
               type="button"
               className="mt-2 rounded-md border border-emerald-400/70 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-100 hover:border-emerald-300"
@@ -884,6 +908,11 @@ function App() {
             >
               Retry WebGPU for this browser profile
             </button>
+          ) : null}
+          {providerRuntimeMetadata.webGpuAvoidance?.reason ? (
+            <p className="mt-1 text-xs text-emerald-300/80">
+              WebGPU avoid reason code: <span className="font-semibold">{providerRuntimeMetadata.webGpuAvoidance.reason}</span>
+            </p>
           ) : null}
         </div>
       ) : null}
