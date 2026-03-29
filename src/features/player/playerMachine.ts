@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { perfTelemetry } from '../../tts/perfTelemetry';
-import type { TTSSynthesisOptions, TTSSynthesisResult, TTSProvider } from '../../tts/types';
+import type { TTSAudioSynthesisResult, TTSSynthesisOptions, TTSSynthesisResult, TTSProvider } from '../../tts/types';
 
 export type PlayerMachineState = 'idle' | 'loading' | 'playing' | 'paused' | 'error' | 'finished';
 export type SegmentSynthesisStatus = 'idle' | 'queued' | 'loading' | 'ready' | 'error';
@@ -14,6 +14,7 @@ export interface QueueSegmentModel {
   segmentId: string;
   synthesisStatus: SegmentSynthesisStatus;
   audioUrl: string | null;
+  mode?: TTSSynthesisResult['mode'];
   error?: string;
 }
 
@@ -155,8 +156,13 @@ export function usePlayerController({
     }
 
     const existing = queueRef.current.get(segment.id);
-    if (existing?.synthesisStatus === 'ready' && existing.audioUrl) {
-      return { segmentId: segment.id, blob: new Blob(), url: existing.audioUrl };
+    if (existing?.synthesisStatus === 'ready') {
+      if (existing.audioUrl) {
+        return { segmentId: segment.id, blob: new Blob(), url: existing.audioUrl, mode: 'audio-url' };
+      }
+      if (existing.mode === 'native-spoken') {
+        return { segmentId: segment.id, mode: 'native-spoken' };
+      }
     }
 
     if (nextPrefetchInFlightRef.current.has(segment.id)) {
@@ -174,7 +180,12 @@ export function usePlayerController({
         segmentId: segment.id,
         durationMs: Math.round(perfTelemetry.now() - synthStartedAt),
       });
-      setQueueEntry({ segmentId: segment.id, synthesisStatus: 'ready', audioUrl: result.url });
+      setQueueEntry({
+        segmentId: segment.id,
+        synthesisStatus: 'ready',
+        audioUrl: 'url' in result ? result.url : null,
+        mode: result.mode,
+      });
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to synthesize audio segment.';
@@ -244,12 +255,41 @@ export function usePlayerController({
 
     const segment = segments[boundedIndex];
     const result = await synthesizeSegment(boundedIndex);
-    if (!result?.url) {
+    if (!result) {
+      return;
+    }
+
+    if (result.mode === 'native-spoken') {
+      if (!provider.playNative) {
+        dispatch({ type: 'SET_ERROR', error: 'TTS provider cannot play native audio output.' });
+        return;
+      }
+
+      dispatch({ type: 'SET_INDEX', index: boundedIndex });
+      dispatch({ type: 'SET_CHAR_OFFSET', charOffset: 0 });
+      await provider.playNative({ id: segment.id, text: segment.text }, synthesisOptions);
+      dispatch({ type: 'SET_CHAR_OFFSET', charOffset: segment.text.length });
+
+      const nextIndex = boundedIndex + 1;
+      if (nextIndex >= segments.length) {
+        dispatch({ type: 'SET_STATE', state: 'finished' });
+        persistCursor(boundedIndex, segment.text.length);
+        return;
+      }
+
+      dispatch({ type: 'SET_INDEX', index: nextIndex });
+      persistCursor(nextIndex, 0);
+      await playIndex(nextIndex, 0);
+      return;
+    }
+
+    const audioResult = result as TTSAudioSynthesisResult;
+    if (!audioResult.url) {
       return;
     }
 
     cleanupAudio();
-    const audio = new Audio(result.url);
+    const audio = new Audio(audioResult.url);
     audio.preload = 'auto';
 
     audio.ontimeupdate = () => {

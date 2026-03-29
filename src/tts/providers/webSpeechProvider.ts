@@ -1,7 +1,5 @@
 import { TTSProvider, TTSSegment, TTSSynthesisOptions, TTSSynthesisResult, TTSVoice } from '../types';
 
-const AUDIO_MIME = 'audio/webm;codecs=opus';
-
 const isSpeechSynthesisSupported = () => typeof window !== 'undefined' && 'speechSynthesis' in window;
 
 export class WebSpeechProvider implements TTSProvider {
@@ -47,7 +45,18 @@ export class WebSpeechProvider implements TTSProvider {
     });
   }
 
-  async synthesize(segment: TTSSegment, options: TTSSynthesisOptions = {}): Promise<TTSSynthesisResult> {
+  async synthesize(segment: TTSSegment, _options: TTSSynthesisOptions = {}): Promise<TTSSynthesisResult> {
+    if (!isSpeechSynthesisSupported()) {
+      throw new Error('Web Speech API is not supported in this browser.');
+    }
+
+    return {
+      segmentId: segment.id,
+      mode: 'native-spoken',
+    };
+  }
+
+  async playNative(segment: TTSSegment, options: TTSSynthesisOptions = {}): Promise<void> {
     if (!isSpeechSynthesisSupported()) {
       throw new Error('Web Speech API is not supported in this browser.');
     }
@@ -71,11 +80,6 @@ export class WebSpeechProvider implements TTSProvider {
       window.speechSynthesis.speak(utterance);
     });
 
-    const blob = new Blob([], { type: AUDIO_MIME });
-    return {
-      segmentId: segment.id,
-      blob,
-      url: URL.createObjectURL(blob),
-    };
+    return;
   }
 }
