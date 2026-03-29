@@ -36,10 +36,8 @@ type KokoroEngine = {
   synthesize: (text: string, options: { voice?: string; speed?: number }) => Promise<Blob | ArrayBuffer | Uint8Array>;
 };
 
-const KOKORO_MODULE_ID = 'kokoro-js';
-
 const importKokoroModule = async (): Promise<KokoroModule> => {
-  const module = await import(/* @vite-ignore */ KOKORO_MODULE_ID);
+  const module = await import('kokoro-js');
   return module as KokoroModule;
 };
 
