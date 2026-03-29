@@ -806,7 +806,7 @@ function App() {
   const shouldShowAdvancedDetails = !isProduction || showDetails;
 
   return (
-    <main className="mx-auto min-h-screen max-w-7xl p-6 font-mono text-emerald-100">
+    <main className="w-full p-2 font-mono text-emerald-100 md:p-4">
       <header className="mb-6">
         <h1 className="text-3xl font-bold">TTS Reader MVP</h1>
         <p className="mt-2 text-sm text-emerald-300/70">
@@ -975,16 +975,16 @@ function App() {
 
 
       {showModelLicenseInfo ? (
-        <div className="fixed inset-0 z-20 flex items-center justify-center bg-slate-950/80 p-4">
-          <div className="w-full max-w-2xl rounded-xl border border-border bg-panel p-5 shadow-2xl">
+        <div className="fixed inset-0 z-20 flex items-center justify-center bg-[#050706]/85 p-4">
+          <div className="w-full max-w-2xl rounded-xl border border-emerald-500/35 bg-[#07110a] p-5 shadow-2xl shadow-black/40">
             <div className="mb-3 flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-xl font-semibold">Model &amp; License Info</h2>
-                <p className="mt-1 text-sm text-slate-300">Loaded from <code>docs/licenses/tts-manifest.json</code>.</p>
+                <h2 className="text-xl font-semibold text-emerald-100">Model &amp; License Info</h2>
+                <p className="mt-1 text-sm text-emerald-300/80">Loaded from <code>docs/licenses/tts-manifest.json</code>.</p>
               </div>
               <button
                 type="button"
-                className="rounded-md border border-border px-3 py-1 text-sm text-slate-200"
+                className="rounded-md border border-emerald-500/35 bg-[#0a160f] px-3 py-1 text-sm text-emerald-100 hover:border-emerald-400/60"
                 onClick={() => setShowModelLicenseInfo(false)}
               >
                 Close
@@ -992,18 +992,18 @@ function App() {
             </div>
             <div className="space-y-3">
               {ttsManifest.artifacts.map((artifact) => (
-                <article key={artifact.id} className="rounded-md border border-border bg-slate-900/70 p-3 text-sm">
-                  <p><span className="font-semibold">Package/model:</span> {artifact.packageOrModelName}</p>
-                  <p><span className="font-semibold">Version/hash:</span> {artifact.versionOrHash}</p>
-                  <p><span className="font-semibold">License:</span> {artifact.license}</p>
+                <article key={artifact.id} className="rounded-md border border-emerald-500/30 bg-[#0a160f] p-3 text-sm text-emerald-100">
+                  <p><span className="font-semibold text-emerald-200">Package/model:</span> {artifact.packageOrModelName}</p>
+                  <p><span className="font-semibold text-emerald-200">Version/hash:</span> {artifact.versionOrHash}</p>
+                  <p><span className="font-semibold text-emerald-200">License:</span> {artifact.license}</p>
                   <p>
-                    <span className="font-semibold">Source URL:</span>{' '}
-                    <a className="text-sky-300 underline" href={artifact.sourceUrl} rel="noreferrer" target="_blank">
+                    <span className="font-semibold text-emerald-200">Source URL:</span>{' '}
+                    <a className="text-emerald-300 underline hover:text-emerald-200" href={artifact.sourceUrl} rel="noreferrer" target="_blank">
                       {artifact.sourceUrl}
                     </a>
                   </p>
                   {artifact.attributionText ? (
-                    <p><span className="font-semibold">Attribution:</span> {artifact.attributionText}</p>
+                    <p><span className="font-semibold text-emerald-200">Attribution:</span> {artifact.attributionText}</p>
                   ) : null}
                 </article>
               ))}
@@ -1013,7 +1013,7 @@ function App() {
       ) : null}
 
       <section className="grid gap-4 lg:grid-cols-3">
-        <article className="rounded-xl border border-emerald-500/35 bg-[#0b1730] p-4 shadow-lg shadow-black/20">
+        <article className="rounded-xl border border-emerald-500/35 bg-[#07110a] p-4 shadow-lg shadow-black/20">
           <h2 className="text-lg font-semibold">Input panel</h2>
           <div className="mt-3 flex flex-wrap gap-2">
             {sourceTabs.map((type) => (
@@ -1041,7 +1041,7 @@ function App() {
           <label className="mt-4 block text-sm text-emerald-200/90">
             Paste text
             <textarea
-              className="mt-1 h-40 w-full rounded-md border border-emerald-500/30 bg-[#091229] p-2 text-emerald-100"
+              className="mt-1 h-40 w-full rounded-md border border-emerald-500/30 bg-[#0a160f] p-2 text-emerald-100"
               value={textInput}
               onChange={(event) => {
                 setTextInput(event.target.value);
@@ -1053,7 +1053,7 @@ function App() {
           <label className="mt-3 block text-sm text-emerald-200/90">
             Upload file
             <input
-              className="mt-1 block w-full rounded-md border border-emerald-500/30 bg-[#091229] p-2 text-emerald-100"
+              className="mt-1 block w-full rounded-md border border-emerald-500/30 bg-[#0a160f] p-2 text-emerald-100"
               type="file"
               onChange={onFileChange}
             />
@@ -1064,7 +1064,7 @@ function App() {
             <label className="mt-3 block text-sm text-emerald-200/90">
               Source URL
               <input
-                className="mt-1 w-full rounded-md border border-emerald-500/30 bg-[#091229] p-2 text-emerald-100"
+                className="mt-1 w-full rounded-md border border-emerald-500/30 bg-[#0a160f] p-2 text-emerald-100"
                 type="url"
                 placeholder="https://example.com/article"
                 value={urlInput}
@@ -1077,7 +1077,7 @@ function App() {
           ) : null}
         </article>
 
-        <article className="rounded-xl border border-emerald-500/35 bg-[#0b1730] p-4 shadow-lg shadow-black/20">
+        <article className="rounded-xl border border-emerald-500/35 bg-[#07110a] p-4 shadow-lg shadow-black/20">
           <h2 className="text-lg font-semibold">Preview panel</h2>
           <p className="mt-2 text-sm text-emerald-300/70">Normalized segments: {ingested.document.segments.length}</p>
           <div className="mt-3 max-h-[420px] space-y-2 overflow-auto pr-1">
@@ -1087,7 +1087,7 @@ function App() {
                 className={`rounded-md border p-2 text-sm ${
                   player.currentSegmentIndex === index
                     ? 'border-emerald-400/80 bg-emerald-500/10'
-                    : 'border-emerald-500/30 bg-[#091229]'
+                    : 'border-emerald-500/30 bg-[#0a160f]'
                 }`}
               >
                 <div className="mb-1 flex items-center justify-between text-xs text-emerald-300/70">
@@ -1107,7 +1107,7 @@ function App() {
           </div>
         </article>
 
-        <article className="rounded-xl border border-emerald-500/35 bg-[#0b1730] p-4 shadow-lg shadow-black/20">
+        <article className="rounded-xl border border-emerald-500/35 bg-[#07110a] p-4 shadow-lg shadow-black/20">
           <h2 className="text-lg font-semibold">Playback panel</h2>
           <div className="space-y-3">
             <PlayerControls
