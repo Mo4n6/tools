@@ -7,6 +7,7 @@ type PlayerControlsProps = {
   segmentCount: number;
   machineError: string | null;
   voice: string;
+  voices: Array<{ id: string; name: string }>;
   rate: number;
   onPlay: () => void;
   onPause: () => void;
@@ -16,12 +17,6 @@ type PlayerControlsProps = {
   onVoiceChange: (voice: string) => void;
   onRateChange: (rate: number) => void;
 };
-
-const VOICE_OPTIONS = [
-  { value: 'af_alloy', label: 'Alloy' },
-  { value: 'af_verse', label: 'Verse' },
-  { value: 'af_lumen', label: 'Lumen' },
-];
 
 const RATE_MIN = 0.5;
 const RATE_MAX = 2;
@@ -42,6 +37,7 @@ export function PlayerControls({
   segmentCount,
   machineError,
   voice,
+  voices,
   rate,
   onPlay,
   onPause,
@@ -126,13 +122,18 @@ export function PlayerControls({
         aria-label="Voice selector"
         className="w-full rounded-md border border-border bg-slate-900 p-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
         value={voice}
+        disabled={voices.length === 0}
         onChange={(event) => onVoiceChange(event.target.value)}
       >
-        {VOICE_OPTIONS.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
+        {voices.length === 0 ? (
+          <option value={voice}>No voices available</option>
+        ) : (
+          voices.map((providerVoice) => (
+            <option key={providerVoice.id} value={providerVoice.id}>
+              {providerVoice.name}
+            </option>
+          ))
+        )}
       </select>
 
       <label className="block text-sm text-slate-300" htmlFor="rate-control">

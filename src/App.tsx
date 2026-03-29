@@ -9,7 +9,7 @@ import { setupLocalDebugPerfTelemetry } from './tts/perfTelemetry';
 import type { TTSFallbackError } from './tts/errors';
 import { canImportKokoroModule } from './tts/providers/kokoroProvider';
 import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
-import type { TTSProvider } from './tts/types';
+import type { TTSProvider, TTSVoice } from './tts/types';
 
 const isUrlIngestEnabled = import.meta.env.VITE_ENABLE_URL_INGEST !== 'false';
 const isPagesStyleBase = import.meta.env.BASE_URL !== '/';
@@ -158,6 +158,7 @@ function App() {
   const [voiceFallbackWarning, setVoiceFallbackWarning] = useState<string | null>(null);
   const [devTtsDiagnostics, setDevTtsDiagnostics] = useState<DevTtsDiagnostics | null>(null);
   const [voice, setVoice] = useState(storedPreferences?.voice ?? 'af_alloy');
+  const [availableVoices, setAvailableVoices] = useState<TTSVoice[]>([]);
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
 
@@ -255,6 +256,8 @@ function App() {
           return;
         }
 
+        setAvailableVoices(voices);
+
         if (voices.length === 0) {
           setVoiceFallbackWarning('No voices were returned by the active provider.');
           return;
@@ -266,13 +269,16 @@ function App() {
           return;
         }
 
-        const fallbackVoice = voices[0];
+        const fallbackVoice = providerLabel === 'kokoro'
+          ? voices.find((providerVoice) => providerVoice.id === 'af_alloy') ?? voices[0]
+          : voices[0];
         setVoice(fallbackVoice.id);
         setVoiceFallbackWarning(
           `Selected voice "${voice}" is unavailable for ${providerLabel}; switched to "${fallbackVoice.name}".`,
         );
       } catch {
         if (active) {
+          setAvailableVoices([]);
           setVoiceFallbackWarning('Unable to validate voices for the active provider.');
         }
       }
@@ -566,6 +572,7 @@ function App() {
               segmentCount={ingested.document.segments.length}
               machineError={player.error}
               voice={voice}
+              voices={availableVoices}
               rate={rate}
               onPlay={() => {
                 if (player.state === 'paused') {
