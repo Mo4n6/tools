@@ -534,7 +534,32 @@ export function usePlayerController({
       dispatch({ type: 'SET_CHAR_OFFSET', charOffset: offset });
     }
 
-    await audio.play();
+    try {
+      await audio.play();
+    } catch (error) {
+      const errorName = error instanceof Error ? error.name : 'UnknownError';
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const blobMimeType = audioResult.blob?.type || null;
+      const playbackErrorMessage = `Audio playback failed: ${errorName}: ${errorMessage}`;
+
+      console.error('Audio playback failed.', {
+        errorName,
+        errorMessage,
+        provider: providerId,
+        runtime: providerRuntimeSignature,
+        voice: synthesisOptions?.voice ?? null,
+        rate: synthesisOptions?.rate ?? null,
+        audioUrl: audioResult.url ?? null,
+        blobMimeType,
+      });
+      perfTelemetry.sink.log({
+        type: 'tts.synth_failure',
+        segmentId: segment.id,
+        reason: playbackErrorMessage,
+      });
+      dispatch({ type: 'SET_ERROR', error: playbackErrorMessage });
+      return;
+    }
     if (!firstAudioLoggedRef.current && playRequestStartRef.current != null) {
       perfTelemetry.sink.log({
         type: 'tts.first_audio',
@@ -546,7 +571,19 @@ export function usePlayerController({
     }
     dispatch({ type: 'SET_STATE', state: 'playing' });
     await prefetchUpcoming(playbackIndex);
-  }, [anchors, cleanupAudio, cleanupNativeSpeech, getCacheKey, persistCursor, prefetchUpcoming, segments, synthesizeSegment, synthesisOptions]);
+  }, [
+    anchors,
+    cleanupAudio,
+    cleanupNativeSpeech,
+    getCacheKey,
+    persistCursor,
+    prefetchUpcoming,
+    providerId,
+    providerRuntimeSignature,
+    segments,
+    synthesizeSegment,
+    synthesisOptions,
+  ]);
 
   const play = useCallback(async () => {
     await playIndex(machine.currentSegmentIndex, machine.charOffset);
