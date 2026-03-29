@@ -2,21 +2,28 @@
 
 ## GitHub Pages deployment
 
-This repository is configured to deploy the built Vite app to GitHub Pages via GitHub Actions using `.github/workflows/deploy-pages.yml`.
+This repository deploys to GitHub Pages on every push to `main` using `.github/workflows/deploy-pages.yml`.
 
-### Required build environment values
+### Pages URL
 
-Set the following environment variable for Pages builds:
+- `https://<your-github-username>.github.io/codextest/`
 
-- `VITE_ENABLE_URL_INGEST=false`
+### MVP scope supported on Pages
 
-For environments that support backend URL extraction, configure:
+GitHub Pages is a static host, so the deployed MVP supports:
 
-- `VITE_EXTRACT_API_BASE_URL=/api/extract`
+- Pasting text into the app
+- Uploading supported local files
+- Running local browser TTS playback
 
-### Optional model/runtime flags
+### URL ingestion support
 
-If you need to tune runtime behavior at build/deploy time, you can optionally set model/runtime-related `VITE_*` flags as repository secrets/variables and expose them to the build step.
+URL ingestion requires the separate extraction backend deployment (for example, a serverless or API host) and setting:
+
+- `VITE_ENABLE_URL_INGEST=true`
+- `VITE_EXTRACT_API_BASE_URL=<your-backend-base-url>`
+
+For Pages-only deployment, keep URL ingestion disabled (`VITE_ENABLE_URL_INGEST=false`).
 
 ## Repository settings required
 
