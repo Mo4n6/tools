@@ -63,6 +63,26 @@ type DevTtsDiagnostics = {
   deviceMemoryGb?: number;
   selectedProvider: string;
   fallbackCode?: string;
+  fallbackReason?: string;
+  fallbackHint?: string;
+};
+
+const getFallbackReasonAndHint = (error?: TTSFallbackError): { reason?: string; hint?: string } => {
+  if (!error) {
+    return {};
+  }
+
+  if (error.code === 'KOKORO_MODULE_RESOLUTION_FAILED') {
+    return {
+      reason: 'Could not resolve the kokoro-js module during provider initialization.',
+      hint: 'Verify kokoro-js is installed/bundled and dynamic import path works on GitHub Pages base URL.',
+    };
+  }
+
+  return {
+    reason: error.message,
+    hint: error.hints?.[0],
+  };
 };
 
 const checkWebGpuSupport = async (): Promise<boolean> => {
@@ -137,18 +157,21 @@ function App() {
           kokoroPackageLoadable = false;
         }
 
+        const fallbackSummary = getFallbackReasonAndHint(selectedProvider.fallbackError);
         const diagnostics: DevTtsDiagnostics = {
           kokoroPackageLoadable,
           webgpuSupported: await checkWebGpuSupport(),
           deviceMemoryGb: getDeviceMemoryGb(),
           selectedProvider: providerName,
           fallbackCode: selectedProvider.fallbackError?.code,
+          fallbackReason: fallbackSummary.reason,
+          fallbackHint: fallbackSummary.hint,
         };
 
         console.info('[DEV][TTS_INIT_DIAGNOSTICS]', diagnostics);
         if (selectedProvider.fallbackError?.code === 'KOKORO_MODULE_RESOLUTION_FAILED') {
           console.info(
-            '[DEV][TTS_INIT_ACTION] Install/ship kokoro-js correctly or use Web Speech fallback intentionally.',
+            '[DEV][TTS_INIT_ACTION] Verify kokoro-js is installed/bundled and dynamic import path works on GitHub Pages base URL.',
           );
         }
 
@@ -303,6 +326,8 @@ function App() {
             <li>deviceMemoryGb: {devTtsDiagnostics.deviceMemoryGb ?? 'unknown'}</li>
             <li>selectedProvider: {devTtsDiagnostics.selectedProvider}</li>
             <li>fallbackCode: {devTtsDiagnostics.fallbackCode ?? 'none'}</li>
+            <li>fallbackReason: {devTtsDiagnostics.fallbackReason ?? 'none'}</li>
+            <li>fallbackHint: {devTtsDiagnostics.fallbackHint ?? 'none'}</li>
           </ul>
         </aside>
       ) : null}
