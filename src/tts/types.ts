@@ -43,5 +43,5 @@ export interface TTSProvider {
   warmup(): Promise<void>;
 }
 
-export type KokoroDType = 'fp32' | 'fp16' | 'q8' | 'q4';
+export type KokoroDType = 'fp32' | 'fp16' | 'q8' | 'q4' | 'q4f16';
 export type RuntimeDType = KokoroDType | 'n/a';

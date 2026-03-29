@@ -163,7 +163,7 @@ const resolveKokoroDtype = (
   }
 
   if (device === 'webgpu') {
-    return 'fp16';
+    return 'q8';
   }
 
   return 'q8';

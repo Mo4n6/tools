@@ -10,7 +10,7 @@ import { classifyPerfDebugEvent, type PerfDebugEntry } from './tts/perfDebugClas
 import type { TTSFallbackError } from './tts/errors';
 import { canImportKokoroModule } from './tts/providers/kokoroProvider';
 import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
-import type { RuntimeDType, TTSProvider, TTSVoice } from './tts/types';
+import type { KokoroDType, RuntimeDType, TTSProvider, TTSVoice } from './tts/types';
 import { chunkSegmentsByPolicy, defaultChunkingPolicy } from './domain/chunking/policy';
 
 type PlaybackAnchor = {
@@ -61,6 +61,7 @@ const shouldSkipKokoroInitOnPages = skipKokoroInitOnPagesEnvValue === 'true';
 type SourceType = 'text' | 'file' | 'url';
 const sourceTabs: SourceType[] = isUrlIngestEnabled ? ['text', 'file', 'url'] : ['text', 'file'];
 const TTS_PREFS_STORAGE_KEY = 'reader-tts-preferences';
+const TTS_DTYPE_STORAGE_KEY = 'reader-kokoro-dtype';
 const VOICE_MIGRATION_DONE_STORAGE_KEY = 'reader-web-speech-voice-migration-done';
 const KNOWN_PROVIDER_LABELS = ['web-speech', 'kokoro'] as const;
 type KnownProviderLabel = (typeof KNOWN_PROVIDER_LABELS)[number];
@@ -275,6 +276,20 @@ type DevTtsDiagnostics = {
 };
 
 const KOKORO_MODULE_NOT_BUNDLED_HINT = 'Install/add kokoro-js dependency and avoid @vite-ignore for this import.';
+const KOKORO_DTYPE_OPTIONS: KokoroDType[] = ['fp32', 'fp16', 'q8', 'q4', 'q4f16'];
+
+const loadStoredKokoroDtype = (): KokoroDType | 'auto' => {
+  if (typeof window === 'undefined') {
+    return 'auto';
+  }
+
+  const stored = window.localStorage.getItem(TTS_DTYPE_STORAGE_KEY);
+  if (!stored || stored === 'auto') {
+    return 'auto';
+  }
+
+  return KOKORO_DTYPE_OPTIONS.includes(stored as KokoroDType) ? (stored as KokoroDType) : 'auto';
+};
 
 const emitDevKokoroImportCheck = async (): Promise<boolean> => {
   const kokoroPackageLoadable = await canImportKokoroModule();
@@ -403,7 +418,8 @@ function App() {
   const [selectedVoiceLanguage, setSelectedVoiceLanguage] = useState('auto');
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
   const [playbackModeOverride, setPlaybackModeOverride] = useState<PlaybackMode | null>(null);
-  const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
+  const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(false);
+  const [selectedKokoroDtype, setSelectedKokoroDtype] = useState<KokoroDType | 'auto'>(loadStoredKokoroDtype);
   const [runtimeWarnings, setRuntimeWarnings] = useState<PerfDebugEntry[]>([]);
   const [fatalPlaybackBlockers, setFatalPlaybackBlockers] = useState<PerfDebugEntry[]>([]);
   const [hasCompletedVoiceMigration, setHasCompletedVoiceMigration] = useState(loadVoiceMigrationDone);
@@ -519,10 +535,10 @@ function App() {
     const forceWasm   = urlParams.get('forceWasm') === 'true'   || forcedFromUrl === 'wasm';
   
     // This is the line that was causing the "Cannot find name 'forcedDeviceOverride'" error
-    const preferredDevice: 'webgpu' | 'wasm' | undefined = 
+    const preferredDevice: 'webgpu' | 'wasm' | undefined =
       forceWebGpu ? 'webgpu' :
-      forceWasm   ? 'wasm'   :
-      getDevDeviceOverride();   // your original function (returns 'webgpu' | 'wasm' | null)
+      forceWasm   ? 'wasm' :
+      getDevDeviceOverride() ?? undefined;
   
     const skipAllQualityChecks = forceWebGpu || 
       urlParams.get('skipQuality') === 'true' || 
@@ -542,6 +558,7 @@ function App() {
       preferredDevice,                    // now correctly typed
       allowWebGpuIfUnstable: allowUnstable,
       skipWebGpuQualityCheck: skipAllQualityChecks,
+      kokoro: selectedKokoroDtype === 'auto' ? undefined : { dtype: selectedKokoroDtype },
   
       skipKokoroInit,
       skipKokoroInitReason: skipKokoroInit
@@ -609,7 +626,7 @@ function App() {
       setShowInformationalFallbackBanner(Boolean(selectedProvider.fallbackIntentional));
       setProviderFallbackError(selectedProvider.fallbackError ?? null);
     }
-  }, [forceWebGpuRetry, shouldSkipKokoroInitOnPages]);   // keep your existing deps or update if needed
+  }, [forceWebGpuRetry, selectedKokoroDtype, shouldSkipKokoroInitOnPages]);   // keep your existing deps or update if needed
 
   useEffect(() => {
     let active = true;
@@ -640,6 +657,14 @@ function App() {
 
     window.localStorage.setItem(TTS_PREFS_STORAGE_KEY, JSON.stringify(payload));
   }, [providerLabel, rate, voice]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(TTS_DTYPE_STORAGE_KEY, selectedKokoroDtype);
+  }, [selectedKokoroDtype]);
 
   useEffect(() => {
     let active = true;
@@ -855,13 +880,22 @@ function App() {
           ) : null}
         </p>
         {isProduction ? (
-          <button
-            type="button"
-            className="mt-2 rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-xs text-emerald-100 hover:border-emerald-300/70"
-            onClick={() => setShowDetails((current) => !current)}
-          >
-            {showDetails ? 'Hide Details' : 'Details'}
-          </button>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-xs text-emerald-100 hover:border-emerald-300/70"
+              onClick={() => setShowDetails((current) => !current)}
+            >
+              {showDetails ? 'Hide Details' : 'Details'}
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-xs text-emerald-100 hover:border-emerald-300/70"
+              onClick={() => setShowModelLicenseInfo((current) => !current)}
+            >
+              {showModelLicenseInfo ? 'Hide License Info' : 'Show License Info'}
+            </button>
+          </div>
         ) : null}
         {shouldShowAdvancedDetails ? (
           <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-emerald-200/90">
@@ -1039,44 +1073,6 @@ function App() {
       ) : null}
 
 
-      {showModelLicenseInfo ? (
-        <div className="fixed inset-0 z-20 flex items-center justify-center bg-[#050706]/85 p-4">
-          <div className="w-full max-w-2xl rounded-xl border border-emerald-500/35 bg-[#07110a] p-5 shadow-2xl shadow-black/40">
-            <div className="mb-3 flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-semibold text-emerald-100">Model &amp; License Info</h2>
-                <p className="mt-1 text-sm text-emerald-300/80">Loaded from <code>docs/licenses/tts-manifest.json</code>.</p>
-              </div>
-              <button
-                type="button"
-                className="rounded-md border border-emerald-500/35 bg-[#0a160f] px-3 py-1 text-sm text-emerald-100 hover:border-emerald-400/60"
-                onClick={() => setShowModelLicenseInfo(false)}
-              >
-                Close
-              </button>
-            </div>
-            <div className="space-y-3">
-              {ttsManifest.artifacts.map((artifact) => (
-                <article key={artifact.id} className="rounded-md border border-emerald-500/30 bg-[#0a160f] p-3 text-sm text-emerald-100">
-                  <p><span className="font-semibold text-emerald-200">Package/model:</span> {artifact.packageOrModelName}</p>
-                  <p><span className="font-semibold text-emerald-200">Version/hash:</span> {artifact.versionOrHash}</p>
-                  <p><span className="font-semibold text-emerald-200">License:</span> {artifact.license}</p>
-                  <p>
-                    <span className="font-semibold text-emerald-200">Source URL:</span>{' '}
-                    <a className="text-emerald-300 underline hover:text-emerald-200" href={artifact.sourceUrl} rel="noreferrer" target="_blank">
-                      {artifact.sourceUrl}
-                    </a>
-                  </p>
-                  {artifact.attributionText ? (
-                    <p><span className="font-semibold text-emerald-200">Attribution:</span> {artifact.attributionText}</p>
-                  ) : null}
-                </article>
-              ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
       <section className="grid gap-4 lg:grid-cols-3">
         <article className="rounded-xl border border-emerald-500/35 bg-[#07110a] p-4 shadow-lg shadow-black/20">
           <h2 className="text-lg font-semibold">Input panel</h2>
@@ -1175,6 +1171,23 @@ function App() {
         <article className="rounded-xl border border-emerald-500/35 bg-[#07110a] p-4 shadow-lg shadow-black/20">
           <h2 className="text-lg font-semibold">Playback panel</h2>
           <div className="space-y-3">
+            <label className="block text-sm text-emerald-200/90">
+              Kokoro dtype
+              <select
+                className="mt-1 w-full rounded-md border border-emerald-500/30 bg-[#0a160f] p-2 text-emerald-100"
+                value={selectedKokoroDtype}
+                onChange={(event) => {
+                  const nextValue = event.target.value as KokoroDType | 'auto';
+                  setSelectedKokoroDtype(nextValue);
+                  setProviderInitNonce((current) => current + 1);
+                }}
+              >
+                <option value="auto">Auto (default)</option>
+                {KOKORO_DTYPE_OPTIONS.map((dtypeOption) => (
+                  <option key={dtypeOption} value={dtypeOption}>{dtypeOption}</option>
+                ))}
+              </select>
+            </label>
             <PlayerControls
               queueStatus={player.state}
               currentSegmentIndex={player.currentSegmentIndex}
@@ -1236,6 +1249,40 @@ function App() {
           </div>
         </article>
       </section>
+
+      <footer className="mt-4 rounded-md border border-emerald-500/35 bg-[#07110a] p-3 text-xs text-emerald-200/85">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p>Model/license attribution is available here (no blocking popup required).</p>
+          <button
+            type="button"
+            className="rounded-md border border-emerald-500/40 bg-[#0a160f] px-2 py-1 text-xs text-emerald-100 hover:border-emerald-300/70"
+            onClick={() => setShowModelLicenseInfo((current) => !current)}
+          >
+            {showModelLicenseInfo ? 'Hide Attribution' : 'Show Attribution'}
+          </button>
+        </div>
+        {showModelLicenseInfo ? (
+          <div className="mt-3 space-y-3">
+            <p className="text-emerald-300/80">Loaded from <code>docs/licenses/tts-manifest.json</code>.</p>
+            {ttsManifest.artifacts.map((artifact) => (
+              <article key={artifact.id} className="rounded-md border border-emerald-500/30 bg-[#0a160f] p-3">
+                <p><span className="font-semibold text-emerald-200">Package/model:</span> {artifact.packageOrModelName}</p>
+                <p><span className="font-semibold text-emerald-200">Version/hash:</span> {artifact.versionOrHash}</p>
+                <p><span className="font-semibold text-emerald-200">License:</span> {artifact.license}</p>
+                <p>
+                  <span className="font-semibold text-emerald-200">Source URL:</span>{' '}
+                  <a className="text-emerald-300 underline hover:text-emerald-200" href={artifact.sourceUrl} rel="noreferrer" target="_blank">
+                    {artifact.sourceUrl}
+                  </a>
+                </p>
+                {artifact.attributionText ? (
+                  <p><span className="font-semibold text-emerald-200">Attribution:</span> {artifact.attributionText}</p>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </footer>
     </main>
   );
 }
