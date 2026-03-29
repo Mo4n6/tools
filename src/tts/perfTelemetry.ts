@@ -46,6 +46,7 @@ export type PerfMetricEvent =
     type: 'tts.runtime_downgrade';
     transition: 'webgpu->wasm';
     reason: string;
+    triggerCategory?: 'validation' | 'runtime_exception';
     segmentId?: string;
   };
 
