@@ -3,11 +3,12 @@ import { classifyTTSFailure, TTSFallbackError } from './errors';
 import { perfTelemetry } from './perfTelemetry';
 import { canImportKokoroModule, KokoroDevice, KokoroProvider, KokoroProviderOptions } from './providers/kokoroProvider';
 import { WebSpeechProvider } from './providers/webSpeechProvider';
-import { KokoroDType, RuntimeDType, TTSProvider } from './types';
+import type { KokoroDType, RuntimeDType, TTSAudioSynthesisResult, TTSSynthesisResult, TTSProvider } from './types';
 
 const DEFAULT_MEMORY_GB_THRESHOLD = 4;
 const WEBGPU_UNSTABLE_PROFILES_STORAGE_KEY = 'reader-tts-webgpu-unstable-profiles-v1';
 const isPagesStyleBase = (): boolean => import.meta.env.BASE_URL !== '/';
+const isAudioUrlResult = (result: TTSSynthesisResult): result is TTSAudioSynthesisResult => 'url' in result;
 
 const getGpuFingerprintFragment = (): string => {
   if (typeof document === 'undefined') {
@@ -265,6 +266,10 @@ export const selectTTSProvider = async (
             text: KOKORO_QUALITY_CHECK_SENTENCE,
           }, {}, 'webgpu');
 
+          if (!isAudioUrlResult(qualityCheckResult)) {
+            throw new Error('Kokoro quality check returned a non-audio synthesis result.');
+          }
+
           URL.revokeObjectURL(qualityCheckResult.url);
         } catch (qualityCheckError) {
           webGpuQualityCheckFailed = true;
@@ -274,6 +279,10 @@ export const selectTTSProvider = async (
               id: 'kokoro-quality-check',
               text: KOKORO_QUALITY_CHECK_SENTENCE,
             }, {}, 'wasm');
+
+            if (!isAudioUrlResult(wasmQualityCheckResult)) {
+              throw new Error('Kokoro WASM quality check returned a non-audio synthesis result.');
+            }
 
             URL.revokeObjectURL(wasmQualityCheckResult.url);
             const errorMessage = qualityCheckError instanceof Error ? qualityCheckError.message : 'unknown_error';
