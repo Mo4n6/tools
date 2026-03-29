@@ -1,4 +1,4 @@
-# kokoro-reader
+# tts-reader-mvp
 
 ## GitHub Pages deployment
 
@@ -6,12 +6,12 @@ This repository deploys to GitHub Pages on every push to `main` using `.github/w
 
 Workflow runs:
 
-- `https://github.com/<your-github-username>/kokoro-reader/actions/workflows/deploy-pages.yml`
+- `https://github.com/<your-github-username>/tts-reader-mvp/actions/workflows/deploy-pages.yml`
 
 ### Pages URL
 
-- `https://<your-github-username>.github.io/kokoro-reader/`
-- Built assets should resolve from `https://<your-github-username>.github.io/kokoro-reader/assets/...`
+- `https://<your-github-username>.github.io/tts-reader-mvp/`
+- Built assets should resolve from `https://<your-github-username>.github.io/tts-reader-mvp/assets/...`
 
 ### MVP scope supported on Pages
 

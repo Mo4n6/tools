@@ -2,9 +2,9 @@
 
 ## Deployment references
 
-- Workflow: `https://github.com/<your-github-username>/kokoro-reader/actions/workflows/deploy-pages.yml`
-- Site: `https://<your-github-username>.github.io/kokoro-reader/`
-- Asset URL pattern to verify after deploy: `https://<your-github-username>.github.io/kokoro-reader/assets/...`
+- Workflow: `https://github.com/<your-github-username>/tts-reader-mvp/actions/workflows/deploy-pages.yml`
+- Site: `https://<your-github-username>.github.io/tts-reader-mvp/`
+- Asset URL pattern to verify after deploy: `https://<your-github-username>.github.io/tts-reader-mvp/assets/...`
 
 ## Scope
 
