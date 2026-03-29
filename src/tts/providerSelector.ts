@@ -3,11 +3,12 @@ import { classifyTTSFailure, TTSFallbackError } from './errors';
 import { perfTelemetry } from './perfTelemetry';
 import { canImportKokoroModule, KokoroDevice, KokoroProvider, KokoroProviderOptions } from './providers/kokoroProvider';
 import { WebSpeechProvider } from './providers/webSpeechProvider';
-import { KokoroDType, RuntimeDType, TTSProvider } from './types';
+import type { KokoroDType, RuntimeDType, TTSAudioSynthesisResult, TTSSynthesisResult, TTSProvider } from './types';
 
 const DEFAULT_MEMORY_GB_THRESHOLD = 4;
 const WEBGPU_UNSTABLE_PROFILES_STORAGE_KEY = 'reader-tts-webgpu-unstable-profiles-v1';
 const isPagesStyleBase = (): boolean => import.meta.env.BASE_URL !== '/';
+const isAudioUrlResult = (result: TTSSynthesisResult): result is TTSAudioSynthesisResult => 'url' in result;
 
 const getGpuFingerprintFragment = (): string => {
   if (typeof document === 'undefined') {
@@ -84,6 +85,26 @@ const markWebGpuUnstableForCurrentProfile = (reason: string): void => {
   window.localStorage.setItem(WEBGPU_UNSTABLE_PROFILES_STORAGE_KEY, JSON.stringify(profiles));
 };
 
+export const clearWebGpuUnstableProfileForCurrentBrowser = (): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const profileKey = getBrowserGpuProfileKey();
+  const profiles = loadUnstableWebGpuProfiles();
+  if (!profiles[profileKey]) {
+    return;
+  }
+
+  delete profiles[profileKey];
+  if (Object.keys(profiles).length === 0) {
+    window.localStorage.removeItem(WEBGPU_UNSTABLE_PROFILES_STORAGE_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(WEBGPU_UNSTABLE_PROFILES_STORAGE_KEY, JSON.stringify(profiles));
+};
+
 const getDeviceMemoryGb = (): number | undefined => {
   if (typeof navigator === 'undefined') {
     return undefined;
@@ -125,6 +146,7 @@ export interface TTSProviderSelection {
   providerType: 'kokoro' | 'web-speech';
   runtime: 'webgpu' | 'wasm' | 'system';
   dtype: RuntimeDType;
+  runtimeReason?: string;
   fallbackToWebSpeech: boolean;
   fallbackIntentional?: boolean;
   fallbackReason?: string;
@@ -205,6 +227,13 @@ export const selectTTSProvider = async (
     options.preferredDevice
     ?? options.kokoro?.device
     ?? (webGpuSupport.adapterAvailable && !shouldAvoidWebGpuForProfile ? 'webgpu' : 'wasm');
+  const runtimeReason = requestedDevice === 'wasm'
+    ? (shouldAvoidWebGpuForProfile
+      ? 'WebGPU was previously marked unstable in this browser profile, so Kokoro was started in CPU mode.'
+      : (!webGpuSupport.adapterAvailable
+        ? 'WebGPU adapter is unavailable on this device/browser, so Kokoro is using CPU mode.'
+        : undefined))
+    : undefined;
   const availableMemoryGb = getDeviceMemoryGb();
   const memorySufficient = hasEnoughMemory(minimumMemoryGb);
 
@@ -265,6 +294,10 @@ export const selectTTSProvider = async (
             text: KOKORO_QUALITY_CHECK_SENTENCE,
           }, {}, 'webgpu');
 
+          if (!isAudioUrlResult(qualityCheckResult)) {
+            throw new Error('Kokoro quality check returned a non-audio synthesis result.');
+          }
+
           URL.revokeObjectURL(qualityCheckResult.url);
         } catch (qualityCheckError) {
           webGpuQualityCheckFailed = true;
@@ -274,6 +307,10 @@ export const selectTTSProvider = async (
               id: 'kokoro-quality-check',
               text: KOKORO_QUALITY_CHECK_SENTENCE,
             }, {}, 'wasm');
+
+            if (!isAudioUrlResult(wasmQualityCheckResult)) {
+              throw new Error('Kokoro WASM quality check returned a non-audio synthesis result.');
+            }
 
             URL.revokeObjectURL(wasmQualityCheckResult.url);
             const errorMessage = qualityCheckError instanceof Error ? qualityCheckError.message : 'unknown_error';
@@ -294,6 +331,7 @@ export const selectTTSProvider = async (
         providerType: 'kokoro',
         runtime: runtimeDevice,
         dtype: selectedDtype,
+        runtimeReason,
         fallbackToWebSpeech: false,
       };
     } catch (error) {
