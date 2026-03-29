@@ -3,7 +3,7 @@ import { classifyTTSFailure, TTSFallbackError } from './errors';
 import { perfTelemetry } from './perfTelemetry';
 import { canImportKokoroModule, KokoroDevice, KokoroProvider, KokoroProviderOptions } from './providers/kokoroProvider';
 import { WebSpeechProvider } from './providers/webSpeechProvider';
-import { RuntimeDType, TTSProvider } from './types';
+import { KokoroDType, RuntimeDType, TTSProvider } from './types';
 
 const DEFAULT_MEMORY_GB_THRESHOLD = 4;
 const isPagesStyleBase = (): boolean => import.meta.env.BASE_URL !== '/';
@@ -57,7 +57,7 @@ export interface TTSProviderSelection {
 const resolveKokoroDtype = (
   device: KokoroDevice,
   configuredDtype?: KokoroProviderOptions['dtype']
-): RuntimeDType => {
+): KokoroDType => {
   if (configuredDtype) {
     return configuredDtype;
   }
