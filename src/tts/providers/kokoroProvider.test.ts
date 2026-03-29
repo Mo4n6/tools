@@ -22,9 +22,11 @@ const buildWavBytes = (payloadSize = 80): Uint8Array => {
   return bytes;
 };
 
-const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => (
-  bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
-);
+const toBlobPart = (bytes: Uint8Array): ArrayBuffer => {
+  const arrayBuffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(arrayBuffer).set(bytes);
+  return arrayBuffer;
+};
 
 describe('KokoroProvider runtime downgrade', () => {
   beforeEach(() => {
@@ -70,7 +72,7 @@ describe('KokoroProvider runtime downgrade', () => {
     fromPretrainedMock.mockResolvedValue({
       device: 'wasm',
       voices: { af_heart: { name: 'Heart' } },
-      generate: vi.fn(async () => new Blob([toArrayBuffer(buildWavBytes())], { type: '' })),
+      generate: vi.fn(async () => new Blob([toBlobPart(buildWavBytes())], { type: '' })),
     });
 
     const { KokoroProvider } = await import('./kokoroProvider');
@@ -83,7 +85,7 @@ describe('KokoroProvider runtime downgrade', () => {
     fromPretrainedMock.mockResolvedValue({
       device: 'wasm',
       voices: { af_heart: { name: 'Heart' } },
-      generate: vi.fn(async () => new Blob([toArrayBuffer(buildWavBytes())], { type: 'text/plain' })),
+      generate: vi.fn(async () => new Blob([toBlobPart(buildWavBytes())], { type: 'text/plain' })),
     });
 
     const { KokoroProvider } = await import('./kokoroProvider');
