@@ -591,8 +591,11 @@ function App() {
         const normalizedSelectedVoice = providerLabel === 'kokoro'
           ? normalizeKokoroVoiceId(selectedVoice)
           : selectedVoice;
-        const preferredVoices = getPreferredVoicesForLanguage(voices, effectiveVoiceLanguage);
-        const isSelectedVoiceAvailable = preferredVoices.some((providerVoice) => providerVoice.id === normalizedSelectedVoice);
+        const preferredVoicesForEffectiveLanguage = getPreferredVoicesForLanguage(voices, effectiveVoiceLanguage);
+        const fallbackVoices = preferredVoicesForEffectiveLanguage.length > 0
+          ? preferredVoicesForEffectiveLanguage
+          : voices;
+        const isSelectedVoiceAvailable = fallbackVoices.some((providerVoice) => providerVoice.id === normalizedSelectedVoice);
         if (isSelectedVoiceAvailable) {
           if (normalizedSelectedVoice !== selectedVoice) {
             setVoice(normalizedSelectedVoice);
@@ -604,8 +607,8 @@ function App() {
         }
 
         const fallbackVoice = providerLabel === 'kokoro'
-          ? getDefaultKokoroVoice(preferredVoices) ?? preferredVoices[0]
-          : preferredVoices[0];
+          ? getDefaultKokoroVoice(fallbackVoices) ?? fallbackVoices[0]
+          : fallbackVoices[0];
         setVoiceReadinessHelperText('Select a valid voice.');
         setVoice(fallbackVoice.id);
         if (typeof window !== 'undefined') {
