@@ -10,8 +10,7 @@ import type { TTSFallbackError } from './tts/errors';
 import { canImportKokoroModule } from './tts/providers/kokoroProvider';
 import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
 import type { TTSProvider, TTSVoice } from './tts/types';
-
-const CONTINUOUS_CHUNK_TARGET_CHARS = 1400;
+import { chunkSegmentsByPolicy, defaultChunkingPolicy } from './domain/chunking/policy';
 
 type PlaybackAnchor = {
   segmentId: string;
@@ -31,56 +30,27 @@ function buildContinuousPlayback(segments: SpeakableSegment[]): {
   playbackSegments: Array<{ id: string; text: string }>;
   seekAnchors: PlaybackAnchor[];
 } {
-  const playbackSegments: Array<{ id: string; text: string }> = [];
+  const chunkedSegments = chunkSegmentsByPolicy(segments, defaultChunkingPolicy);
+  const playbackSegments = chunkedSegments.map(({ id, text }) => ({ id, text }));
+
   const seekAnchors: PlaybackAnchor[] = [];
 
-  let chunkTexts: string[] = [];
-  let chunkCharLength = 0;
-  let chunkStartIndex = 0;
-
-  const flushChunk = (endIndex: number) => {
-    if (!chunkTexts.length) {
-      return;
-    }
-    const playbackSegmentIndex = playbackSegments.length;
-    const text = chunkTexts.join(' ');
-    playbackSegments.push({
-      id: `chunk_${chunkStartIndex}_${endIndex}`,
-      text,
-    });
-
+  chunkedSegments.forEach((chunk, playbackSegmentIndex) => {
     let runningOffset = 0;
-    for (let index = chunkStartIndex; index <= endIndex; index += 1) {
-      const sourceSegment = segments[index];
-      if (!sourceSegment) {
-        continue;
-      }
+
+    chunk.pieces.forEach((piece) => {
       seekAnchors.push({
-        segmentId: sourceSegment.id,
+        segmentId: piece.segmentId,
         playbackSegmentIndex,
         playbackCharOffset: runningOffset,
       });
-      runningOffset += sourceSegment.text.length + 1;
-    }
-
-    chunkTexts = [];
-    chunkCharLength = 0;
-  };
-
-  segments.forEach((segment, index) => {
-    const addition = segment.text.length + (chunkTexts.length > 0 ? 1 : 0);
-    if (chunkTexts.length > 0 && chunkCharLength + addition > CONTINUOUS_CHUNK_TARGET_CHARS) {
-      flushChunk(index - 1);
-      chunkStartIndex = index;
-    }
-
-    chunkTexts.push(segment.text);
-    chunkCharLength += addition;
+      runningOffset += piece.text.length + defaultChunkingPolicy.prosodySpacing.length;
+    });
   });
 
-  flushChunk(segments.length - 1);
   return { playbackSegments, seekAnchors };
 }
+
 
 const isUrlIngestEnabled = import.meta.env.VITE_ENABLE_URL_INGEST !== 'false';
 const isPagesStyleBase = import.meta.env.BASE_URL !== '/';
