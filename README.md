@@ -15,6 +15,16 @@ Workflow runs:
 
 ### MVP scope supported on Pages
 
+### Base path configuration for Pages
+
+Set `VITE_BASE_PATH` at build time to the exact deploy subpath (must include app folder):
+
+- `VITE_BASE_PATH=/tools/momoro-reader/`
+- or `VITE_BASE_PATH=/momoro-reader/`
+
+If `VITE_BASE_PATH` is not set, production builds fall back to `GITHUB_REPOSITORY` name (for example `/tts-reader-mvp/`).
+
+
 GitHub Pages is a static host, so the deployed MVP supports:
 
 - Pasting text into the app

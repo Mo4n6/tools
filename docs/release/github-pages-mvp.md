@@ -5,6 +5,8 @@
 - Workflow: `https://github.com/<your-github-username>/tts-reader-mvp/actions/workflows/deploy-pages.yml`
 - Site: `https://<your-github-username>.github.io/tts-reader-mvp/`
 - Asset URL pattern to verify after deploy: `https://<your-github-username>.github.io/tts-reader-mvp/assets/...`
+- Build-time base path override: set `VITE_BASE_PATH` (for example `/tools/momoro-reader/` or `/momoro-reader/`).
+- Verify deployed chunk URLs: `npm run check:deployed-assets -- https://<your-host>/<your-base-path>/`
 
 ## Scope
 
