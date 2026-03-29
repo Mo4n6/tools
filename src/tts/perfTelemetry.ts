@@ -41,6 +41,12 @@ export type PerfMetricEvent =
     fallbackCode: TTSFallbackError['code'];
     fallbackMessage: string;
     fallbackError: TTSFallbackError;
+  }
+  | {
+    type: 'tts.runtime_downgrade';
+    transition: 'webgpu->wasm';
+    reason: string;
+    segmentId?: string;
   };
 
 export interface PerfTelemetrySink {
