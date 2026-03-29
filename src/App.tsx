@@ -73,13 +73,19 @@ function App() {
   const [provider, setProvider] = useState<TTSProvider>(() => new WebSpeechProvider());
   const [providerLabel, setProviderLabel] = useState('web-speech');
   const [showFallbackBanner, setShowFallbackBanner] = useState(false);
+  const [providerFallbackReason, setProviderFallbackReason] = useState<string | null>(null);
   const [voice, setVoice] = useState(storedPreferences?.voice ?? 'alloy');
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
 
+  const playbackSegments = useMemo(
+    () => ingested.document.segments.map((segment) => ({ id: segment.id, text: segment.text })),
+    [ingested.document.segments],
+  );
+
   const player = usePlayerController({
     provider,
-    segments: ingested.document.segments,
+    segments: playbackSegments,
     synthesisOptions: { voice, rate },
   });
 
@@ -96,6 +102,7 @@ function App() {
         setProvider(selectedProvider.provider);
         setProviderLabel(resolveProviderLabel(selectedProvider.provider));
         setShowFallbackBanner(selectedProvider.fallbackToWebSpeech);
+        setProviderFallbackReason(selectedProvider.fallbackReason ?? null);
       }
     };
 
@@ -206,6 +213,9 @@ function App() {
       {showFallbackBanner ? (
         <div className="mb-4 rounded-md border border-amber-700 bg-amber-950/40 px-3 py-2 text-sm text-amber-200">
           Running in fallback voice mode due to device capability.
+          {providerFallbackReason ? (
+            <p className="mt-1 text-xs text-amber-300">Reason: {providerFallbackReason}</p>
+          ) : null}
         </div>
       ) : null}
 
@@ -350,14 +360,10 @@ function App() {
               queueStatus={player.state}
               currentSegmentIndex={player.currentSegmentIndex}
               segmentCount={ingested.document.segments.length}
+              machineError={player.error}
               voice={voice}
               rate={rate}
-              onTogglePlayPause={() => {
-                if (player.state === 'playing' || player.state === 'loading') {
-                  player.pause();
-                  return;
-                }
-
+              onPlay={() => {
                 if (player.state === 'paused') {
                   void player.resume();
                   return;
@@ -365,11 +371,15 @@ function App() {
 
                 void player.play();
               }}
+              onPause={player.pause}
               onPrevSegment={() => {
                 void player.skipPrevious();
               }}
               onNextSegment={() => {
                 void player.skipNext();
+              }}
+              onSeekSegmentStart={() => {
+                void player.seekSegment(player.currentSegmentIndex, 0);
               }}
               onVoiceChange={setVoice}
               onRateChange={setRate}
