@@ -405,6 +405,7 @@ function App() {
     Boolean(storedPreferences?.migratedLegacyWebSpeechVoice) && !loadVoiceMigrationDone(),
   );
   const [providerInitNonce, setProviderInitNonce] = useState(0);
+  const [forceWebGpuRetry, setForceWebGpuRetry] = useState(false);
 
   const shouldSuppressNextVoiceMigrationWarning = (
     hasPendingVoiceMigrationNormalization && !hasCompletedVoiceMigration
@@ -527,6 +528,9 @@ function App() {
           fallbackCode: selectedProvider.fallbackError?.code ?? 'none',
         });
       }
+      if (forceWebGpuRetry && activeCheck()) {
+        setForceWebGpuRetry(false);
+      }
 
       if (import.meta.env.DEV) {
         const fallbackSummary = getFallbackReasonAndHint(selectedProvider.fallbackError);
@@ -572,7 +576,7 @@ function App() {
         setShowInformationalFallbackBanner(Boolean(selectedProvider.fallbackIntentional));
         setProviderFallbackError(selectedProvider.fallbackError ?? null);
       }
-  }, [shouldSkipKokoroInitOnPages]);
+  }, [forceWebGpuRetry, shouldSkipKokoroInitOnPages]);
 
   useEffect(() => {
     let active = true;
@@ -586,6 +590,7 @@ function App() {
 
   const retryWebGpuForCurrentProfile = useCallback(() => {
     clearWebGpuUnstableProfileForCurrentBrowser();
+    setForceWebGpuRetry(true);
     setProviderInitNonce((current) => current + 1);
   }, []);
 

@@ -18,8 +18,8 @@ export interface ChunkedPlaybackSegment {
 }
 
 export const defaultChunkingPolicy: ChunkingPolicy = {
-  maxCharsPerChunk: 1400,
-  maxTokensPerChunk: 260,
+  maxCharsPerChunk: 900,
+  maxTokensPerChunk: 160,
   prosodySpacing: ' ',
 };
 

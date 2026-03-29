@@ -64,11 +64,14 @@ function buildSynthesisCacheKey(
   providerId: string,
   providerRuntimeSignature: string,
   segmentId: string,
+  segmentText: string,
   options?: TTSSynthesisOptions,
 ): string {
   const voice = options?.voice ?? '';
   const rate = options?.rate ?? '';
-  return `${providerId}|${providerRuntimeSignature}|${segmentId}|${voice}|${rate}`;
+  const normalizedText = segmentText.trim();
+  const fingerprint = `${normalizedText.length}:${normalizedText.slice(0, 24)}:${normalizedText.slice(-24)}`;
+  return `${providerId}|${providerRuntimeSignature}|${segmentId}|${fingerprint}|${voice}|${rate}`;
 }
 
 function getProviderRuntimeSignature(provider: TTSProvider): string {
@@ -210,8 +213,8 @@ export function usePlayerController({
 
   const providerId = getProviderId(provider);
   const providerRuntimeSignature = getProviderRuntimeSignature(provider);
-  const getCacheKey = useCallback((segmentId: string) => {
-    return buildSynthesisCacheKey(providerId, providerRuntimeSignature, segmentId, synthesisOptions);
+  const getCacheKey = useCallback((segmentId: string, segmentText: string) => {
+    return buildSynthesisCacheKey(providerId, providerRuntimeSignature, segmentId, segmentText, synthesisOptions);
   }, [providerId, providerRuntimeSignature, synthesisOptions]);
 
   const setQueueEntry = useCallback((entry: QueueSegmentModel) => {
@@ -222,7 +225,7 @@ export function usePlayerController({
   const queue = useMemo<QueueSegmentModel[]>(() => {
     void queueVersionRef.current;
     return segments.map((segment) => {
-      const cacheKey = getCacheKey(segment.id);
+      const cacheKey = getCacheKey(segment.id, segment.text);
       return queueRef.current.get(cacheKey) ?? {
         cacheKey,
         segmentId: segment.id,
@@ -250,7 +253,7 @@ export function usePlayerController({
       return null;
     }
 
-    const cacheKey = getCacheKey(segment.id);
+    const cacheKey = getCacheKey(segment.id, segment.text);
     const existing = queueRef.current.get(cacheKey);
     if (existing?.synthesisStatus === 'ready') {
       if (existing.audioUrl) {
@@ -329,7 +332,7 @@ export function usePlayerController({
         return;
       }
 
-      const cacheKey = getCacheKey(segment.id);
+      const cacheKey = getCacheKey(segment.id, segment.text);
       const existing = queueRef.current.get(cacheKey);
       if (existing?.synthesisStatus === 'ready' || existing?.synthesisStatus === 'loading') {
         return;
@@ -472,7 +475,7 @@ export function usePlayerController({
           queueTransitionCountRef.current += 1;
           const nextAnchor = anchors[nextIndex];
           const nextSegment = nextAnchor ? segments[nextAnchor.playbackSegmentIndex] : undefined;
-          const nextQueueEntry = nextSegment ? queueRef.current.get(getCacheKey(nextSegment.id)) : undefined;
+          const nextQueueEntry = nextSegment ? queueRef.current.get(getCacheKey(nextSegment.id, nextSegment.text)) : undefined;
           if (nextSegment && nextQueueEntry?.synthesisStatus !== 'ready') {
             queueUnderrunCountRef.current += 1;
             perfTelemetry.sink.log({
@@ -550,7 +553,7 @@ export function usePlayerController({
         queueTransitionCountRef.current += 1;
         const nextAnchor = anchors[nextIndex];
         const nextSegment = nextAnchor ? segments[nextAnchor.playbackSegmentIndex] : undefined;
-        const nextQueueEntry = nextSegment ? queueRef.current.get(getCacheKey(nextSegment.id)) : undefined;
+        const nextQueueEntry = nextSegment ? queueRef.current.get(getCacheKey(nextSegment.id, nextSegment.text)) : undefined;
         if (nextSegment && nextQueueEntry?.synthesisStatus !== 'ready') {
           queueUnderrunCountRef.current += 1;
           perfTelemetry.sink.log({

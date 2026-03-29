@@ -10,9 +10,9 @@ type ToolDefinition = {
 };
 
 const ComingSoonTool = ({ name }: { name: string }): JSX.Element => (
-  <div className="mx-auto max-w-2xl rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-    <h2 className="text-xl font-semibold text-slate-900">{name}</h2>
-    <p className="mt-2 text-slate-600">
+  <div className="mx-auto max-w-2xl rounded-lg border border-emerald-500/50 bg-[#07110a] p-6 shadow-[0_0_20px_rgba(16,185,129,0.18)]">
+    <h2 className="text-xl font-semibold text-emerald-200">{name}</h2>
+    <p className="mt-2 text-emerald-300/80">
       This tool is a placeholder for a future feature. Routing is already wired so this can be replaced with a
       dedicated implementation without changing the shell layout.
     </p>
@@ -82,9 +82,9 @@ const ShellApp = (): JSX.Element => {
   );
 
   return (
-    <div className="flex min-h-screen bg-slate-100 text-slate-900">
-      <aside className="w-72 border-r border-slate-200 bg-white p-4">
-        <h1 className="text-lg font-semibold">Tools</h1>
+    <div className="flex min-h-screen bg-[#050706] font-mono text-emerald-100">
+      <aside className="w-72 border-r border-emerald-500/30 bg-[#07110a] p-4 shadow-[inset_-1px_0_0_rgba(16,185,129,0.25)]">
+        <h1 className="text-lg font-semibold text-emerald-200">Tools</h1>
         <nav className="mt-4 space-y-2" aria-label="Tool Navigation">
           {toolDefinitions.map((tool) => {
             const isActive = tool.path === activeTool.path;
@@ -98,25 +98,25 @@ const ShellApp = (): JSX.Element => {
                 }}
                 className={`block rounded-md border px-3 py-2 transition ${
                   isActive
-                    ? 'border-blue-600 bg-blue-50 text-blue-800'
-                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                    ? 'border-emerald-400 bg-emerald-500/15 text-emerald-100 shadow-[0_0_0_1px_rgba(52,211,153,0.45),0_0_12px_rgba(16,185,129,0.25)]'
+                    : 'border-emerald-500/25 bg-[#0a160f] text-emerald-300/90 hover:border-emerald-400/50 hover:bg-emerald-500/10'
                 }`}
                 aria-current={isActive ? 'page' : undefined}
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-medium">{tool.label}</span>
                   {!tool.available ? (
-                    <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">Soon</span>
+                    <span className="rounded border border-emerald-500/30 bg-[#07110a] px-2 py-0.5 text-xs text-emerald-300/70">Soon</span>
                   ) : null}
                 </div>
-                <p className="mt-1 text-xs text-slate-500">{tool.description}</p>
+                <p className="mt-1 text-xs text-emerald-300/70">{tool.description}</p>
               </a>
             );
           })}
         </nav>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-y-auto p-6">{activeTool.render()}</main>
+      <main className="min-w-0 flex-1 overflow-y-auto bg-[#050706] p-6">{activeTool.render()}</main>
     </div>
   );
 };
