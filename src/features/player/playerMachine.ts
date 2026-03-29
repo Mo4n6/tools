@@ -47,6 +47,7 @@ type Action =
 const DEFAULT_LOOKAHEAD = 2;
 const UNKNOWN_PROVIDER_ID = 'unknown-provider';
 const UNKNOWN_RUNTIME_SIGNATURE = 'unknown-runtime';
+const MIN_REASONABLE_AUDIO_SECONDS = 0.05;
 
 function getProviderId(provider: TTSProvider): string {
   const providerWithId = provider as TTSProvider & { providerId?: string; id?: string };
@@ -83,6 +84,28 @@ function getProviderRuntimeSignature(provider: TTSProvider): string {
     ?? UNKNOWN_RUNTIME_SIGNATURE;
   const dtype = providerWithRuntime.dtype ?? 'unknown-dtype';
   return `${runtime}|${dtype}`;
+}
+
+async function probePlayableAudio(result: TTSSynthesisResult): Promise<void> {
+  if (!('blob' in result)) {
+    return;
+  }
+
+  if (result.blob.size === 0) {
+    throw new Error('Audio decode probe failed: empty blob.');
+  }
+
+  if (typeof AudioContext !== 'undefined') {
+    const context = new AudioContext();
+    try {
+      const decoded = await context.decodeAudioData(await result.blob.arrayBuffer());
+      if (!Number.isFinite(decoded.duration) || decoded.duration < MIN_REASONABLE_AUDIO_SECONDS) {
+        throw new Error('Audio decode probe failed: suspiciously short duration.');
+      }
+    } finally {
+      await context.close();
+    }
+  }
 }
 
 function createInitialState(cursor?: PlayerResumeCursor): PlayerInternalState {
@@ -247,7 +270,27 @@ export function usePlayerController({
 
     try {
       const synthStartedAt = perfTelemetry.now();
-      const result = await provider.synthesize({ id: segment.id, text: segment.text }, synthesisOptions);
+      const runtimeAwareProvider = provider as TTSProvider & {
+        getRuntimeDevice?: () => string;
+      };
+      const runtimeBeforeProbe = runtimeAwareProvider.getRuntimeDevice?.() ?? 'unknown';
+      let result = await provider.synthesize({ id: segment.id, text: segment.text }, synthesisOptions);
+      try {
+        await probePlayableAudio(result);
+      } catch (probeError) {
+        if (runtimeBeforeProbe !== 'webgpu') {
+          throw probeError;
+        }
+        if (!provider.synthesizeWithRuntime) {
+          throw probeError;
+        }
+        result = await provider.synthesizeWithRuntime(
+          { id: segment.id, text: segment.text },
+          synthesisOptions,
+          'wasm'
+        );
+        await probePlayableAudio(result);
+      }
       perfTelemetry.sink.log({
         type: 'tts.segment_synth',
         segmentId: segment.id,

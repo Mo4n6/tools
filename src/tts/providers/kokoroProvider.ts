@@ -164,6 +164,19 @@ export class KokoroProvider implements TTSProvider {
     }
   }
 
+  async synthesizeWithRuntime(
+    segment: TTSSegment,
+    options: TTSSynthesisOptions = {},
+    runtime: 'wasm' | 'webgpu'
+  ): Promise<TTSSynthesisResult> {
+    if (runtime === 'wasm') {
+      const wasmEngine = await this.getWasmFallbackEngine();
+      return this.synthesizeWithEngine(wasmEngine, segment, options);
+    }
+
+    return this.synthesizeWithEngine(await this.getEngine(), segment, options);
+  }
+
   private getEngine(): Promise<KokoroEngine> {
     if (!this.enginePromise) {
       this.enginePromise = this.loadKokoroEngine();

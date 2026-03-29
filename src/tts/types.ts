@@ -34,6 +34,11 @@ export type TTSSynthesisResult = TTSAudioSynthesisResult | TTSNativeSpokenResult
 export interface TTSProvider {
   listVoices(): Promise<TTSVoice[]>;
   synthesize(segment: TTSSegment, options?: TTSSynthesisOptions): Promise<TTSSynthesisResult>;
+  synthesizeWithRuntime?(
+    segment: TTSSegment,
+    options: TTSSynthesisOptions | undefined,
+    runtime: 'wasm' | 'webgpu'
+  ): Promise<TTSSynthesisResult>;
   playNative?(segment: TTSSegment, options?: TTSSynthesisOptions): Promise<void>;
   warmup(): Promise<void>;
 }
