@@ -502,12 +502,12 @@ function App() {
   const initializeProvider = useCallback(async (activeCheck: () => boolean) => {
       const skipKokoroInit = isPagesStyleBase && shouldSkipKokoroInitOnPages;
       const forcedDeviceOverride = getDevDeviceOverride();
-      const shouldForceWebGpuAttempt = forcedDeviceOverride === 'webgpu' || forceWebGpuRetry;
+      const shouldForceWebGpuAttempt = forcedDeviceOverride === 'webgpu';
       const preferredDevice = forcedDeviceOverride ?? (shouldForceWebGpuAttempt ? 'webgpu' : undefined);
       const selectedProvider = await selectTTSProvider({
         preferredDevice,
         allowWebGpuIfUnstable: shouldForceWebGpuAttempt,
-        skipWebGpuQualityCheck: forceWebGpuRetry,
+        skipWebGpuQualityCheck: shouldForceWebGpuAttempt,
         skipKokoroInit,
         skipKokoroInitReason: skipKokoroInit
           ? 'GitHub Pages MVP mode: Kokoro init skipped intentionally while bundling is being finalized.'
