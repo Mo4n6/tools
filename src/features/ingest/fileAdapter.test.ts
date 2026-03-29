@@ -1,6 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ingestFile, sanitizeFilePreviewHtml } from './fileAdapter';
+import { markdownFixture, plainTextFixture } from '../../domain/normalize/__fixtures__/index.fixture';
+import { ingestFile, FileParseError, sanitizeFilePreviewHtml } from './fileAdapter';
 
 describe('ingestFile html handling', () => {
   const originalDomParser = globalThis.DOMParser;
@@ -97,5 +98,44 @@ describe('ingestFile html handling', () => {
     expect(sanitizedPreview).not.toMatch(/<script/i);
     expect(sanitizedPreview).not.toMatch(/on\w+=/i);
     expect(sanitizedPreview).not.toMatch(/javascript:/i);
+  });
+});
+
+describe('ingestFile type routing and validation', () => {
+  it('normalizes plain text files', async () => {
+    const file = new File([plainTextFixture], 'article.txt', { type: 'text/plain' });
+
+    const normalized = await ingestFile(file);
+
+    expect(normalized.segments.length).toBeGreaterThan(1);
+    expect(normalized.segments[0]?.text).toContain('First paragraph has extra spaces.');
+  });
+
+  it('normalizes markdown files by extension', async () => {
+    const file = new File([markdownFixture], 'notes.md', { type: 'application/octet-stream' });
+
+    const normalized = await ingestFile(file);
+
+    expect(normalized.title).toBeUndefined();
+    expect(normalized.segments.length).toBeGreaterThan(0);
+    expect(normalized.segments.map((segment) => segment.text).join(' ')).toContain('Main Title');
+  });
+
+  it('throws UNSUPPORTED_FILE_TYPE for unsupported file types', async () => {
+    const file = new File(['%PDF-1.7'], 'report.pdf', { type: 'application/pdf' });
+
+    await expect(ingestFile(file)).rejects.toMatchObject<FileParseError>({
+      code: 'UNSUPPORTED_FILE_TYPE',
+      fileName: 'report.pdf',
+    });
+  });
+
+  it('throws BINARY_FILE_CONTENT when control characters are detected', async () => {
+    const file = new File(['\u0000\u0007'], 'binary.txt', { type: 'text/plain' });
+
+    await expect(ingestFile(file)).rejects.toMatchObject<FileParseError>({
+      code: 'BINARY_FILE_CONTENT',
+      fileName: 'binary.txt',
+    });
   });
 });
