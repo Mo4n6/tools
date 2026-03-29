@@ -163,6 +163,7 @@ type ProviderRuntimeMetadata = {
 
 type TtsInitStatusLine = {
   providerSelected: string;
+  runtime: ProviderRuntimeMetadata['runtime'];
   skipKokoroInit: boolean;
   kokoroImportable: boolean;
   fallbackCode: TTSFallbackError['code'] | 'none';
@@ -335,7 +336,9 @@ function App() {
 
     const initializeProvider = async () => {
       const skipKokoroInit = isPagesStyleBase && shouldSkipKokoroInitOnPages;
+      const preferredDevice = await checkWebGpuSupport() ? 'webgpu' : 'wasm';
       const selectedProvider = await selectTTSProvider({
+        preferredDevice,
         skipKokoroInit,
         skipKokoroInitReason: skipKokoroInit
           ? 'GitHub Pages MVP mode: Kokoro init skipped intentionally while bundling is being finalized.'
@@ -348,6 +351,7 @@ function App() {
       if (active) {
         setTtsInitStatusLine({
           providerSelected: providerName,
+          runtime: selectedProvider.runtime,
           skipKokoroInit,
           kokoroImportable: kokoroPackageLoadable,
           fallbackCode: selectedProvider.fallbackError?.code ?? 'none',
@@ -633,7 +637,7 @@ function App() {
         ) : null}
         {shouldShowAdvancedDetails ? (
           <p className="mt-2 text-xs text-slate-400">
-            tts init: providerSelected={ttsInitStatusLine?.providerSelected ?? 'pending'} · skipKokoroInit={String(ttsInitStatusLine?.skipKokoroInit ?? false)} · kokoroImportable={ttsInitStatusLine ? String(ttsInitStatusLine.kokoroImportable) : 'pending'} · fallbackCode={ttsInitStatusLine?.fallbackCode ?? 'pending'}
+            tts init: providerSelected={ttsInitStatusLine?.providerSelected ?? 'pending'} · runtime={ttsInitStatusLine?.runtime ?? 'pending'} · skipKokoroInit={String(ttsInitStatusLine?.skipKokoroInit ?? false)} · kokoroImportable={ttsInitStatusLine ? String(ttsInitStatusLine.kokoroImportable) : 'pending'} · fallbackCode={ttsInitStatusLine?.fallbackCode ?? 'pending'}
           </p>
         ) : null}
       </header>
