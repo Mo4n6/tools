@@ -1,17 +1,22 @@
+import { DEFAULT_KOKORO_MODEL } from './modelArtifacts';
+import { classifyTTSFailure, TTSFallbackError } from './errors';
+import { perfTelemetry } from './perfTelemetry';
 import { KokoroDevice, KokoroProvider, KokoroProviderOptions } from './providers/kokoroProvider';
 import { WebSpeechProvider } from './providers/webSpeechProvider';
-import { DEFAULT_KOKORO_MODEL } from './modelArtifacts';
-import { perfTelemetry } from './perfTelemetry';
 import { TTSProvider } from './types';
 
 const DEFAULT_MEMORY_GB_THRESHOLD = 4;
 
-const hasEnoughMemory = (minimumGb: number): boolean => {
+const getDeviceMemoryGb = (): number | undefined => {
   if (typeof navigator === 'undefined') {
-    return false;
+    return undefined;
   }
 
-  const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  return (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+};
+
+const hasEnoughMemory = (minimumGb: number): boolean => {
+  const memory = getDeviceMemoryGb();
   if (typeof memory !== 'number') {
     return true;
   }
@@ -19,14 +24,14 @@ const hasEnoughMemory = (minimumGb: number): boolean => {
   return memory >= minimumGb;
 };
 
-const canUseWebGPU = async (): Promise<boolean> => {
+const getWebGpuSupport = async (): Promise<{ hasNavigatorGpu: boolean; adapterAvailable: boolean }> => {
   if (typeof navigator === 'undefined' || !('gpu' in navigator)) {
-    return false;
+    return { hasNavigatorGpu: false, adapterAvailable: false };
   }
 
   const gpuNavigator = navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } };
   const adapter = await gpuNavigator.gpu?.requestAdapter();
-  return Boolean(adapter);
+  return { hasNavigatorGpu: true, adapterAvailable: Boolean(adapter) };
 };
 
 export interface TTSProviderSelectorOptions {
@@ -39,16 +44,21 @@ export interface TTSProviderSelection {
   provider: TTSProvider;
   fallbackToWebSpeech: boolean;
   fallbackReason?: string;
+  fallbackError?: TTSFallbackError;
 }
 
 export const selectTTSProvider = async (
   options: TTSProviderSelectorOptions = {}
 ): Promise<TTSProviderSelection> => {
   const minimumMemoryGb = options.minimumMemoryGb ?? DEFAULT_MEMORY_GB_THRESHOLD;
-
   const requestedDevice = options.preferredDevice ?? options.kokoro?.device ?? 'wasm';
-  const shouldUseKokoro = hasEnoughMemory(minimumMemoryGb) &&
-    (requestedDevice === 'wasm' || await canUseWebGPU());
+  const availableMemoryGb = getDeviceMemoryGb();
+  const memorySufficient = hasEnoughMemory(minimumMemoryGb);
+  const webGpuSupport = requestedDevice === 'webgpu'
+    ? await getWebGpuSupport()
+    : { hasNavigatorGpu: true, adapterAvailable: true };
+
+  const shouldUseKokoro = memorySufficient && (requestedDevice === 'wasm' || webGpuSupport.adapterAvailable);
 
   if (shouldUseKokoro) {
     const kokoroProvider = new KokoroProvider({
@@ -60,30 +70,52 @@ export const selectTTSProvider = async (
       await kokoroProvider.warmup();
       return { provider: kokoroProvider, fallbackToWebSpeech: false };
     } catch (error) {
-      const reason = error instanceof Error ? error.message : 'Kokoro warmup failed.';
+      const fallbackError = classifyTTSFailure(error, {
+        error,
+        minimumMemoryGb,
+        availableMemoryGb,
+        requestedDevice,
+        hasNavigatorGpu: webGpuSupport.hasNavigatorGpu,
+        webgpuAdapterAvailable: webGpuSupport.adapterAvailable,
+      });
+
       perfTelemetry.sink.log({
         type: 'tts.degraded_mode',
         from: 'kokoro',
         to: 'web-speech',
-        reason,
+        fallbackError,
       });
       return {
         provider: new WebSpeechProvider(),
         fallbackToWebSpeech: true,
-        fallbackReason: reason,
+        fallbackReason: fallbackError.message,
+        fallbackError,
       };
     }
   }
+
+  const fallbackError = classifyTTSFailure(undefined, {
+    minimumMemoryGb,
+    availableMemoryGb,
+    requestedDevice,
+    hasNavigatorGpu: webGpuSupport.hasNavigatorGpu,
+    webgpuAdapterAvailable: webGpuSupport.adapterAvailable,
+    error: memorySufficient
+      ? 'WebGPU adapter unavailable for requested device.'
+      : `Insufficient device memory for Kokoro. Required ${minimumMemoryGb}GB.`,
+  });
 
   perfTelemetry.sink.log({
     type: 'tts.degraded_mode',
     from: 'kokoro',
     to: 'web-speech',
-    reason: 'Device does not satisfy Kokoro memory/WebGPU requirements.',
+    fallbackError,
   });
+
   return {
     provider: new WebSpeechProvider(),
     fallbackToWebSpeech: true,
-    fallbackReason: 'Device does not satisfy Kokoro memory/WebGPU requirements.',
+    fallbackReason: fallbackError.message,
+    fallbackError,
   };
 };
