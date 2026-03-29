@@ -96,12 +96,13 @@ export const selectTTSProvider = async (
   }
 
   const minimumMemoryGb = options.minimumMemoryGb ?? DEFAULT_MEMORY_GB_THRESHOLD;
-  const requestedDevice = options.preferredDevice ?? options.kokoro?.device ?? 'wasm';
+  const webGpuSupport = await getWebGpuSupport();
+  const requestedDevice =
+    options.preferredDevice
+    ?? options.kokoro?.device
+    ?? (webGpuSupport.adapterAvailable ? 'webgpu' : 'wasm');
   const availableMemoryGb = getDeviceMemoryGb();
   const memorySufficient = hasEnoughMemory(minimumMemoryGb);
-  const webGpuSupport = requestedDevice === 'webgpu'
-    ? await getWebGpuSupport()
-    : { hasNavigatorGpu: true, adapterAvailable: true };
 
   const shouldUseKokoro = memorySufficient && (requestedDevice === 'wasm' || webGpuSupport.adapterAvailable);
 
