@@ -17,6 +17,8 @@ const shouldSkipKokoroInitOnPages = import.meta.env.VITE_SKIP_KOKORO_INIT_ON_PAG
 type SourceType = 'text' | 'file' | 'url';
 const sourceTabs: SourceType[] = isUrlIngestEnabled ? ['text', 'file', 'url'] : ['text', 'file'];
 const TTS_PREFS_STORAGE_KEY = 'reader-tts-preferences';
+const KNOWN_PROVIDER_LABELS = ['web-speech', 'kokoro'] as const;
+type KnownProviderLabel = (typeof KNOWN_PROVIDER_LABELS)[number];
 
 const LEGACY_VOICE_MIGRATIONS: Record<string, string> = {
   Alloy: 'af_alloy',
@@ -24,6 +26,19 @@ const LEGACY_VOICE_MIGRATIONS: Record<string, string> = {
 };
 
 const normalizeKokoroVoiceId = (voice: string): string => LEGACY_VOICE_MIGRATIONS[voice] ?? voice;
+const WEB_SPEECH_VOICE_PATTERN = /^(?:urn:[\w-]+:|com\.[\w.-]+|Microsoft\s|Google\s|Alex$|Samantha$)/i;
+const isKnownProviderLabel = (provider: string): provider is KnownProviderLabel => (
+  KNOWN_PROVIDER_LABELS.includes(provider as KnownProviderLabel)
+);
+const isLikelyWebSpeechVoiceId = (voice: string): boolean => WEB_SPEECH_VOICE_PATTERN.test(voice);
+const isKokoroActivePath = !(
+  isPagesStyleBase && shouldSkipKokoroInitOnPages
+);
+const getNormalizedStoredProvider = (provider: string): KnownProviderLabel => (
+  isKnownProviderLabel(provider)
+    ? provider
+    : (isKokoroActivePath ? 'kokoro' : 'web-speech')
+);
 
 type StoredTtsPreferences = {
   voice: string;
@@ -80,19 +95,25 @@ const loadTtsPreferences = (): LoadedTtsPreferences | null => {
       return null;
     }
 
-    const provider = parsed.provider;
-    const migratedVoice = migrateStoredVoice(parsed.voice);
-    const webSpeechVoiceIds = provider === 'web-speech' ? getWebSpeechVoiceIds() : [];
-    const correctedVoice = provider === 'web-speech'
+    const normalizedProvider = getNormalizedStoredProvider(parsed.provider);
+    const isLegacyOrUnknownProvider = !isKnownProviderLabel(parsed.provider);
+    const normalizedIncomingVoice = isLegacyOrUnknownProvider
+      && normalizedProvider === 'kokoro'
+      && isLikelyWebSpeechVoiceId(parsed.voice)
+      ? 'af_alloy'
+      : parsed.voice;
+    const migratedVoice = migrateStoredVoice(normalizedIncomingVoice);
+    const webSpeechVoiceIds = normalizedProvider === 'web-speech' ? getWebSpeechVoiceIds() : [];
+    const correctedVoice = normalizedProvider === 'web-speech'
       ? (webSpeechVoiceIds.includes(migratedVoice) ? migratedVoice : webSpeechVoiceIds[0] ?? migratedVoice)
       : migratedVoice;
 
     const correctedPreferences: StoredTtsPreferences = {
       voice: correctedVoice,
       rate: parsed.rate,
-      provider,
+      provider: normalizedProvider,
     };
-    const migratedLegacyWebSpeechVoice = provider === 'web-speech' && correctedVoice !== parsed.voice;
+    const migratedLegacyWebSpeechVoice = correctedVoice !== parsed.voice;
 
     if (
       correctedPreferences.voice !== parsed.voice
