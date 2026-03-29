@@ -57,6 +57,32 @@ const resolveProviderLabel = (activeProvider: TTSProvider): string => (
   activeProvider instanceof WebSpeechProvider ? 'web-speech' : 'kokoro'
 );
 
+type DevTtsDiagnostics = {
+  kokoroPackageLoadable: boolean;
+  webgpuSupported: boolean;
+  deviceMemoryGb?: number;
+  selectedProvider: string;
+  fallbackCode?: string;
+};
+
+const checkWebGpuSupport = async (): Promise<boolean> => {
+  if (typeof navigator === 'undefined' || !('gpu' in navigator)) {
+    return false;
+  }
+
+  const gpuNavigator = navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } };
+  const adapter = await gpuNavigator.gpu?.requestAdapter();
+  return Boolean(adapter);
+};
+
+const getDeviceMemoryGb = (): number | undefined => {
+  if (typeof navigator === 'undefined') {
+    return undefined;
+  }
+
+  return (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+};
+
 function App() {
   const [sourceType, setSourceType] = useState<SourceType>('text');
   const [textInput, setTextInput] = useState('Paste text to normalize and preview for playback.');
@@ -75,6 +101,7 @@ function App() {
   const [providerLabel, setProviderLabel] = useState('web-speech');
   const [showFallbackBanner, setShowFallbackBanner] = useState(false);
   const [providerFallbackError, setProviderFallbackError] = useState<TTSFallbackError | null>(null);
+  const [devTtsDiagnostics, setDevTtsDiagnostics] = useState<DevTtsDiagnostics | null>(null);
   const [voice, setVoice] = useState(storedPreferences?.voice ?? 'alloy');
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
@@ -99,9 +126,40 @@ function App() {
 
     const initializeProvider = async () => {
       const selectedProvider = await selectTTSProvider();
+      const providerName = resolveProviderLabel(selectedProvider.provider);
+
+      if (import.meta.env.DEV) {
+        let kokoroPackageLoadable = false;
+        try {
+          await import('kokoro-js');
+          kokoroPackageLoadable = true;
+        } catch {
+          kokoroPackageLoadable = false;
+        }
+
+        const diagnostics: DevTtsDiagnostics = {
+          kokoroPackageLoadable,
+          webgpuSupported: await checkWebGpuSupport(),
+          deviceMemoryGb: getDeviceMemoryGb(),
+          selectedProvider: providerName,
+          fallbackCode: selectedProvider.fallbackError?.code,
+        };
+
+        console.info('[DEV][TTS_INIT_DIAGNOSTICS]', diagnostics);
+        if (selectedProvider.fallbackError?.code === 'KOKORO_MODULE_RESOLUTION_FAILED') {
+          console.info(
+            '[DEV][TTS_INIT_ACTION] Install/ship kokoro-js correctly or use Web Speech fallback intentionally.',
+          );
+        }
+
+        if (active) {
+          setDevTtsDiagnostics(diagnostics);
+        }
+      }
+
       if (active) {
         setProvider(selectedProvider.provider);
-        setProviderLabel(resolveProviderLabel(selectedProvider.provider));
+        setProviderLabel(providerName);
         setShowFallbackBanner(selectedProvider.fallbackToWebSpeech);
         setProviderFallbackError(selectedProvider.fallbackError ?? null);
       }
@@ -219,6 +277,11 @@ function App() {
               <p className="mt-1 text-xs text-amber-300">
                 {providerFallbackError.code}: {providerFallbackError.message}
               </p>
+              {providerFallbackError.code === 'KOKORO_MODULE_RESOLUTION_FAILED' ? (
+                <p className="mt-1 text-xs font-semibold text-amber-100">
+                  Install/ship kokoro-js correctly or use Web Speech fallback intentionally.
+                </p>
+              ) : null}
               {import.meta.env.DEV && providerFallbackError.hints?.length ? (
                 <ul className="mt-1 list-disc pl-5 text-xs text-amber-300">
                   {providerFallbackError.hints.map((hint) => (
@@ -229,6 +292,19 @@ function App() {
             </>
           ) : null}
         </div>
+      ) : null}
+
+      {import.meta.env.DEV && devTtsDiagnostics ? (
+        <aside className="mb-4 rounded-md border border-cyan-700 bg-cyan-950/30 px-3 py-2 text-xs text-cyan-100">
+          <p className="font-semibold">DEV TTS init diagnostics</p>
+          <ul className="mt-1 list-disc pl-5">
+            <li>kokoroPackageLoadable: {String(devTtsDiagnostics.kokoroPackageLoadable)}</li>
+            <li>webgpuSupported: {String(devTtsDiagnostics.webgpuSupported)}</li>
+            <li>deviceMemoryGb: {devTtsDiagnostics.deviceMemoryGb ?? 'unknown'}</li>
+            <li>selectedProvider: {devTtsDiagnostics.selectedProvider}</li>
+            <li>fallbackCode: {devTtsDiagnostics.fallbackCode ?? 'none'}</li>
+          </ul>
+        </aside>
       ) : null}
 
 
