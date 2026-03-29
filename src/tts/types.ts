@@ -37,3 +37,6 @@ export interface TTSProvider {
   playNative?(segment: TTSSegment, options?: TTSSynthesisOptions): Promise<void>;
   warmup(): Promise<void>;
 }
+
+export type KokoroDType = 'fp32' | 'fp16' | 'q8' | 'q4';
+export type RuntimeDType = KokoroDType | 'n/a';

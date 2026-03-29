@@ -3,7 +3,7 @@ import { classifyTTSFailure, TTSFallbackError } from './errors';
 import { perfTelemetry } from './perfTelemetry';
 import { canImportKokoroModule, KokoroDevice, KokoroProvider, KokoroProviderOptions } from './providers/kokoroProvider';
 import { WebSpeechProvider } from './providers/webSpeechProvider';
-import { TTSProvider } from './types';
+import { RuntimeDType, TTSProvider } from './types';
 
 const DEFAULT_MEMORY_GB_THRESHOLD = 4;
 const isPagesStyleBase = (): boolean => import.meta.env.BASE_URL !== '/';
@@ -47,7 +47,7 @@ export interface TTSProviderSelection {
   provider: TTSProvider;
   providerType: 'kokoro' | 'web-speech';
   runtime: 'webgpu' | 'wasm' | 'system';
-  dtype: NonNullable<KokoroProviderOptions['dtype']> | 'n/a';
+  dtype: RuntimeDType;
   fallbackToWebSpeech: boolean;
   fallbackIntentional?: boolean;
   fallbackReason?: string;
@@ -57,7 +57,7 @@ export interface TTSProviderSelection {
 const resolveKokoroDtype = (
   device: KokoroDevice,
   configuredDtype?: KokoroProviderOptions['dtype']
-): NonNullable<KokoroProviderOptions['dtype']> => {
+): RuntimeDType => {
   if (configuredDtype) {
     return configuredDtype;
   }

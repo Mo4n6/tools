@@ -9,7 +9,7 @@ import { perfTelemetry, setupLocalDebugPerfTelemetry } from './tts/perfTelemetry
 import type { TTSFallbackError } from './tts/errors';
 import { canImportKokoroModule } from './tts/providers/kokoroProvider';
 import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
-import type { TTSProvider, TTSVoice } from './tts/types';
+import type { RuntimeDType, TTSProvider, TTSVoice } from './tts/types';
 import { chunkSegmentsByPolicy, defaultChunkingPolicy } from './domain/chunking/policy';
 
 type PlaybackAnchor = {
@@ -197,17 +197,15 @@ const persistVoiceMigrationDone = (): void => {
 type ProviderRuntimeMetadata = {
   providerType: 'kokoro' | 'web-speech';
   runtime: 'webgpu' | 'wasm' | 'system';
-  dtype: TtsSelectionDtype;
+  dtype: RuntimeDType;
   fallbackToWebSpeech: boolean;
   fallbackError?: TTSFallbackError;
 };
 
-type TtsSelectionDtype = 'fp32' | 'fp16' | 'q8' | 'q4' | 'n/a';
-
 type TtsInitStatusLine = {
   providerSelected: string;
   runtime: ProviderRuntimeMetadata['runtime'];
-  dtype: TtsSelectionDtype;
+  dtype: RuntimeDType;
   skipKokoroInit: boolean;
   kokoroImportable: boolean;
   fallbackCode: TTSFallbackError['code'] | 'none';
@@ -218,7 +216,7 @@ type DevTtsDiagnostics = {
   webgpuSupported: boolean;
   deviceMemoryGb?: number;
   selectedProvider: string;
-  selectedDtype: TtsSelectionDtype;
+  selectedDtype: RuntimeDType;
   fallbackCode?: TTSFallbackError['code'];
   fallbackReason?: string;
   fallbackHint?: string;

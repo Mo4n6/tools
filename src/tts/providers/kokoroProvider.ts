@@ -1,9 +1,8 @@
 import { DEFAULT_KOKORO_MODEL } from '../modelArtifacts';
 import { perfTelemetry } from '../perfTelemetry';
-import { TTSProvider, TTSSegment, TTSSynthesisOptions, TTSSynthesisResult, TTSVoice } from '../types';
+import { KokoroDType, TTSProvider, TTSSegment, TTSSynthesisOptions, TTSSynthesisResult, TTSVoice } from '../types';
 
 export type KokoroDevice = 'wasm' | 'webgpu';
-export type KokoroDType = 'fp32' | 'fp16' | 'q8' | 'q4';
 
 export interface KokoroProviderOptions {
   modelRepo?: string;
