@@ -25,6 +25,12 @@ URL ingestion requires the separate extraction backend deployment (for example, 
 
 For Pages-only deployment, keep URL ingestion disabled (`VITE_ENABLE_URL_INGEST=false`).
 
+### Kokoro init on Pages (MVP reliability flag)
+
+- `VITE_SKIP_KOKORO_INIT_ON_PAGES` controls whether Pages deployments intentionally skip Kokoro initialization and use Web Speech mode.
+- Default behavior is enabled (`true`) for Pages-style base paths.
+- Set `VITE_SKIP_KOKORO_INIT_ON_PAGES=false` to re-enable Kokoro provider initialization attempts on Pages.
+
 ## Repository settings required
 
 In GitHub repository settings:

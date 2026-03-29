@@ -39,11 +39,14 @@ export interface TTSProviderSelectorOptions {
   preferredDevice?: KokoroDevice;
   kokoro?: KokoroProviderOptions;
   minimumMemoryGb?: number;
+  skipKokoroInit?: boolean;
+  skipKokoroInitReason?: string;
 }
 
 export interface TTSProviderSelection {
   provider: TTSProvider;
   fallbackToWebSpeech: boolean;
+  fallbackIntentional?: boolean;
   fallbackReason?: string;
   fallbackError?: TTSFallbackError;
 }
@@ -59,6 +62,26 @@ const logFallbackRecordForDev = (fallbackError: TTSFallbackError): void => {
 export const selectTTSProvider = async (
   options: TTSProviderSelectorOptions = {}
 ): Promise<TTSProviderSelection> => {
+  if (options.skipKokoroInit) {
+    const reason = options.skipKokoroInitReason ?? 'Kokoro initialization intentionally skipped.';
+    perfTelemetry.sink.log({
+      type: 'tts.degraded_mode',
+      from: 'kokoro',
+      to: 'web-speech',
+      providerFrom: 'kokoro',
+      providerTo: 'web-speech',
+      fallbackCode: 'KOKORO_INIT_SKIPPED',
+      fallbackMessage: reason,
+    });
+
+    return {
+      provider: new WebSpeechProvider(),
+      fallbackToWebSpeech: true,
+      fallbackIntentional: true,
+      fallbackReason: reason,
+    };
+  }
+
   const minimumMemoryGb = options.minimumMemoryGb ?? DEFAULT_MEMORY_GB_THRESHOLD;
   const requestedDevice = options.preferredDevice ?? options.kokoro?.device ?? 'wasm';
   const availableMemoryGb = getDeviceMemoryGb();
