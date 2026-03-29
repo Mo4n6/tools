@@ -107,6 +107,13 @@ const resolveProviderLabel = (activeProvider: TTSProvider): string => (
   activeProvider instanceof WebSpeechProvider ? 'web-speech' : 'kokoro'
 );
 
+type TtsInitStatusLine = {
+  providerSelected: string;
+  skipKokoroInit: boolean;
+  kokoroImportable: boolean;
+  fallbackCode: TTSFallbackError['code'] | 'none';
+};
+
 type DevTtsDiagnostics = {
   kokoroPackageLoadable: boolean;
   webgpuSupported: boolean;
@@ -121,7 +128,7 @@ const KOKORO_MODULE_NOT_BUNDLED_HINT = 'Install/add kokoro-js dependency and avo
 
 const emitDevKokoroImportCheck = async (): Promise<boolean> => {
   const kokoroPackageLoadable = await canImportKokoroModule();
-  if (!kokoroPackageLoadable) {
+  if (import.meta.env.DEV && !kokoroPackageLoadable) {
     console.info('[DEV][TTS_IMPORT_CHECK]', {
       code: 'KOKORO_MODULE_NOT_BUNDLED',
       hint: KOKORO_MODULE_NOT_BUNDLED_HINT,
@@ -189,6 +196,7 @@ function App() {
   const [voiceFallbackWarning, setVoiceFallbackWarning] = useState<string | null>(null);
   const [isVoiceReadyForPlayback, setIsVoiceReadyForPlayback] = useState(false);
   const [voiceReadinessHelperText, setVoiceReadinessHelperText] = useState<string | null>('Loading voices…');
+  const [ttsInitStatusLine, setTtsInitStatusLine] = useState<TtsInitStatusLine | null>(null);
   const [devTtsDiagnostics, setDevTtsDiagnostics] = useState<DevTtsDiagnostics | null>(null);
   const [voice, setVoice] = useState(storedPreferences?.voice ?? 'af_alloy');
   const [availableVoices, setAvailableVoices] = useState<TTSVoice[]>([]);
@@ -223,9 +231,18 @@ function App() {
       });
       const providerName = resolveProviderLabel(selectedProvider.provider);
 
-      if (import.meta.env.DEV) {
-        const kokoroPackageLoadable = await emitDevKokoroImportCheck();
+      const kokoroPackageLoadable = await emitDevKokoroImportCheck();
 
+      if (active) {
+        setTtsInitStatusLine({
+          providerSelected: providerName,
+          skipKokoroInit,
+          kokoroImportable: kokoroPackageLoadable,
+          fallbackCode: selectedProvider.fallbackError?.code ?? 'none',
+        });
+      }
+
+      if (import.meta.env.DEV) {
         const fallbackSummary = getFallbackReasonAndHint(selectedProvider.fallbackError);
         const diagnostics: DevTtsDiagnostics = {
           kokoroPackageLoadable,
@@ -415,6 +432,9 @@ function App() {
         </p>
         <p className="mt-2 text-xs text-slate-300">
           Active voice provider: <span className="font-semibold">{providerLabel}</span>
+        </p>
+        <p className="mt-2 text-xs text-slate-400">
+          tts init: providerSelected={ttsInitStatusLine?.providerSelected ?? 'pending'} · skipKokoroInit={String(ttsInitStatusLine?.skipKokoroInit ?? false)} · kokoroImportable={ttsInitStatusLine ? String(ttsInitStatusLine.kokoroImportable) : 'pending'} · fallbackCode={ttsInitStatusLine?.fallbackCode ?? 'pending'}
         </p>
       </header>
 
