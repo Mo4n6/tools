@@ -228,6 +228,31 @@ const getDeviceMemoryGb = (): number | undefined => {
   return (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
 };
 
+const getFallbackBucketLabel = (
+  fallbackError: TTSFallbackError | null,
+  fallbackIntentional: boolean
+): 'Configuration' | 'Capability' | 'Intentional mode' => {
+  if (fallbackIntentional) {
+    return 'Intentional mode';
+  }
+
+  if (!fallbackError) {
+    return 'Capability';
+  }
+
+  switch (fallbackError.code) {
+    case 'KOKORO_MODULE_RESOLUTION_FAILED':
+    case 'KOKORO_MODEL_ID_INVALID':
+    case 'KOKORO_MODEL_FETCH_FAILED':
+      return 'Configuration';
+    case 'WEBGPU_UNAVAILABLE':
+    case 'DEVICE_MEMORY_TOO_LOW':
+      return 'Capability';
+    default:
+      return 'Capability';
+  }
+};
+
 function App() {
   const isProduction = import.meta.env.PROD;
   const [sourceType, setSourceType] = useState<SourceType>('text');
@@ -615,7 +640,7 @@ function App() {
 
       {showFallbackBanner ? (
         <div className="mb-4 rounded-md border border-amber-700 bg-amber-950/40 px-3 py-2 text-sm text-amber-200">
-          Running in fallback voice mode due to device capability.
+          Running in fallback voice mode ({getFallbackBucketLabel(providerFallbackError, false)}).
           {providerFallbackError ? (
             <>
               <p className="mt-1 text-xs text-amber-300">
@@ -658,7 +683,7 @@ function App() {
 
       {showInformationalFallbackBanner ? (
         <div className="mb-4 rounded-md border border-sky-700 bg-sky-950/40 px-3 py-2 text-sm text-sky-100">
-          Web Speech mode is intentionally enabled for GitHub Pages MVP while Kokoro bundling is finalized.
+          Web Speech mode ({getFallbackBucketLabel(providerFallbackError, true)}): intentionally enabled for GitHub Pages MVP while Kokoro bundling is finalized.
           {providerFallbackError?.message ? (
             <p className="mt-1 text-xs text-sky-200">{providerFallbackError.message}</p>
           ) : null}
