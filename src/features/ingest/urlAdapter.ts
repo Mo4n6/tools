@@ -1,6 +1,6 @@
 import { normalizeArticleReadable } from '../../domain/normalize';
 import { NormalizedDocument } from '../../domain/segments';
-import { sanitizeReadabilityHtml } from '../preview/sanitizeHtml';
+import { sanitizeReadabilityHtml } from '../preview/sanitizeHtml.browser';
 
 interface ExtractResponse {
   article?: {

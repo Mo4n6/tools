@@ -1,6 +1,6 @@
 import { normalizeArticleReadable, normalizeMarkdown, normalizePlainText } from '../../domain/normalize';
 import { NormalizedDocument } from '../../domain/segments';
-import { sanitizeReadabilityHtml } from '../preview/sanitizeHtml';
+import { sanitizeReadabilityHtml } from '../preview/sanitizeHtml.browser';
 
 const MARKDOWN_EXTENSION = /\.md(?:own|arkdown)?$/i;
 const HTML_EXTENSION = /\.html?$/i;
