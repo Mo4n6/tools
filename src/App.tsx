@@ -5,11 +5,36 @@ import { PlayerControls } from './features/player/PlayerControls';
 import { DocumentModel, SourceType } from './types/reader';
 import { usePlayerController } from './features/player/playerMachine';
 import { selectTTSProvider } from './tts/providerSelector';
+import { setupLocalDebugPerfTelemetry } from './tts/perfTelemetry';
 import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
 import type { TTSProvider } from './tts/types';
 
 const isUrlExtractorEnabled = import.meta.env.VITE_ENABLE_URL_EXTRACTOR !== 'false';
 const sourceTabs: SourceType[] = isUrlExtractorEnabled ? ['text', 'file', 'url'] : ['text', 'file'];
+const TTS_PREFS_STORAGE_KEY = 'reader-tts-preferences';
+
+type StoredTtsPreferences = {
+  voice: string;
+  rate: number;
+  provider: string;
+};
+
+const loadTtsPreferences = (): StoredTtsPreferences | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(TTS_PREFS_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as StoredTtsPreferences) : null;
+  } catch {
+    return null;
+  }
+};
+
+const resolveProviderLabel = (activeProvider: TTSProvider): string => (
+  activeProvider instanceof WebSpeechProvider ? 'web-speech' : 'kokoro'
+);
 
 function App() {
   const [sourceType, setSourceType] = useState<SourceType>('text');
@@ -24,9 +49,12 @@ function App() {
     warnings: [],
   });
 
+  const storedPreferences = useMemo(loadTtsPreferences, []);
   const [provider, setProvider] = useState<TTSProvider>(() => new WebSpeechProvider());
-  const [voice, setVoice] = useState('alloy');
-  const [rate, setRate] = useState(1);
+  const [providerLabel, setProviderLabel] = useState('web-speech');
+  const [showFallbackBanner, setShowFallbackBanner] = useState(false);
+  const [voice, setVoice] = useState(storedPreferences?.voice ?? 'alloy');
+  const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
 
   const playerSegments = useMemo(
@@ -41,12 +69,18 @@ function App() {
   });
 
   useEffect(() => {
+    setupLocalDebugPerfTelemetry();
+  }, []);
+
+  useEffect(() => {
     let active = true;
 
     const initializeProvider = async () => {
       const selectedProvider = await selectTTSProvider();
       if (active) {
-        setProvider(selectedProvider);
+        setProvider(selectedProvider.provider);
+        setProviderLabel(resolveProviderLabel(selectedProvider.provider));
+        setShowFallbackBanner(selectedProvider.fallbackToWebSpeech);
       }
     };
 
@@ -56,6 +90,20 @@ function App() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const payload: StoredTtsPreferences = {
+      voice,
+      rate,
+      provider: providerLabel,
+    };
+
+    window.localStorage.setItem(TTS_PREFS_STORAGE_KEY, JSON.stringify(payload));
+  }, [providerLabel, rate, voice]);
 
   useEffect(() => {
     let active = true;
@@ -146,7 +194,16 @@ function App() {
         <p className="mt-2 text-sm text-slate-400">
           Scaffold for source ingestion, normalization preview, and spoken playback.
         </p>
+        <p className="mt-2 text-xs text-slate-300">
+          Active voice provider: <span className="font-semibold">{providerLabel}</span>
+        </p>
       </header>
+
+      {showFallbackBanner ? (
+        <div className="mb-4 rounded-md border border-amber-700 bg-amber-950/40 px-3 py-2 text-sm text-amber-200">
+          Running in fallback voice mode due to device capability.
+        </div>
+      ) : null}
 
 
       {showModelLicenseInfo ? (

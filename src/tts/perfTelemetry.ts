@@ -19,6 +19,11 @@ export type PerfMetricEvent =
     durationMs: number;
   }
   | {
+    type: 'tts.synth_failure';
+    segmentId: string;
+    reason: string;
+  }
+  | {
     type: 'tts.queue_underrun';
     segmentId: string;
     queueUnderruns: number;
@@ -62,6 +67,44 @@ const defaultSink: PerfTelemetrySink = {
   log: (event) => {
     console.info('[perf]', event);
   },
+};
+
+export const setupLocalDebugPerfTelemetry = (): void => {
+  if (!import.meta.env.DEV) {
+    return;
+  }
+
+  let synthFailureCount = 0;
+  let fallbackActivationCount = 0;
+
+  perfTelemetry.sink = {
+    log: (event) => {
+      if (event.type === 'tts.synth_failure') {
+        synthFailureCount += 1;
+      }
+
+      if (event.type === 'tts.degraded_mode') {
+        fallbackActivationCount += 1;
+      }
+
+      if (event.type === 'tts.first_audio') {
+        console.info('[perf][debug] time-to-first-audio(ms)', event.durationMs, event.segmentId);
+        return;
+      }
+
+      if (event.type === 'tts.synth_failure') {
+        console.info('[perf][debug] synth-failure-count', synthFailureCount, event.segmentId, event.reason);
+        return;
+      }
+
+      if (event.type === 'tts.degraded_mode') {
+        console.info('[perf][debug] fallback-activations', fallbackActivationCount, event.reason);
+        return;
+      }
+
+      console.info('[perf]', event);
+    },
+  };
 };
 
 export const perfTelemetry = {
