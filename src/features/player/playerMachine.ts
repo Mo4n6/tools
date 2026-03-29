@@ -113,6 +113,7 @@ export function usePlayerController({
   const queueVersionRef = useRef(0);
   const nextPrefetchInFlightRef = useRef<Set<string>>(new Set());
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const transitioningRef = useRef(false);
   const firstAudioLoggedRef = useRef(false);
   const playRequestStartRef = useRef<number | null>(null);
@@ -240,6 +241,22 @@ export function usePlayerController({
     activeAudioRef.current = null;
   }, []);
 
+  const cleanupNativeSpeech = useCallback(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      activeUtteranceRef.current = null;
+      return;
+    }
+
+    if (activeUtteranceRef.current) {
+      activeUtteranceRef.current.onstart = null;
+      activeUtteranceRef.current.onend = null;
+      activeUtteranceRef.current.onerror = null;
+    }
+
+    window.speechSynthesis.cancel();
+    activeUtteranceRef.current = null;
+  }, []);
+
   const playIndex = useCallback(async (segmentIndex: number, offset = 0) => {
     if (!segments.length) {
       dispatch({ type: 'SET_STATE', state: 'idle' });
@@ -260,26 +277,85 @@ export function usePlayerController({
     }
 
     if (result.mode === 'native-spoken') {
-      if (!provider.playNative) {
+      if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
         dispatch({ type: 'SET_ERROR', error: 'TTS provider cannot play native audio output.' });
         return;
       }
 
-      dispatch({ type: 'SET_INDEX', index: boundedIndex });
-      dispatch({ type: 'SET_CHAR_OFFSET', charOffset: 0 });
-      await provider.playNative({ id: segment.id, text: segment.text }, synthesisOptions);
-      dispatch({ type: 'SET_CHAR_OFFSET', charOffset: segment.text.length });
+      cleanupAudio();
+      cleanupNativeSpeech();
 
-      const nextIndex = boundedIndex + 1;
-      if (nextIndex >= segments.length) {
-        dispatch({ type: 'SET_STATE', state: 'finished' });
-        persistCursor(boundedIndex, segment.text.length);
-        return;
+      const utterance = new SpeechSynthesisUtterance(segment.text);
+      utterance.rate = synthesisOptions?.rate ?? 1;
+      utterance.pitch = synthesisOptions?.pitch ?? 1;
+      if (synthesisOptions?.voice) {
+        const nativeVoice = window.speechSynthesis.getVoices().find((voice) => voice.voiceURI === synthesisOptions.voice);
+        if (nativeVoice) {
+          utterance.voice = nativeVoice;
+        }
       }
 
-      dispatch({ type: 'SET_INDEX', index: nextIndex });
-      persistCursor(nextIndex, 0);
-      await playIndex(nextIndex, 0);
+      dispatch({ type: 'SET_INDEX', index: boundedIndex });
+      dispatch({ type: 'SET_CHAR_OFFSET', charOffset: Math.max(0, offset) });
+
+      utterance.onstart = () => {
+        dispatch({ type: 'SET_STATE', state: 'playing' });
+        if (!firstAudioLoggedRef.current && playRequestStartRef.current != null) {
+          perfTelemetry.sink.log({
+            type: 'tts.first_audio',
+            durationMs: Math.round(perfTelemetry.now() - playRequestStartRef.current),
+            segmentId: segment.id,
+          });
+          firstAudioLoggedRef.current = true;
+          playRequestStartRef.current = null;
+        }
+      };
+
+      utterance.onerror = (event) => {
+        const message = event.error || 'Native speech synthesis failed.';
+        dispatch({ type: 'SET_ERROR', error: message });
+      };
+
+      utterance.onend = () => {
+        if (transitioningRef.current) {
+          return;
+        }
+        transitioningRef.current = true;
+        activeUtteranceRef.current = null;
+        dispatch({ type: 'SET_CHAR_OFFSET', charOffset: segment.text.length });
+
+        void (async () => {
+          const nextIndex = boundedIndex + 1;
+          if (nextIndex >= segments.length) {
+            dispatch({ type: 'SET_STATE', state: 'finished' });
+            persistCursor(boundedIndex, segment.text.length);
+            transitioningRef.current = false;
+            return;
+          }
+
+          dispatch({ type: 'SET_INDEX', index: nextIndex });
+          persistCursor(nextIndex, 0);
+          queueTransitionCountRef.current += 1;
+          const nextSegment = segments[nextIndex];
+          const nextQueueEntry = nextSegment ? queueRef.current.get(nextSegment.id) : undefined;
+          if (nextSegment && nextQueueEntry?.synthesisStatus !== 'ready') {
+            queueUnderrunCountRef.current += 1;
+            perfTelemetry.sink.log({
+              type: 'tts.queue_underrun',
+              segmentId: nextSegment.id,
+              queueUnderruns: queueUnderrunCountRef.current,
+              queueTransitions: queueTransitionCountRef.current,
+              underrunRate: queueUnderrunCountRef.current / queueTransitionCountRef.current,
+            });
+          }
+          await playIndex(nextIndex, 0);
+          transitioningRef.current = false;
+        })();
+      };
+
+      activeUtteranceRef.current = utterance;
+      window.speechSynthesis.speak(utterance);
+      await prefetchUpcoming(boundedIndex);
       return;
     }
 
@@ -288,6 +364,7 @@ export function usePlayerController({
       return;
     }
 
+    cleanupNativeSpeech();
     cleanupAudio();
     const audio = new Audio(audioResult.url);
     audio.preload = 'auto';
@@ -361,25 +438,36 @@ export function usePlayerController({
     }
     dispatch({ type: 'SET_STATE', state: 'playing' });
     await prefetchUpcoming(boundedIndex);
-  }, [cleanupAudio, persistCursor, prefetchUpcoming, segments, synthesizeSegment]);
+  }, [cleanupAudio, cleanupNativeSpeech, persistCursor, prefetchUpcoming, segments, synthesizeSegment, synthesisOptions]);
 
   const play = useCallback(async () => {
     await playIndex(machine.currentSegmentIndex, machine.charOffset);
   }, [machine.charOffset, machine.currentSegmentIndex, playIndex]);
 
   const pause = useCallback(() => {
-    if (!activeAudioRef.current) {
+    if (activeAudioRef.current) {
+      activeAudioRef.current.pause();
+      dispatch({ type: 'SET_STATE', state: 'paused' });
+      persistCursor(machine.currentSegmentIndex, machine.charOffset);
       return;
     }
 
-    activeAudioRef.current.pause();
-    dispatch({ type: 'SET_STATE', state: 'paused' });
-    persistCursor(machine.currentSegmentIndex, machine.charOffset);
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window && activeUtteranceRef.current) {
+      window.speechSynthesis.pause();
+      dispatch({ type: 'SET_STATE', state: 'paused' });
+      persistCursor(machine.currentSegmentIndex, machine.charOffset);
+    }
   }, [machine.charOffset, machine.currentSegmentIndex, persistCursor]);
 
   const resume = useCallback(async () => {
     if (activeAudioRef.current && machine.state === 'paused') {
       await activeAudioRef.current.play();
+      dispatch({ type: 'SET_STATE', state: 'playing' });
+      return;
+    }
+
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window && activeUtteranceRef.current && machine.state === 'paused') {
+      window.speechSynthesis.resume();
       dispatch({ type: 'SET_STATE', state: 'playing' });
       return;
     }
@@ -409,8 +497,9 @@ export function usePlayerController({
   useEffect(() => {
     return () => {
       cleanupAudio();
+      cleanupNativeSpeech();
     };
-  }, [cleanupAudio]);
+  }, [cleanupAudio, cleanupNativeSpeech]);
 
   return {
     state: machine.state,
