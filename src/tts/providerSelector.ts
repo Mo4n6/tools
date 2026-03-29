@@ -35,9 +35,15 @@ export interface TTSProviderSelectorOptions {
   minimumMemoryGb?: number;
 }
 
+export interface TTSProviderSelection {
+  provider: TTSProvider;
+  fallbackToWebSpeech: boolean;
+  fallbackReason?: string;
+}
+
 export const selectTTSProvider = async (
   options: TTSProviderSelectorOptions = {}
-): Promise<TTSProvider> => {
+): Promise<TTSProviderSelection> => {
   const minimumMemoryGb = options.minimumMemoryGb ?? DEFAULT_MEMORY_GB_THRESHOLD;
 
   const requestedDevice = options.preferredDevice ?? options.kokoro?.device ?? 'wasm';
@@ -52,7 +58,7 @@ export const selectTTSProvider = async (
 
     try {
       await kokoroProvider.warmup();
-      return kokoroProvider;
+      return { provider: kokoroProvider, fallbackToWebSpeech: false };
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'Kokoro warmup failed.';
       perfTelemetry.sink.log({
@@ -61,7 +67,11 @@ export const selectTTSProvider = async (
         to: 'web-speech',
         reason,
       });
-      return new WebSpeechProvider();
+      return {
+        provider: new WebSpeechProvider(),
+        fallbackToWebSpeech: true,
+        fallbackReason: reason,
+      };
     }
   }
 
@@ -71,5 +81,9 @@ export const selectTTSProvider = async (
     to: 'web-speech',
     reason: 'Device does not satisfy Kokoro memory/WebGPU requirements.',
   });
-  return new WebSpeechProvider();
+  return {
+    provider: new WebSpeechProvider(),
+    fallbackToWebSpeech: true,
+    fallbackReason: 'Device does not satisfy Kokoro memory/WebGPU requirements.',
+  };
 };

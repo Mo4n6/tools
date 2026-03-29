@@ -178,6 +178,11 @@ export function usePlayerController({
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to synthesize audio segment.';
+      perfTelemetry.sink.log({
+        type: 'tts.synth_failure',
+        segmentId: segment.id,
+        reason: message,
+      });
       setQueueEntry({ segmentId: segment.id, synthesisStatus: 'error', audioUrl: null, error: message });
       dispatch({ type: 'SET_ERROR', error: message });
       return null;
