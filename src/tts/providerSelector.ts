@@ -77,6 +77,9 @@ const logFallbackRecordForDev = (fallbackError: TTSFallbackError): void => {
   console.info(`[TTS_FALLBACK][${fallbackError.code}] ${fallbackError.message}`);
 };
 
+const KOKORO_QUALITY_CHECK_SENTENCE = 'This is a Kokoro test in English.';
+const WEBGPU_QUALITY_CHECK_WARNING = 'WebGPU output quality check failed; switched to WASM.';
+
 export const selectTTSProvider = async (
   options: TTSProviderSelectorOptions = {}
 ): Promise<TTSProviderSelection> => {
@@ -170,6 +173,23 @@ export const selectTTSProvider = async (
 
     try {
       await kokoroProvider.warmup();
+      const runtimeAfterWarmup = kokoroProvider.getRuntimeDevice();
+
+      if (runtimeAfterWarmup === 'webgpu') {
+        const qualityCheckResult = await kokoroProvider.synthesize({
+          id: 'kokoro-quality-check',
+          text: KOKORO_QUALITY_CHECK_SENTENCE,
+        });
+
+        if ('url' in qualityCheckResult) {
+          URL.revokeObjectURL(qualityCheckResult.url);
+        }
+
+        if (kokoroProvider.getRuntimeDevice() === 'wasm') {
+          console.warn(WEBGPU_QUALITY_CHECK_WARNING);
+        }
+      }
+
       const runtimeDevice = kokoroProvider.getRuntimeDevice();
       return {
         provider: kokoroProvider,
