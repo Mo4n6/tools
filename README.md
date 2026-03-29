@@ -52,3 +52,8 @@ In GitHub repository settings:
 
 1. Go to **Settings → Pages**.
 2. Under **Build and deployment**, set **Source** to **GitHub Actions**.
+
+## Additional docs
+
+- [Tools shell routing and UI conventions](docs/tools-shell-routing-and-ui.md)
+

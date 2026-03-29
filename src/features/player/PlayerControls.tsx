@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { PlayerMachineState } from './playerMachine';
+import type { PlaybackMode } from '../../domain/segments';
 
 type PlayerControlsProps = {
   queueStatus: PlayerMachineState;
@@ -11,6 +12,7 @@ type PlayerControlsProps = {
   selectedLanguage: string;
   languageOptions: Array<{ value: string; label: string }>;
   rate: number;
+  playbackMode: PlaybackMode;
   isVoiceReadyForPlayback?: boolean;
   voiceReadinessHelperText?: string | null;
   playDisabled?: boolean;
@@ -22,6 +24,7 @@ type PlayerControlsProps = {
   onVoiceChange: (voice: string) => void;
   onLanguageChange: (language: string) => void;
   onRateChange: (rate: number) => void;
+  onPlaybackModeChange: (mode: PlaybackMode) => void;
 };
 
 const RATE_MIN = 0.5;
@@ -47,6 +50,7 @@ export function PlayerControls({
   selectedLanguage,
   languageOptions,
   rate,
+  playbackMode,
   isVoiceReadyForPlayback = true,
   voiceReadinessHelperText = null,
   playDisabled = false,
@@ -58,6 +62,7 @@ export function PlayerControls({
   onVoiceChange,
   onLanguageChange,
   onRateChange,
+  onPlaybackModeChange,
 }: PlayerControlsProps) {
   const [liveMessage, setLiveMessage] = useState('Playback idle.');
   const isPlaying = queueStatus === 'playing' || queueStatus === 'loading';
@@ -193,6 +198,20 @@ export function PlayerControls({
         value={rate}
         onChange={(event) => onRateChange(Number(event.target.value))}
       />
+
+      <label className="block text-sm text-slate-300" htmlFor="playback-mode-control">
+        Playback mode
+      </label>
+      <select
+        id="playback-mode-control"
+        aria-label="Playback mode"
+        className="w-full rounded-md border border-border bg-slate-900 p-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+        value={playbackMode}
+        onChange={(event) => onPlaybackModeChange(event.target.value as PlaybackMode)}
+      >
+        <option value="segmented">Segmented</option>
+        <option value="continuous">Continuous</option>
+      </select>
 
       <div
         className="rounded-md border border-border bg-slate-900 p-3 text-sm"

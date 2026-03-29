@@ -10,6 +10,12 @@ export interface PlayerSegment {
   text: string;
 }
 
+export interface PlayerSeekAnchor {
+  segmentId: string;
+  playbackSegmentIndex: number;
+  playbackCharOffset: number;
+}
+
 export interface QueueSegmentModel {
   cacheKey: string;
   segmentId: string;
@@ -40,6 +46,7 @@ type Action =
 
 const DEFAULT_LOOKAHEAD = 2;
 const UNKNOWN_PROVIDER_ID = 'unknown-provider';
+const UNKNOWN_RUNTIME_SIGNATURE = 'unknown-runtime';
 
 function getProviderId(provider: TTSProvider): string {
   const providerWithId = provider as TTSProvider & { providerId?: string; id?: string };
@@ -54,12 +61,28 @@ function getProviderId(provider: TTSProvider): string {
 
 function buildSynthesisCacheKey(
   providerId: string,
+  providerRuntimeSignature: string,
   segmentId: string,
   options?: TTSSynthesisOptions,
 ): string {
   const voice = options?.voice ?? '';
   const rate = options?.rate ?? '';
-  return `${providerId}|${segmentId}|${voice}|${rate}`;
+  return `${providerId}|${providerRuntimeSignature}|${segmentId}|${voice}|${rate}`;
+}
+
+function getProviderRuntimeSignature(provider: TTSProvider): string {
+  const providerWithRuntime = provider as TTSProvider & {
+    getRuntimeDevice?: () => string;
+    runtimeDevice?: string;
+    device?: string;
+    dtype?: string;
+  };
+  const runtime = providerWithRuntime.getRuntimeDevice?.()
+    ?? providerWithRuntime.runtimeDevice
+    ?? providerWithRuntime.device
+    ?? UNKNOWN_RUNTIME_SIGNATURE;
+  const dtype = providerWithRuntime.dtype ?? 'unknown-dtype';
+  return `${runtime}|${dtype}`;
 }
 
 function createInitialState(cursor?: PlayerResumeCursor): PlayerInternalState {
@@ -91,6 +114,7 @@ function reducer(state: PlayerInternalState, action: Action): PlayerInternalStat
 export interface UsePlayerControllerParams {
   provider: TTSProvider;
   segments: PlayerSegment[];
+  seekAnchors?: PlayerSeekAnchor[];
   synthesisOptions?: TTSSynthesisOptions;
   prefetchCount?: number;
   persistKey?: string;
@@ -113,10 +137,23 @@ export interface UsePlayerControllerResult {
 export function usePlayerController({
   provider,
   segments,
+  seekAnchors,
   synthesisOptions,
   prefetchCount = DEFAULT_LOOKAHEAD,
   persistKey = 'reader-player-cursor',
 }: UsePlayerControllerParams): UsePlayerControllerResult {
+  const anchors = useMemo<PlayerSeekAnchor[]>(() => {
+    if (seekAnchors && seekAnchors.length > 0) {
+      return seekAnchors;
+    }
+
+    return segments.map((segment, index) => ({
+      segmentId: segment.id,
+      playbackSegmentIndex: index,
+      playbackCharOffset: 0,
+    }));
+  }, [seekAnchors, segments]);
+
   const initialCursor = useMemo<PlayerResumeCursor | undefined>(() => {
     if (typeof window === 'undefined') {
       return undefined;
@@ -148,10 +185,11 @@ export function usePlayerController({
     queueVersionRef.current += 1;
   }, []);
 
-  const providerId = useMemo(() => getProviderId(provider), [provider]);
+  const providerId = getProviderId(provider);
+  const providerRuntimeSignature = getProviderRuntimeSignature(provider);
   const getCacheKey = useCallback((segmentId: string) => {
-    return buildSynthesisCacheKey(providerId, segmentId, synthesisOptions);
-  }, [providerId, synthesisOptions]);
+    return buildSynthesisCacheKey(providerId, providerRuntimeSignature, segmentId, synthesisOptions);
+  }, [providerId, providerRuntimeSignature, synthesisOptions]);
 
   const setQueueEntry = useCallback((entry: QueueSegmentModel) => {
     queueRef.current.set(entry.cacheKey, entry);
@@ -299,15 +337,32 @@ export function usePlayerController({
       return;
     }
 
-    const boundedIndex = Math.max(0, Math.min(segmentIndex, segments.length - 1));
+    if (!anchors.length) {
+      dispatch({ type: 'SET_STATE', state: 'idle' });
+      return;
+    }
+
+    const boundedIndex = Math.max(0, Math.min(segmentIndex, anchors.length - 1));
+    const boundedAnchor = anchors[boundedIndex];
+    if (!boundedAnchor) {
+      dispatch({ type: 'SET_STATE', state: 'idle' });
+      return;
+    }
+
+    const playbackIndex = Math.max(0, Math.min(boundedAnchor.playbackSegmentIndex, segments.length - 1));
     dispatch({ type: 'SET_STATE', state: 'loading' });
     dispatch({ type: 'RESET_ERROR' });
     if (!firstAudioLoggedRef.current && playRequestStartRef.current == null) {
       playRequestStartRef.current = perfTelemetry.now();
     }
 
-    const segment = segments[boundedIndex];
-    const result = await synthesizeSegment(boundedIndex);
+    const segment = segments[playbackIndex];
+    if (!segment) {
+      dispatch({ type: 'SET_STATE', state: 'idle' });
+      return;
+    }
+    const absoluteOffset = Math.max(0, boundedAnchor.playbackCharOffset + offset);
+    const result = await synthesizeSegment(playbackIndex);
     if (!result) {
       return;
     }
@@ -362,9 +417,9 @@ export function usePlayerController({
 
         void (async () => {
           const nextIndex = boundedIndex + 1;
-          if (nextIndex >= segments.length) {
+          if (nextIndex >= anchors.length) {
             dispatch({ type: 'SET_STATE', state: 'finished' });
-            persistCursor(boundedIndex, segment.text.length);
+            persistCursor(boundedIndex, Math.max(0, segment.text.length - boundedAnchor.playbackCharOffset));
             transitioningRef.current = false;
             return;
           }
@@ -372,7 +427,8 @@ export function usePlayerController({
           dispatch({ type: 'SET_INDEX', index: nextIndex });
           persistCursor(nextIndex, 0);
           queueTransitionCountRef.current += 1;
-          const nextSegment = segments[nextIndex];
+          const nextAnchor = anchors[nextIndex];
+          const nextSegment = nextAnchor ? segments[nextAnchor.playbackSegmentIndex] : undefined;
           const nextQueueEntry = nextSegment ? queueRef.current.get(getCacheKey(nextSegment.id)) : undefined;
           if (nextSegment && nextQueueEntry?.synthesisStatus !== 'ready') {
             queueUnderrunCountRef.current += 1;
@@ -391,7 +447,7 @@ export function usePlayerController({
 
       activeUtteranceRef.current = utterance;
       window.speechSynthesis.speak(utterance);
-      await prefetchUpcoming(boundedIndex);
+      await prefetchUpcoming(playbackIndex);
       return;
     }
 
@@ -411,9 +467,24 @@ export function usePlayerController({
         return;
       }
       const ratio = Math.min(1, Math.max(0, audio.currentTime / duration));
-      const charOffset = Math.floor(ratio * segment.text.length);
-      dispatch({ type: 'SET_CHAR_OFFSET', charOffset });
-      persistCursor(boundedIndex, charOffset);
+      const playbackCharOffset = Math.floor(ratio * segment.text.length);
+      const activeAnchorIndex = anchors.reduce((activeIndex, anchor, index) => {
+        if (
+          anchor.playbackSegmentIndex === playbackIndex
+          && anchor.playbackCharOffset <= playbackCharOffset
+          && index >= activeIndex
+        ) {
+          return index;
+        }
+        return activeIndex;
+      }, boundedIndex);
+      const activeAnchor = anchors[activeAnchorIndex];
+      const anchorOffset = activeAnchor && activeAnchor.playbackSegmentIndex === playbackIndex
+        ? Math.max(0, playbackCharOffset - activeAnchor.playbackCharOffset)
+        : playbackCharOffset;
+      dispatch({ type: 'SET_INDEX', index: activeAnchorIndex });
+      dispatch({ type: 'SET_CHAR_OFFSET', charOffset: anchorOffset });
+      persistCursor(activeAnchorIndex, anchorOffset);
     };
 
     audio.onended = () => {
@@ -424,9 +495,9 @@ export function usePlayerController({
 
       void (async () => {
         const nextIndex = boundedIndex + 1;
-        if (nextIndex >= segments.length) {
+        if (nextIndex >= anchors.length) {
           dispatch({ type: 'SET_STATE', state: 'finished' });
-          persistCursor(boundedIndex, segment.text.length);
+          persistCursor(boundedIndex, Math.max(0, segment.text.length - boundedAnchor.playbackCharOffset));
           transitioningRef.current = false;
           return;
         }
@@ -434,7 +505,8 @@ export function usePlayerController({
         dispatch({ type: 'SET_INDEX', index: nextIndex });
         persistCursor(nextIndex, 0);
         queueTransitionCountRef.current += 1;
-        const nextSegment = segments[nextIndex];
+        const nextAnchor = anchors[nextIndex];
+        const nextSegment = nextAnchor ? segments[nextAnchor.playbackSegmentIndex] : undefined;
         const nextQueueEntry = nextSegment ? queueRef.current.get(getCacheKey(nextSegment.id)) : undefined;
         if (nextSegment && nextQueueEntry?.synthesisStatus !== 'ready') {
           queueUnderrunCountRef.current += 1;
@@ -454,10 +526,10 @@ export function usePlayerController({
     activeAudioRef.current = audio;
     dispatch({ type: 'SET_INDEX', index: boundedIndex });
 
-    if (offset > 0) {
+    if (absoluteOffset > 0) {
       const duration = audio.duration;
       if (Number.isFinite(duration) && duration > 0 && segment.text.length > 0) {
-        audio.currentTime = Math.min(duration, (offset / segment.text.length) * duration);
+        audio.currentTime = Math.min(duration, (absoluteOffset / segment.text.length) * duration);
       }
       dispatch({ type: 'SET_CHAR_OFFSET', charOffset: offset });
     }
@@ -473,8 +545,8 @@ export function usePlayerController({
       playRequestStartRef.current = null;
     }
     dispatch({ type: 'SET_STATE', state: 'playing' });
-    await prefetchUpcoming(boundedIndex);
-  }, [cleanupAudio, cleanupNativeSpeech, persistCursor, prefetchUpcoming, segments, synthesizeSegment, synthesisOptions]);
+    await prefetchUpcoming(playbackIndex);
+  }, [anchors, cleanupAudio, cleanupNativeSpeech, getCacheKey, persistCursor, prefetchUpcoming, segments, synthesizeSegment, synthesisOptions]);
 
   const play = useCallback(async () => {
     await playIndex(machine.currentSegmentIndex, machine.charOffset);
@@ -532,7 +604,8 @@ export function usePlayerController({
 
   useEffect(() => {
     const synthesisIdentity = JSON.stringify({
-      provider,
+      providerId,
+      providerRuntimeSignature,
       voice: synthesisOptions?.voice ?? null,
       rate: synthesisOptions?.rate ?? null,
     });
@@ -560,7 +633,7 @@ export function usePlayerController({
     bumpQueueVersion();
     dispatch({ type: 'SET_STATE', state: 'idle' });
     dispatch({ type: 'RESET_ERROR' });
-  }, [bumpQueueVersion, cleanupAudio, cleanupNativeSpeech, provider, synthesisOptions?.rate, synthesisOptions?.voice]);
+  }, [bumpQueueVersion, cleanupAudio, cleanupNativeSpeech, providerId, providerRuntimeSignature, synthesisOptions?.rate, synthesisOptions?.voice]);
 
   useEffect(() => {
     return () => {

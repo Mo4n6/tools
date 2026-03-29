@@ -2,7 +2,7 @@ import { ChangeEvent, useEffect, useMemo, useState } from 'react';
 import { ttsManifest } from './licenses/ttsManifest';
 import { ingestInput } from './features/ingest/urlAdapter';
 import { PlayerControls } from './features/player/PlayerControls';
-import type { NormalizedDocument } from './domain/segments';
+import type { NormalizedDocument, PlaybackMode, SpeakableSegment } from './domain/segments';
 import { usePlayerController } from './features/player/playerMachine';
 import { selectTTSProvider } from './tts/providerSelector';
 import { perfTelemetry, setupLocalDebugPerfTelemetry } from './tts/perfTelemetry';
@@ -10,6 +10,47 @@ import type { TTSFallbackError } from './tts/errors';
 import { canImportKokoroModule } from './tts/providers/kokoroProvider';
 import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
 import type { TTSProvider, TTSVoice } from './tts/types';
+import { chunkSegmentsByPolicy, defaultChunkingPolicy } from './domain/chunking/policy';
+
+type PlaybackAnchor = {
+  segmentId: string;
+  playbackSegmentIndex: number;
+  playbackCharOffset: number;
+};
+
+function shouldDefaultContinuousMode(segments: SpeakableSegment[]): boolean {
+  if (!segments.length) {
+    return false;
+  }
+
+  return segments.every((segment) => segment.kind === 'text' || segment.kind === 'markdown');
+}
+
+function buildContinuousPlayback(segments: SpeakableSegment[]): {
+  playbackSegments: Array<{ id: string; text: string }>;
+  seekAnchors: PlaybackAnchor[];
+} {
+  const chunkedSegments = chunkSegmentsByPolicy(segments, defaultChunkingPolicy);
+  const playbackSegments = chunkedSegments.map(({ id, text }) => ({ id, text }));
+
+  const seekAnchors: PlaybackAnchor[] = [];
+
+  chunkedSegments.forEach((chunk, playbackSegmentIndex) => {
+    let runningOffset = 0;
+
+    chunk.pieces.forEach((piece) => {
+      seekAnchors.push({
+        segmentId: piece.segmentId,
+        playbackSegmentIndex,
+        playbackCharOffset: runningOffset,
+      });
+      runningOffset += piece.text.length + defaultChunkingPolicy.prosodySpacing.length;
+    });
+  });
+
+  return { playbackSegments, seekAnchors };
+}
+
 
 const isUrlIngestEnabled = import.meta.env.VITE_ENABLE_URL_INGEST !== 'false';
 const isPagesStyleBase = import.meta.env.BASE_URL !== '/';
@@ -200,13 +241,17 @@ const persistVoiceMigrationDone = (): void => {
 type ProviderRuntimeMetadata = {
   providerType: 'kokoro' | 'web-speech';
   runtime: 'webgpu' | 'wasm' | 'system';
+  dtype: TtsSelectionDtype;
   fallbackToWebSpeech: boolean;
   fallbackError?: TTSFallbackError;
 };
 
+type TtsSelectionDtype = 'fp32' | 'fp16' | 'q8' | 'q4' | 'n/a';
+
 type TtsInitStatusLine = {
   providerSelected: string;
   runtime: ProviderRuntimeMetadata['runtime'];
+  dtype: TtsSelectionDtype;
   skipKokoroInit: boolean;
   kokoroImportable: boolean;
   fallbackCode: TTSFallbackError['code'] | 'none';
@@ -217,6 +262,7 @@ type DevTtsDiagnostics = {
   webgpuSupported: boolean;
   deviceMemoryGb?: number;
   selectedProvider: string;
+  selectedDtype: TtsSelectionDtype;
   fallbackCode?: TTSFallbackError['code'];
   fallbackReason?: string;
   fallbackHint?: string;
@@ -317,6 +363,7 @@ function App() {
   const [providerRuntimeMetadata, setProviderRuntimeMetadata] = useState<ProviderRuntimeMetadata>({
     providerType: 'web-speech',
     runtime: 'system',
+    dtype: 'n/a',
     fallbackToWebSpeech: false,
   });
   const [showFallbackBanner, setShowFallbackBanner] = useState(false);
@@ -334,6 +381,7 @@ function App() {
   const [availableVoices, setAvailableVoices] = useState<TTSVoice[]>([]);
   const [selectedVoiceLanguage, setSelectedVoiceLanguage] = useState('auto');
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
+  const [playbackModeOverride, setPlaybackModeOverride] = useState<PlaybackMode | null>(null);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
   const [hasCompletedVoiceMigration, setHasCompletedVoiceMigration] = useState(loadVoiceMigrationDone);
   const [hasPendingVoiceMigrationNormalization, setHasPendingVoiceMigrationNormalization] = useState(
@@ -344,53 +392,30 @@ function App() {
     hasPendingVoiceMigrationNormalization && !hasCompletedVoiceMigration
   );
 
-  const playbackSegments = useMemo(
-    () => ingested.document.segments.map((segment) => ({ id: segment.id, text: segment.text })),
-    [ingested.document.segments],
-  );
-  const detectedDocumentLanguage = useMemo(() => {
-    const directLanguage = normalizeLanguageTag(ingested.document.language);
-    if (directLanguage) {
-      return directLanguage;
+  const defaultPlaybackMode = useMemo<PlaybackMode>(() => (
+    shouldDefaultContinuousMode(ingested.document.segments) ? 'continuous' : 'segmented'
+  ), [ingested.document.segments]);
+  const playbackMode = playbackModeOverride ?? defaultPlaybackMode;
+
+  const playbackData = useMemo(() => {
+    if (playbackMode === 'continuous') {
+      return buildContinuousPlayback(ingested.document.segments);
     }
 
-    for (const segment of ingested.document.segments) {
-      const metaLanguage = typeof segment.meta?.language === 'string' ? normalizeLanguageTag(segment.meta.language) : '';
-      if (metaLanguage) {
-        return metaLanguage;
-      }
-    }
-
-    return 'en';
-  }, [ingested.document.language, ingested.document.segments]);
-  const effectiveVoiceLanguage = selectedVoiceLanguage === 'auto'
-    ? detectedDocumentLanguage
-    : selectedVoiceLanguage;
-  const languageOptions = useMemo(() => {
-    const languageValues = new Set<string>(['auto']);
-    if (detectedDocumentLanguage) {
-      languageValues.add(detectedDocumentLanguage);
-    }
-    availableVoices.forEach((providerVoice) => {
-      const language = normalizeLanguageTag(providerVoice.language);
-      if (language) {
-        languageValues.add(language);
-      }
-    });
-
-    return Array.from(languageValues).map((value) => (
-      value === 'auto'
-        ? { value, label: `Auto (${detectedDocumentLanguage || 'en'})` }
-        : { value, label: value }
-    ));
-  }, [availableVoices, detectedDocumentLanguage]);
-  const filteredVoices = useMemo(() => (
-    getPreferredVoicesForLanguage(availableVoices, effectiveVoiceLanguage)
-  ), [availableVoices, effectiveVoiceLanguage]);
+    return {
+      playbackSegments: ingested.document.segments.map((segment) => ({ id: segment.id, text: segment.text })),
+      seekAnchors: ingested.document.segments.map((segment, index) => ({
+        segmentId: segment.id,
+        playbackSegmentIndex: index,
+        playbackCharOffset: 0,
+      })),
+    };
+  }, [ingested.document.segments, playbackMode]);
 
   const player = usePlayerController({
     provider,
-    segments: playbackSegments,
+    segments: playbackData.playbackSegments,
+    seekAnchors: playbackData.seekAnchors,
     synthesisOptions: { voice, rate },
   });
 
@@ -435,6 +460,7 @@ function App() {
         setTtsInitStatusLine({
           providerSelected: providerName,
           runtime: selectedProvider.runtime,
+          dtype: selectedProvider.dtype,
           skipKokoroInit,
           kokoroImportable: kokoroPackageLoadable,
           fallbackCode: selectedProvider.fallbackError?.code ?? 'none',
@@ -448,6 +474,7 @@ function App() {
           webgpuSupported: await checkWebGpuSupport(),
           deviceMemoryGb: getDeviceMemoryGb(),
           selectedProvider: providerName,
+          selectedDtype: selectedProvider.dtype,
           fallbackCode: selectedProvider.fallbackError?.code,
           fallbackReason: fallbackSummary.reason,
           fallbackHint: fallbackSummary.hint,
@@ -471,6 +498,7 @@ function App() {
         setProviderRuntimeMetadata({
           providerType: selectedProvider.providerType,
           runtime: selectedProvider.runtime,
+          dtype: selectedProvider.dtype,
           fallbackToWebSpeech: selectedProvider.fallbackToWebSpeech,
           fallbackError: selectedProvider.fallbackError,
         });
@@ -730,12 +758,13 @@ function App() {
           <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${runtimeStatus.colorClassName}`}>
             Runtime: {runtimeStatus.label}
           </span>
+          <span>dtype={providerRuntimeMetadata.dtype}</span>
           <span>fallbackToWebSpeech={String(providerRuntimeMetadata.fallbackToWebSpeech)}</span>
           </p>
         ) : null}
         {shouldShowAdvancedDetails ? (
           <p className="mt-2 text-xs text-slate-400">
-            tts init: providerSelected={ttsInitStatusLine?.providerSelected ?? 'pending'} · runtime={ttsInitStatusLine?.runtime ?? 'pending'} · skipKokoroInit={String(ttsInitStatusLine?.skipKokoroInit ?? false)} · kokoroImportable={ttsInitStatusLine ? String(ttsInitStatusLine.kokoroImportable) : 'pending'} · fallbackCode={ttsInitStatusLine?.fallbackCode ?? 'pending'}
+            tts init: providerSelected={ttsInitStatusLine?.providerSelected ?? 'pending'} · runtime={ttsInitStatusLine?.runtime ?? 'pending'} · dtype={ttsInitStatusLine?.dtype ?? 'pending'} · skipKokoroInit={String(ttsInitStatusLine?.skipKokoroInit ?? false)} · kokoroImportable={ttsInitStatusLine ? String(ttsInitStatusLine.kokoroImportable) : 'pending'} · fallbackCode={ttsInitStatusLine?.fallbackCode ?? 'pending'}
           </p>
         ) : null}
       </header>
@@ -800,6 +829,7 @@ function App() {
             <li>webgpuSupported: {String(devTtsDiagnostics.webgpuSupported)}</li>
             <li>deviceMemoryGb: {devTtsDiagnostics.deviceMemoryGb ?? 'unknown'}</li>
             <li>selectedProvider: {devTtsDiagnostics.selectedProvider}</li>
+            <li>selectedDtype: {devTtsDiagnostics.selectedDtype}</li>
             <li>fallbackCode: {devTtsDiagnostics.fallbackCode ?? 'none'}</li>
             <li>fallbackReason: {devTtsDiagnostics.fallbackReason ?? 'none'}</li>
             <li>fallbackHint: {devTtsDiagnostics.fallbackHint ?? 'none'}</li>
@@ -948,6 +978,7 @@ function App() {
               queueStatus={player.state}
               currentSegmentIndex={player.currentSegmentIndex}
               segmentCount={ingested.document.segments.length}
+              playbackMode={playbackMode}
               machineError={player.error}
               voice={voice}
               voices={filteredVoices}
@@ -985,6 +1016,7 @@ function App() {
               onVoiceChange={setVoice}
               onLanguageChange={setSelectedVoiceLanguage}
               onRateChange={setRate}
+              onPlaybackModeChange={setPlaybackModeOverride}
             />
             <button
               aria-label="Reset playback queue"

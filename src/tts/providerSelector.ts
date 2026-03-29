@@ -47,11 +47,27 @@ export interface TTSProviderSelection {
   provider: TTSProvider;
   providerType: 'kokoro' | 'web-speech';
   runtime: 'webgpu' | 'wasm' | 'system';
+  dtype: NonNullable<KokoroProviderOptions['dtype']> | 'n/a';
   fallbackToWebSpeech: boolean;
   fallbackIntentional?: boolean;
   fallbackReason?: string;
   fallbackError?: TTSFallbackError;
 }
+
+const resolveKokoroDtype = (
+  device: KokoroDevice,
+  configuredDtype?: KokoroProviderOptions['dtype']
+): NonNullable<KokoroProviderOptions['dtype']> => {
+  if (configuredDtype) {
+    return configuredDtype;
+  }
+
+  if (device === 'webgpu') {
+    return 'fp16';
+  }
+
+  return 'q8';
+};
 
 const logFallbackRecordForDev = (fallbackError: TTSFallbackError): void => {
   if (!import.meta.env.DEV) {
@@ -60,6 +76,18 @@ const logFallbackRecordForDev = (fallbackError: TTSFallbackError): void => {
 
   console.info(`[TTS_FALLBACK][${fallbackError.code}] ${fallbackError.message}`);
 };
+
+const KOKORO_QUALITY_CHECK_SENTENCE = 'This is a Kokoro test in English.';
+const WEBGPU_QUALITY_CHECK_WARNING = 'WebGPU output quality check failed; switched to WASM.';
+const createWebSpeechSelection = (
+  partial: Omit<TTSProviderSelection, 'provider' | 'providerType' | 'runtime' | 'dtype'>
+): TTSProviderSelection => ({
+  provider: new WebSpeechProvider(),
+  providerType: 'web-speech',
+  runtime: 'system',
+  dtype: 'n/a',
+  ...partial,
+});
 
 export const selectTTSProvider = async (
   options: TTSProviderSelectorOptions = {}
@@ -84,15 +112,12 @@ export const selectTTSProvider = async (
     });
     logFallbackRecordForDev(fallbackError);
 
-    return {
-      provider: new WebSpeechProvider(),
-      providerType: 'web-speech',
-      runtime: 'system',
+    return createWebSpeechSelection({
       fallbackToWebSpeech: true,
       fallbackIntentional: true,
       fallbackReason: reason,
       fallbackError,
-    };
+    });
   }
 
   const minimumMemoryGb = options.minimumMemoryGb ?? DEFAULT_MEMORY_GB_THRESHOLD;
@@ -133,30 +158,46 @@ export const selectTTSProvider = async (
         });
         logFallbackRecordForDev(fallbackError);
 
-        return {
-          provider: new WebSpeechProvider(),
-          providerType: 'web-speech',
-          runtime: 'system',
+        return createWebSpeechSelection({
           fallbackToWebSpeech: true,
           fallbackReason: fallbackError.message,
           fallbackError,
-        };
+        });
       }
     }
 
+    const selectedDtype = resolveKokoroDtype(requestedDevice, options.kokoro?.dtype);
     const kokoroProvider = new KokoroProvider({
       modelRepo: options.kokoro?.modelRepo ?? DEFAULT_KOKORO_MODEL,
-      dtype: options.kokoro?.dtype ?? 'q8',
+      dtype: selectedDtype,
       device: requestedDevice,
     });
 
     try {
       await kokoroProvider.warmup();
+      const runtimeAfterWarmup = kokoroProvider.getRuntimeDevice();
+
+      if (runtimeAfterWarmup === 'webgpu') {
+        const qualityCheckResult = await kokoroProvider.synthesize({
+          id: 'kokoro-quality-check',
+          text: KOKORO_QUALITY_CHECK_SENTENCE,
+        });
+
+        if ('url' in qualityCheckResult) {
+          URL.revokeObjectURL(qualityCheckResult.url);
+        }
+
+        if (kokoroProvider.getRuntimeDevice() === 'wasm') {
+          console.warn(WEBGPU_QUALITY_CHECK_WARNING);
+        }
+      }
+
       const runtimeDevice = kokoroProvider.getRuntimeDevice();
       return {
         provider: kokoroProvider,
         providerType: 'kokoro',
         runtime: runtimeDevice,
+        dtype: selectedDtype,
         fallbackToWebSpeech: false,
       };
     } catch (error) {
@@ -180,14 +221,11 @@ export const selectTTSProvider = async (
         fallbackError,
       });
       logFallbackRecordForDev(fallbackError);
-      return {
-        provider: new WebSpeechProvider(),
-        providerType: 'web-speech',
-        runtime: 'system',
+      return createWebSpeechSelection({
         fallbackToWebSpeech: true,
         fallbackReason: fallbackError.message,
         fallbackError,
-      };
+      });
     }
   }
 
@@ -214,12 +252,9 @@ export const selectTTSProvider = async (
   });
   logFallbackRecordForDev(fallbackError);
 
-  return {
-    provider: new WebSpeechProvider(),
-    providerType: 'web-speech',
-    runtime: 'system',
+  return createWebSpeechSelection({
     fallbackToWebSpeech: true,
     fallbackReason: fallbackError.message,
     fallbackError,
-  };
+  });
 };
