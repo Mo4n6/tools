@@ -55,7 +55,9 @@ function buildContinuousPlayback(segments: SpeakableSegment[]): {
 
 const isUrlIngestEnabled = import.meta.env.VITE_ENABLE_URL_INGEST !== 'false';
 const isPagesStyleBase = import.meta.env.BASE_URL !== '/';
-const shouldSkipKokoroInitOnPages = import.meta.env.VITE_SKIP_KOKORO_INIT_ON_PAGES === 'true';
+const SKIP_KOKORO_INIT_ON_PAGES_ENV_FLAG = 'VITE_SKIP_KOKORO_INIT_ON_PAGES';
+const skipKokoroInitOnPagesEnvValue = import.meta.env.VITE_SKIP_KOKORO_INIT_ON_PAGES;
+const shouldSkipKokoroInitOnPages = skipKokoroInitOnPagesEnvValue === 'true';
 type SourceType = 'text' | 'file' | 'url';
 const sourceTabs: SourceType[] = isUrlIngestEnabled ? ['text', 'file', 'url'] : ['text', 'file'];
 const TTS_PREFS_STORAGE_KEY = 'reader-tts-preferences';
@@ -74,9 +76,7 @@ const isKnownProviderLabel = (provider: string): provider is KnownProviderLabel 
   KNOWN_PROVIDER_LABELS.includes(provider as KnownProviderLabel)
 );
 const isLikelyWebSpeechVoiceId = (voice: string): boolean => WEB_SPEECH_VOICE_PATTERN.test(voice);
-const isKokoroActivePath = !(
-  isPagesStyleBase && shouldSkipKokoroInitOnPages
-);
+const isKokoroActivePath = !(isPagesStyleBase && shouldSkipKokoroInitOnPages);
 const getNormalizedStoredProvider = (provider: string): KnownProviderLabel => (
   isKnownProviderLabel(provider)
     ? provider
@@ -811,6 +811,7 @@ function App() {
   }, [providerRuntimeMetadata.providerType, providerRuntimeMetadata.runtime]);
 
   const shouldShowAdvancedDetails = !isProduction || showDetails;
+  const isKokoroInitIntentionallySkippedForPages = isPagesStyleBase && shouldSkipKokoroInitOnPages;
 
   return (
     <main className="w-full p-2 font-mono text-emerald-100 md:p-4">
@@ -850,14 +851,23 @@ function App() {
         ) : null}
         {shouldShowAdvancedDetails ? (
           <p className="mt-2 text-xs text-emerald-300/70">
-            tts init: providerSelected={ttsInitStatusLine?.providerSelected ?? 'pending'} · runtime={ttsInitStatusLine?.runtime ?? 'pending'} · dtype={ttsInitStatusLine?.dtype ?? 'pending'} · skipKokoroInit={String(ttsInitStatusLine?.skipKokoroInit ?? false)} · kokoroImportable={ttsInitStatusLine ? String(ttsInitStatusLine.kokoroImportable) : 'pending'} · fallbackCode={ttsInitStatusLine?.fallbackCode ?? 'pending'}
+            tts init: providerSelected={ttsInitStatusLine?.providerSelected ?? 'pending'} · runtime={ttsInitStatusLine?.runtime ?? 'pending'} · dtype={ttsInitStatusLine?.dtype ?? 'pending'} · skipKokoroInit={String(ttsInitStatusLine?.skipKokoroInit ?? false)} · {SKIP_KOKORO_INIT_ON_PAGES_ENV_FLAG}={skipKokoroInitOnPagesEnvValue ?? 'undefined'} · kokoroImportable={ttsInitStatusLine ? String(ttsInitStatusLine.kokoroImportable) : 'pending'} · fallbackCode={ttsInitStatusLine?.fallbackCode ?? 'pending'}
           </p>
         ) : null}
       </header>
 
+      {isKokoroInitIntentionallySkippedForPages ? (
+        <div className="mb-4 rounded-md border border-emerald-500/45 bg-[#07110a] px-3 py-2 text-sm text-emerald-100">
+          Kokoro init is intentionally skipped for Pages mode. {SKIP_KOKORO_INIT_ON_PAGES_ENV_FLAG}={skipKokoroInitOnPagesEnvValue ?? 'undefined'}.
+          <p className="mt-1 text-xs text-emerald-300/80">
+            This is an intentional configuration choice, not a GPU failure.
+          </p>
+        </div>
+      ) : null}
+
       {showFallbackBanner ? (
         <div className="mb-4 rounded-md border border-amber-700 bg-amber-950/40 px-3 py-2 text-sm text-amber-200">
-          Running in fallback voice mode ({getFallbackBucketLabel(providerFallbackError, false)}).
+          Running in fallback voice mode after Kokoro/WebGPU initialization failed ({getFallbackBucketLabel(providerFallbackError, false)}).
           {providerFallbackError ? (
             <>
               <p className="mt-1 text-xs text-amber-300">
@@ -937,7 +947,7 @@ function App() {
 
       {showInformationalFallbackBanner ? (
         <div className="mb-4 rounded-md border border-emerald-500/45 bg-[#07110a] px-3 py-2 text-sm text-emerald-100">
-          Web Speech mode ({getFallbackBucketLabel(providerFallbackError, true)}): intentionally enabled for GitHub Pages MVP while Kokoro bundling is finalized.
+          Web Speech mode ({getFallbackBucketLabel(providerFallbackError, true)}): intentionally enabled for GitHub Pages MVP while Kokoro bundling is finalized (not a runtime GPU failure).
           {providerFallbackError?.message ? (
             <p className="mt-1 text-xs text-emerald-300/80">{providerFallbackError.message}</p>
           ) : null}

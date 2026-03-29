@@ -46,6 +46,14 @@ For Pages-only deployment, keep URL ingestion disabled (`VITE_ENABLE_URL_INGEST=
 - Default behavior is enabled (`true`) for Pages-style base paths.
 - Set `VITE_SKIP_KOKORO_INIT_ON_PAGES=false` to re-enable Kokoro provider initialization attempts on Pages.
 
+### How to verify GPU is truly enabled
+
+Quick checklist:
+
+- Build/run with `VITE_SKIP_KOKORO_INIT_ON_PAGES=false` so Kokoro init is not intentionally skipped by Pages config.
+- Confirm the browser supports WebGPU (`navigator.gpu` exists).
+- Clear any previously marked unstable profile state, then retry provider init.
+
 ## Repository settings required
 
 In GitHub repository settings:
@@ -56,4 +64,3 @@ In GitHub repository settings:
 ## Additional docs
 
 - [Tools shell routing and UI conventions](docs/tools-shell-routing-and-ui.md)
-
