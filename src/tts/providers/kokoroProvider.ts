@@ -42,6 +42,8 @@ type KokoroEngine = {
 };
 
 const MIN_REASONABLE_AUDIO_BYTES = 64;
+const MIN_REASONABLE_AUDIO_SECONDS = 0.05;
+const MIN_REASONABLE_RMS = 1e-4;
 const KNOWN_PLAYABLE_BLOB_TYPES = new Set(['audio/wav', 'audio/wave', 'audio/x-wav']);
 const NORMALIZED_PLAYABLE_BLOB_TYPE = 'audio/wav';
 
@@ -347,11 +349,37 @@ export class KokoroProvider implements TTSProvider {
     try {
       const context = new AudioContext();
       try {
-        await context.decodeAudioData(bytes.buffer.slice(0));
+        const decoded = await context.decodeAudioData(bytes.buffer.slice(0));
+        if (!Number.isFinite(decoded.duration) || decoded.duration < MIN_REASONABLE_AUDIO_SECONDS) {
+          throw new TTSSynthFailureError('suspicious_duration');
+        }
+
+        let sampleCount = 0;
+        let energy = 0;
+        for (let channelIndex = 0; channelIndex < decoded.numberOfChannels; channelIndex += 1) {
+          const channelData = decoded.getChannelData(channelIndex);
+          sampleCount += channelData.length;
+          for (let sampleIndex = 0; sampleIndex < channelData.length; sampleIndex += 1) {
+            const sample = channelData[sampleIndex] ?? 0;
+            energy += sample * sample;
+          }
+        }
+
+        if (sampleCount === 0) {
+          throw new TTSSynthFailureError('empty_decoded_audio');
+        }
+
+        const rms = Math.sqrt(energy / sampleCount);
+        if (!Number.isFinite(rms) || rms < MIN_REASONABLE_RMS) {
+          throw new TTSSynthFailureError('near_silent_audio');
+        }
       } finally {
         await context.close();
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof TTSSynthFailureError) {
+        throw error;
+      }
       throw new TTSSynthFailureError('decode_error');
     }
   }
