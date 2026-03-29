@@ -197,6 +197,7 @@ const persistVoiceMigrationDone = (): void => {
 type ProviderRuntimeMetadata = {
   providerType: 'kokoro' | 'web-speech';
   runtime: 'webgpu' | 'wasm' | 'system';
+  dtype: 'fp32' | 'fp16' | 'q8' | 'q4' | 'n/a';
   fallbackToWebSpeech: boolean;
   fallbackError?: TTSFallbackError;
 };
@@ -204,6 +205,7 @@ type ProviderRuntimeMetadata = {
 type TtsInitStatusLine = {
   providerSelected: string;
   runtime: ProviderRuntimeMetadata['runtime'];
+  dtype: ProviderRuntimeMetadata['dtype'];
   skipKokoroInit: boolean;
   kokoroImportable: boolean;
   fallbackCode: TTSFallbackError['code'] | 'none';
@@ -214,6 +216,7 @@ type DevTtsDiagnostics = {
   webgpuSupported: boolean;
   deviceMemoryGb?: number;
   selectedProvider: string;
+  selectedDtype: ProviderRuntimeMetadata['dtype'];
   fallbackCode?: TTSFallbackError['code'];
   fallbackReason?: string;
   fallbackHint?: string;
@@ -314,6 +317,7 @@ function App() {
   const [providerRuntimeMetadata, setProviderRuntimeMetadata] = useState<ProviderRuntimeMetadata>({
     providerType: 'web-speech',
     runtime: 'system',
+    dtype: 'n/a',
     fallbackToWebSpeech: false,
   });
   const [showFallbackBanner, setShowFallbackBanner] = useState(false);
@@ -409,6 +413,7 @@ function App() {
         setTtsInitStatusLine({
           providerSelected: providerName,
           runtime: selectedProvider.runtime,
+          dtype: selectedProvider.dtype,
           skipKokoroInit,
           kokoroImportable: kokoroPackageLoadable,
           fallbackCode: selectedProvider.fallbackError?.code ?? 'none',
@@ -422,6 +427,7 @@ function App() {
           webgpuSupported: await checkWebGpuSupport(),
           deviceMemoryGb: getDeviceMemoryGb(),
           selectedProvider: providerName,
+          selectedDtype: selectedProvider.dtype,
           fallbackCode: selectedProvider.fallbackError?.code,
           fallbackReason: fallbackSummary.reason,
           fallbackHint: fallbackSummary.hint,
@@ -445,6 +451,7 @@ function App() {
         setProviderRuntimeMetadata({
           providerType: selectedProvider.providerType,
           runtime: selectedProvider.runtime,
+          dtype: selectedProvider.dtype,
           fallbackToWebSpeech: selectedProvider.fallbackToWebSpeech,
           fallbackError: selectedProvider.fallbackError,
         });
@@ -696,12 +703,13 @@ function App() {
           <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${runtimeStatus.colorClassName}`}>
             Runtime: {runtimeStatus.label}
           </span>
+          <span>dtype={providerRuntimeMetadata.dtype}</span>
           <span>fallbackToWebSpeech={String(providerRuntimeMetadata.fallbackToWebSpeech)}</span>
           </p>
         ) : null}
         {shouldShowAdvancedDetails ? (
           <p className="mt-2 text-xs text-slate-400">
-            tts init: providerSelected={ttsInitStatusLine?.providerSelected ?? 'pending'} · runtime={ttsInitStatusLine?.runtime ?? 'pending'} · skipKokoroInit={String(ttsInitStatusLine?.skipKokoroInit ?? false)} · kokoroImportable={ttsInitStatusLine ? String(ttsInitStatusLine.kokoroImportable) : 'pending'} · fallbackCode={ttsInitStatusLine?.fallbackCode ?? 'pending'}
+            tts init: providerSelected={ttsInitStatusLine?.providerSelected ?? 'pending'} · runtime={ttsInitStatusLine?.runtime ?? 'pending'} · dtype={ttsInitStatusLine?.dtype ?? 'pending'} · skipKokoroInit={String(ttsInitStatusLine?.skipKokoroInit ?? false)} · kokoroImportable={ttsInitStatusLine ? String(ttsInitStatusLine.kokoroImportable) : 'pending'} · fallbackCode={ttsInitStatusLine?.fallbackCode ?? 'pending'}
           </p>
         ) : null}
       </header>
@@ -766,6 +774,7 @@ function App() {
             <li>webgpuSupported: {String(devTtsDiagnostics.webgpuSupported)}</li>
             <li>deviceMemoryGb: {devTtsDiagnostics.deviceMemoryGb ?? 'unknown'}</li>
             <li>selectedProvider: {devTtsDiagnostics.selectedProvider}</li>
+            <li>selectedDtype: {devTtsDiagnostics.selectedDtype}</li>
             <li>fallbackCode: {devTtsDiagnostics.fallbackCode ?? 'none'}</li>
             <li>fallbackReason: {devTtsDiagnostics.fallbackReason ?? 'none'}</li>
             <li>fallbackHint: {devTtsDiagnostics.fallbackHint ?? 'none'}</li>

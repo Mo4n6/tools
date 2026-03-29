@@ -53,19 +53,29 @@ describe('selectTTSProvider', () => {
     expect(selection.fallbackToWebSpeech).toBe(false);
     expect(selection.providerType).toBe('kokoro');
     expect(selection.runtime).toBe('wasm');
+    expect(selection.dtype).toBe('q8');
   });
 
   it('uses runtime device reported by Kokoro after warmup downgrade', async () => {
+    const originalGpu = (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } }).gpu;
+    (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } }).gpu = {
+      requestAdapter: vi.fn(async () => ({})),
+    };
     warmupMock.mockResolvedValue(undefined);
     getRuntimeDeviceMock.mockReturnValue('wasm');
     const { selectTTSProvider } = await import('./providerSelector');
+    const { KokoroProvider } = await import('./providers/kokoroProvider');
 
     const selection = await selectTTSProvider({
       preferredDevice: 'webgpu',
     });
 
+    expect(KokoroProvider).toHaveBeenCalledWith(expect.objectContaining({ dtype: 'fp16', device: 'webgpu' }));
     expect(selection.fallbackToWebSpeech).toBe(false);
     expect(selection.providerType).toBe('kokoro');
     expect(selection.runtime).toBe('wasm');
+    expect(selection.dtype).toBe('fp16');
+
+    (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } }).gpu = originalGpu;
   });
 });
