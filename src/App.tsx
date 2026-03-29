@@ -2,7 +2,7 @@ import { ChangeEvent, useEffect, useMemo, useState } from 'react';
 import { ttsManifest } from './licenses/ttsManifest';
 import { ingestInput } from './features/ingest/urlAdapter';
 import { PlayerControls } from './features/player/PlayerControls';
-import type { NormalizedDocument } from './domain/segments';
+import type { NormalizedDocument, PlaybackMode, SpeakableSegment } from './domain/segments';
 import { usePlayerController } from './features/player/playerMachine';
 import { selectTTSProvider } from './tts/providerSelector';
 import { perfTelemetry, setupLocalDebugPerfTelemetry } from './tts/perfTelemetry';
@@ -10,6 +10,77 @@ import type { TTSFallbackError } from './tts/errors';
 import { canImportKokoroModule } from './tts/providers/kokoroProvider';
 import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
 import type { TTSProvider, TTSVoice } from './tts/types';
+
+const CONTINUOUS_CHUNK_TARGET_CHARS = 1400;
+
+type PlaybackAnchor = {
+  segmentId: string;
+  playbackSegmentIndex: number;
+  playbackCharOffset: number;
+};
+
+function shouldDefaultContinuousMode(segments: SpeakableSegment[]): boolean {
+  if (!segments.length) {
+    return false;
+  }
+
+  return segments.every((segment) => segment.kind === 'text' || segment.kind === 'markdown');
+}
+
+function buildContinuousPlayback(segments: SpeakableSegment[]): {
+  playbackSegments: Array<{ id: string; text: string }>;
+  seekAnchors: PlaybackAnchor[];
+} {
+  const playbackSegments: Array<{ id: string; text: string }> = [];
+  const seekAnchors: PlaybackAnchor[] = [];
+
+  let chunkTexts: string[] = [];
+  let chunkCharLength = 0;
+  let chunkStartIndex = 0;
+
+  const flushChunk = (endIndex: number) => {
+    if (!chunkTexts.length) {
+      return;
+    }
+    const playbackSegmentIndex = playbackSegments.length;
+    const text = chunkTexts.join(' ');
+    playbackSegments.push({
+      id: `chunk_${chunkStartIndex}_${endIndex}`,
+      text,
+    });
+
+    let runningOffset = 0;
+    for (let index = chunkStartIndex; index <= endIndex; index += 1) {
+      const sourceSegment = segments[index];
+      if (!sourceSegment) {
+        continue;
+      }
+      seekAnchors.push({
+        segmentId: sourceSegment.id,
+        playbackSegmentIndex,
+        playbackCharOffset: runningOffset,
+      });
+      runningOffset += sourceSegment.text.length + 1;
+    }
+
+    chunkTexts = [];
+    chunkCharLength = 0;
+  };
+
+  segments.forEach((segment, index) => {
+    const addition = segment.text.length + (chunkTexts.length > 0 ? 1 : 0);
+    if (chunkTexts.length > 0 && chunkCharLength + addition > CONTINUOUS_CHUNK_TARGET_CHARS) {
+      flushChunk(index - 1);
+      chunkStartIndex = index;
+    }
+
+    chunkTexts.push(segment.text);
+    chunkCharLength += addition;
+  });
+
+  flushChunk(segments.length - 1);
+  return { playbackSegments, seekAnchors };
+}
 
 const isUrlIngestEnabled = import.meta.env.VITE_ENABLE_URL_INGEST !== 'false';
 const isPagesStyleBase = import.meta.env.BASE_URL !== '/';
@@ -289,6 +360,7 @@ function App() {
   const [voice, setVoice] = useState(storedPreferences?.voice ?? '');
   const [availableVoices, setAvailableVoices] = useState<TTSVoice[]>([]);
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
+  const [playbackModeOverride, setPlaybackModeOverride] = useState<PlaybackMode | null>(null);
   const [showModelLicenseInfo, setShowModelLicenseInfo] = useState(true);
   const [hasCompletedVoiceMigration, setHasCompletedVoiceMigration] = useState(loadVoiceMigrationDone);
   const [hasPendingVoiceMigrationNormalization, setHasPendingVoiceMigrationNormalization] = useState(
@@ -299,14 +371,30 @@ function App() {
     hasPendingVoiceMigrationNormalization && !hasCompletedVoiceMigration
   );
 
-  const playbackSegments = useMemo(
-    () => ingested.document.segments.map((segment) => ({ id: segment.id, text: segment.text })),
-    [ingested.document.segments],
-  );
+  const defaultPlaybackMode = useMemo<PlaybackMode>(() => (
+    shouldDefaultContinuousMode(ingested.document.segments) ? 'continuous' : 'segmented'
+  ), [ingested.document.segments]);
+  const playbackMode = playbackModeOverride ?? defaultPlaybackMode;
+
+  const playbackData = useMemo(() => {
+    if (playbackMode === 'continuous') {
+      return buildContinuousPlayback(ingested.document.segments);
+    }
+
+    return {
+      playbackSegments: ingested.document.segments.map((segment) => ({ id: segment.id, text: segment.text })),
+      seekAnchors: ingested.document.segments.map((segment, index) => ({
+        segmentId: segment.id,
+        playbackSegmentIndex: index,
+        playbackCharOffset: 0,
+      })),
+    };
+  }, [ingested.document.segments, playbackMode]);
 
   const player = usePlayerController({
     provider,
-    segments: playbackSegments,
+    segments: playbackData.playbackSegments,
+    seekAnchors: playbackData.seekAnchors,
     synthesisOptions: { voice, rate },
   });
 
@@ -856,6 +944,7 @@ function App() {
               queueStatus={player.state}
               currentSegmentIndex={player.currentSegmentIndex}
               segmentCount={ingested.document.segments.length}
+              playbackMode={playbackMode}
               machineError={player.error}
               voice={voice}
               voices={availableVoices.map(({ id, name }) => ({ id, name }))}
@@ -890,6 +979,7 @@ function App() {
               }}
               onVoiceChange={setVoice}
               onRateChange={setRate}
+              onPlaybackModeChange={setPlaybackModeOverride}
             />
             <button
               aria-label="Reset playback queue"
