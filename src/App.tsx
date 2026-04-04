@@ -1384,12 +1384,7 @@ function App() {
                       type="button"
                       className="rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
                       onClick={() => {
-                        const audioUrl = fullAudioBuild.audioUrl ?? undefined;
-                        if (!audioUrl) {
-                          return;
-                        }
-
-                        const exportedAudio = new Audio(audioUrl);
+                        const exportedAudio = new Audio(fullAudioBuild.audioUrl);
                         void exportedAudio.play().catch((error) => {
                           const message = error instanceof Error ? error.message : String(error);
                           setFullAudioBuild((current) => ({
