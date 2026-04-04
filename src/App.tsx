@@ -1,4 +1,4 @@
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { ttsManifest } from './licenses/ttsManifest';
 import { ingestInput } from './features/ingest/urlAdapter';
 import { PlayerControls } from './features/player/PlayerControls';
@@ -446,7 +446,6 @@ function App() {
     audioUrl: null,
     fileName: 'playback.wav',
   });
-  const fullAudioElementRef = useRef<HTMLAudioElement | null>(null);
 
   const shouldSuppressNextVoiceMigrationWarning = (
     hasPendingVoiceMigrationNormalization && !hasCompletedVoiceMigration
@@ -1324,32 +1323,9 @@ function App() {
                   return;
                 }
 
-                void (async () => {
-                  const preparedUrl = fullAudioBuild.audioUrl ?? await buildFullAudio();
-                  if (!preparedUrl) {
-                    return;
-                  }
-
-                  if (!fullAudioElementRef.current) {
-                    fullAudioElementRef.current = new Audio(preparedUrl);
-                  } else if (fullAudioElementRef.current.src !== preparedUrl) {
-                    fullAudioElementRef.current.src = preparedUrl;
-                  }
-
-                  try {
-                    await fullAudioElementRef.current.play();
-                  } catch (error) {
-                    const message = error instanceof Error ? error.message : String(error);
-                    setFullAudioBuild((current) => ({
-                      ...current,
-                      status: 'error',
-                      error: `Full audio playback failed: ${message}`,
-                    }));
-                  }
-                })();
+                void player.play();
               }}
               onPause={() => {
-                fullAudioElementRef.current?.pause();
                 player.pause();
               }}
               onPrevSegment={() => {
@@ -1396,13 +1372,32 @@ function App() {
                   {fullAudioBuild.status === 'building' ? 'Building…' : 'Build Full Audio'}
                 </button>
                 {fullAudioBuild.audioUrl ? (
-                  <a
-                    className="rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-emerald-100 hover:border-emerald-300/70"
-                    download={fullAudioBuild.fileName}
-                    href={fullAudioBuild.audioUrl}
-                  >
-                    Download
-                  </a>
+                  <>
+                    <a
+                      className="rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-emerald-100 hover:border-emerald-300/70"
+                      download={fullAudioBuild.fileName}
+                      href={fullAudioBuild.audioUrl}
+                    >
+                      Download
+                    </a>
+                    <button
+                      type="button"
+                      className="rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+                      onClick={() => {
+                        const exportedAudio = new Audio(fullAudioBuild.audioUrl);
+                        void exportedAudio.play().catch((error) => {
+                          const message = error instanceof Error ? error.message : String(error);
+                          setFullAudioBuild((current) => ({
+                            ...current,
+                            status: 'error',
+                            error: `Exported audio playback failed: ${message}`,
+                          }));
+                        });
+                      }}
+                    >
+                      Play exported audio
+                    </button>
+                  </>
                 ) : null}
               </div>
               <progress
