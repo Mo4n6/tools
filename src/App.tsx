@@ -1,4 +1,4 @@
-import { ChangeEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ttsManifest } from './licenses/ttsManifest';
 import { ingestInput } from './features/ingest/urlAdapter';
 import { PlayerControls } from './features/player/PlayerControls';
@@ -122,6 +122,7 @@ type FullAudioBuildState = {
   audioUrl: string | null;
   fileName: string;
 };
+type PlaybackSource = 'stream' | 'exported';
 
 const migrateStoredVoice = (voice: string): string => normalizeKokoroVoiceId(voice);
 
@@ -446,6 +447,11 @@ function App() {
     audioUrl: null,
     fileName: 'playback.wav',
   });
+  const [playbackSource, setPlaybackSource] = useState<PlaybackSource>('stream');
+  const fullAudioElementRef = useRef<HTMLAudioElement | null>(null);
+  const [exportPreviewCurrentTime, setExportPreviewCurrentTime] = useState(0);
+  const [exportPreviewDuration, setExportPreviewDuration] = useState(0);
+  const [isExportPreviewPlaying, setIsExportPreviewPlaying] = useState(false);
 
   const shouldSuppressNextVoiceMigrationWarning = (
     hasPendingVoiceMigrationNormalization && !hasCompletedVoiceMigration
@@ -526,6 +532,33 @@ function App() {
         fileName: 'playback.wav',
       };
     });
+    setPlaybackSource('stream');
+    setExportPreviewCurrentTime(0);
+    setExportPreviewDuration(0);
+    setIsExportPreviewPlaying(false);
+  }, []);
+
+  const formatTime = useCallback((seconds: number): string => {
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+      return '0:00';
+    }
+    const clampedSeconds = Math.floor(seconds);
+    const mins = Math.floor(clampedSeconds / 60);
+    const secs = clampedSeconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }, []);
+
+  const seekExportPreviewBy = useCallback((deltaSeconds: number) => {
+    const audioElement = fullAudioElementRef.current;
+    if (!audioElement) {
+      return;
+    }
+
+    const targetTime = Math.min(
+      Number.isFinite(audioElement.duration) ? audioElement.duration : Number.POSITIVE_INFINITY,
+      Math.max(0, audioElement.currentTime + deltaSeconds),
+    );
+    audioElement.currentTime = targetTime;
   }, []);
 
   const buildFullAudio = useCallback(async () => {
@@ -598,6 +631,34 @@ function App() {
   useEffect(() => {
     clearFullAudioBuild();
   }, [clearFullAudioBuild, provider, playbackData.playbackSegments, rate, voice]);
+
+  useEffect(() => {
+    const audioElement = fullAudioElementRef.current;
+    if (!audioElement) {
+      return undefined;
+    }
+
+    const syncPreviewState = () => {
+      setExportPreviewCurrentTime(audioElement.currentTime || 0);
+      setExportPreviewDuration(Number.isFinite(audioElement.duration) ? audioElement.duration : 0);
+      setIsExportPreviewPlaying(!audioElement.paused);
+    };
+
+    syncPreviewState();
+    audioElement.addEventListener('timeupdate', syncPreviewState);
+    audioElement.addEventListener('loadedmetadata', syncPreviewState);
+    audioElement.addEventListener('play', syncPreviewState);
+    audioElement.addEventListener('pause', syncPreviewState);
+    audioElement.addEventListener('ended', syncPreviewState);
+
+    return () => {
+      audioElement.removeEventListener('timeupdate', syncPreviewState);
+      audioElement.removeEventListener('loadedmetadata', syncPreviewState);
+      audioElement.removeEventListener('play', syncPreviewState);
+      audioElement.removeEventListener('pause', syncPreviewState);
+      audioElement.removeEventListener('ended', syncPreviewState);
+    };
+  }, [fullAudioBuild.audioUrl]);
 
   useEffect(() => {
     return () => {
@@ -1301,12 +1362,14 @@ function App() {
               </select>
             </label>
             <PlayerControls
-              queueStatus={player.state}
-              currentSegmentIndex={player.currentSegmentIndex}
-              segmentCount={ingested.document.segments.length}
+              queueStatus={playbackSource === 'exported'
+                ? (isExportPreviewPlaying ? 'playing' : 'idle')
+                : player.state}
+              currentSegmentIndex={playbackSource === 'exported' ? 0 : player.currentSegmentIndex}
+              segmentCount={playbackSource === 'exported' ? 1 : ingested.document.segments.length}
               playbackMode={playbackMode}
-              machineError={player.error}
-              machineHint={player.hint}
+              machineError={playbackSource === 'exported' ? null : player.error}
+              machineHint={playbackSource === 'exported' ? null : player.hint}
               voice={voice}
               voices={filteredVoices}
               selectedLanguage={selectedVoiceLanguage}
@@ -1315,6 +1378,13 @@ function App() {
               isVoiceReadyForPlayback={isVoiceReadyForPlayback}
               voiceReadinessHelperText={voiceReadinessHelperText}
               playDisabled={!isVoiceReadyForPlayback}
+              progressLabel={playbackSource === 'exported' ? 'Export preview' : 'Segment progress'}
+              progressTextOverride={playbackSource === 'exported'
+                ? `${formatTime(exportPreviewCurrentTime)} / ${formatTime(exportPreviewDuration)}`
+                : undefined}
+              controlsHelperText={playbackSource === 'exported'
+                ? 'Export preview mode is active. Controls now target the merged audio file.'
+                : null}
               onPlay={() => {
                 if (!isVoiceReadyForPlayback) {
                   setVoiceFallbackWarning(
@@ -1322,19 +1392,52 @@ function App() {
                   );
                   return;
                 }
+                if (playbackSource === 'exported') {
+                  const audioElement = fullAudioElementRef.current;
+                  if (!audioElement) {
+                    return;
+                  }
+                  void audioElement.play().catch((error) => {
+                    const message = error instanceof Error ? error.message : String(error);
+                    setFullAudioBuild((current) => ({
+                      ...current,
+                      status: 'error',
+                      error: `Exported audio playback failed: ${message}`,
+                    }));
+                  });
+                  return;
+                }
 
                 void player.play();
               }}
               onPause={() => {
+                if (playbackSource === 'exported') {
+                  fullAudioElementRef.current?.pause();
+                  return;
+                }
                 player.pause();
               }}
               onPrevSegment={() => {
+                if (playbackSource === 'exported') {
+                  seekExportPreviewBy(-10);
+                  return;
+                }
                 void player.skipPrevious();
               }}
               onNextSegment={() => {
+                if (playbackSource === 'exported') {
+                  seekExportPreviewBy(10);
+                  return;
+                }
                 void player.skipNext();
               }}
               onSeekSegmentStart={() => {
+                if (playbackSource === 'exported') {
+                  if (fullAudioElementRef.current) {
+                    fullAudioElementRef.current.currentTime = 0;
+                  }
+                  return;
+                }
                 void player.seekSegment(player.currentSegmentIndex, 0);
               }}
               onVoiceChange={setVoice}
@@ -1349,6 +1452,11 @@ function App() {
               aria-label="Reset playback queue"
               className="w-full rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
               onClick={() => {
+                if (playbackSource === 'exported' && fullAudioElementRef.current) {
+                  fullAudioElementRef.current.currentTime = 0;
+                  fullAudioElementRef.current.pause();
+                  return;
+                }
                 void player.seekSegment(0, 0);
               }}
               type="button"
@@ -1373,6 +1481,33 @@ function App() {
                 </button>
                 {fullAudioBuild.audioUrl ? (
                   <>
+                    <button
+                      type="button"
+                      className={`rounded-md border px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${
+                        playbackSource === 'exported'
+                          ? 'border-emerald-300 bg-emerald-500/20 text-emerald-100'
+                          : 'border-emerald-500/40 bg-[#07110a] text-emerald-100'
+                      }`}
+                      onClick={() => {
+                        setPlaybackSource('exported');
+                      }}
+                    >
+                      Use export preview controls
+                    </button>
+                    <button
+                      type="button"
+                      className={`rounded-md border px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${
+                        playbackSource === 'stream'
+                          ? 'border-emerald-300 bg-emerald-500/20 text-emerald-100'
+                          : 'border-emerald-500/40 bg-[#07110a] text-emerald-100'
+                      }`}
+                      onClick={() => {
+                        fullAudioElementRef.current?.pause();
+                        setPlaybackSource('stream');
+                      }}
+                    >
+                      Use stream controls
+                    </button>
                     <a
                       className="rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-emerald-100 hover:border-emerald-300/70"
                       download={fullAudioBuild.fileName}
@@ -1384,13 +1519,12 @@ function App() {
                       type="button"
                       className="rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
                       onClick={() => {
-                        const exportedAudioUrl = fullAudioBuild.audioUrl;
-                        if (!exportedAudioUrl) {
+                        const audioElement = fullAudioElementRef.current;
+                        if (!audioElement) {
                           return;
                         }
-
-                        const exportedAudio = new Audio(exportedAudioUrl);
-                        void exportedAudio.play().catch((error) => {
+                        setPlaybackSource('exported');
+                        void audioElement.play().catch((error) => {
                           const message = error instanceof Error ? error.message : String(error);
                           setFullAudioBuild((current) => ({
                             ...current,
@@ -1402,6 +1536,12 @@ function App() {
                     >
                       Play exported audio
                     </button>
+                    <audio
+                      ref={fullAudioElementRef}
+                      className="sr-only"
+                      preload="metadata"
+                      src={fullAudioBuild.audioUrl}
+                    />
                   </>
                 ) : null}
               </div>

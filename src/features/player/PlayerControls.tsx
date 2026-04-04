@@ -17,6 +17,9 @@ type PlayerControlsProps = {
   isVoiceReadyForPlayback?: boolean;
   voiceReadinessHelperText?: string | null;
   playDisabled?: boolean;
+  progressLabel?: string;
+  progressTextOverride?: string;
+  controlsHelperText?: string | null;
   onPlay: () => void;
   onPause: () => void;
   onPrevSegment: () => void;
@@ -57,6 +60,9 @@ export function PlayerControls({
   isVoiceReadyForPlayback = true,
   voiceReadinessHelperText = null,
   playDisabled = false,
+  progressLabel = 'Progress',
+  progressTextOverride,
+  controlsHelperText = null,
   onPlay,
   onPause,
   onPrevSegment,
@@ -72,12 +78,16 @@ export function PlayerControls({
   const isPlaying = queueStatus === 'playing' || queueStatus === 'loading';
   const canPlay = !playDisabled;
   const progressText = useMemo(() => {
+    if (progressTextOverride) {
+      return progressTextOverride;
+    }
+
     if (segmentCount === 0) {
       return '0 / 0';
     }
 
     return `${currentSegmentIndex + 1} / ${segmentCount}`;
-  }, [currentSegmentIndex, segmentCount]);
+  }, [currentSegmentIndex, progressTextOverride, segmentCount]);
 
   useEffect(() => {
     const statusLabel = queueStatus === 'playing' ? 'Playback started.' : `Playback ${queueStatus}.`;
@@ -225,7 +235,7 @@ export function PlayerControls({
         <p>
           Status: <span className="font-semibold capitalize">{queueStatus}</span>
         </p>
-        <p>Progress: {progressText}</p>
+        <p>{progressLabel}: {progressText}</p>
       </div>
 
       <div className="grid grid-cols-3 gap-2">
@@ -277,6 +287,11 @@ export function PlayerControls({
       {machineHint ? (
         <p className="rounded border border-amber-700 bg-amber-950/40 p-2 text-xs text-amber-200" role="status">
           {machineHint}
+        </p>
+      ) : null}
+      {controlsHelperText ? (
+        <p className="rounded border border-emerald-600/50 bg-emerald-950/30 p-2 text-xs text-emerald-200" role="status">
+          {controlsHelperText}
         </p>
       ) : null}
       {machineError ? (
