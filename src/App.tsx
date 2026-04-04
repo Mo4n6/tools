@@ -1,4 +1,4 @@
-import { ChangeEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ttsManifest } from './licenses/ttsManifest';
 import { ingestInput } from './features/ingest/urlAdapter';
 import { PlayerControls } from './features/player/PlayerControls';
@@ -111,6 +111,15 @@ type IngestedState = {
   source: DocumentSource;
   document: NormalizedDocument;
   warnings: DocumentWarning[];
+};
+
+type FullAudioBuildState = {
+  status: 'idle' | 'building' | 'ready' | 'error';
+  builtSegments: number;
+  totalSegments: number;
+  error: string | null;
+  audioUrl: string | null;
+  fileName: string;
 };
 
 const migrateStoredVoice = (voice: string): string => normalizeKokoroVoiceId(voice);
@@ -428,6 +437,15 @@ function App() {
   );
   const [providerInitNonce, setProviderInitNonce] = useState(0);
   const [forceWebGpuRetry, setForceWebGpuRetry] = useState(false);
+  const [fullAudioBuild, setFullAudioBuild] = useState<FullAudioBuildState>({
+    status: 'idle',
+    builtSegments: 0,
+    totalSegments: 0,
+    error: null,
+    audioUrl: null,
+    fileName: 'playback.wav',
+  });
+  const fullAudioElementRef = useRef<HTMLAudioElement | null>(null);
 
   const shouldSuppressNextVoiceMigrationWarning = (
     hasPendingVoiceMigrationNormalization && !hasCompletedVoiceMigration
@@ -494,8 +512,102 @@ function App() {
     synthesisOptions: { voice, rate },
   });
 
+  const clearFullAudioBuild = useCallback(() => {
+    setFullAudioBuild((current) => {
+      if (current.audioUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(current.audioUrl);
+      }
+      return {
+        status: 'idle',
+        builtSegments: 0,
+        totalSegments: 0,
+        error: null,
+        audioUrl: null,
+        fileName: 'playback.wav',
+      };
+    });
+  }, []);
+
+  const buildFullAudio = useCallback(async () => {
+    if (!playbackData.playbackSegments.length) {
+      setFullAudioBuild({
+        status: 'error',
+        builtSegments: 0,
+        totalSegments: 0,
+        error: 'No segments available to synthesize.',
+        audioUrl: null,
+        fileName: 'playback.wav',
+      });
+      return null;
+    }
+
+    clearFullAudioBuild();
+    const totalSegments = playbackData.playbackSegments.length;
+    setFullAudioBuild({
+      status: 'building',
+      builtSegments: 0,
+      totalSegments,
+      error: null,
+      audioUrl: null,
+      fileName: `${(ingested.title || 'playback').replace(/\s+/g, '-').toLowerCase()}.wav`,
+    });
+
+    const blobs: Blob[] = [];
+    for (let index = 0; index < totalSegments; index += 1) {
+      const segment = playbackData.playbackSegments[index];
+      const result = await provider.synthesize(segment, { voice, rate });
+      if (!('blob' in result)) {
+        setFullAudioBuild((current) => ({
+          ...current,
+          status: 'error',
+          error: 'Current voice/runtime only supports live native speech playback. Try a Kokoro voice for downloadable audio.',
+        }));
+        return null;
+      }
+      blobs.push(result.blob);
+      setFullAudioBuild((current) => ({
+        ...current,
+        builtSegments: index + 1,
+      }));
+    }
+
+    if (!blobs.length) {
+      setFullAudioBuild((current) => ({
+        ...current,
+        status: 'error',
+        error: 'Synthesis returned empty audio content.',
+      }));
+      return null;
+    }
+
+    const joinedBlob = new Blob(blobs, { type: blobs[0]?.type || 'audio/wav' });
+    const audioUrl = URL.createObjectURL(joinedBlob);
+    setFullAudioBuild((current) => ({
+      ...current,
+      status: 'ready',
+      audioUrl,
+      builtSegments: totalSegments,
+    }));
+    return audioUrl;
+  }, [clearFullAudioBuild, ingested.title, playbackData.playbackSegments, provider, rate, voice]);
+
   useEffect(() => {
     setupLocalDebugPerfTelemetry();
+  }, []);
+
+  useEffect(() => {
+    clearFullAudioBuild();
+  }, [clearFullAudioBuild, provider, playbackData.playbackSegments, rate, voice]);
+
+  useEffect(() => {
+    return () => {
+      setFullAudioBuild((current) => {
+        if (current.audioUrl?.startsWith('blob:')) {
+          URL.revokeObjectURL(current.audioUrl);
+        }
+        return current;
+      });
+    };
   }, []);
 
   useEffect(() => {
@@ -1211,14 +1323,34 @@ function App() {
                   return;
                 }
 
-                if (player.state === 'paused') {
-                  void player.resume();
-                  return;
-                }
+                void (async () => {
+                  const preparedUrl = fullAudioBuild.audioUrl ?? await buildFullAudio();
+                  if (!preparedUrl) {
+                    return;
+                  }
 
-                void player.play();
+                  if (!fullAudioElementRef.current) {
+                    fullAudioElementRef.current = new Audio(preparedUrl);
+                  } else if (fullAudioElementRef.current.src !== preparedUrl) {
+                    fullAudioElementRef.current.src = preparedUrl;
+                  }
+
+                  try {
+                    await fullAudioElementRef.current.play();
+                  } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    setFullAudioBuild((current) => ({
+                      ...current,
+                      status: 'error',
+                      error: `Full audio playback failed: ${message}`,
+                    }));
+                  }
+                })();
               }}
-              onPause={player.pause}
+              onPause={() => {
+                fullAudioElementRef.current?.pause();
+                player.pause();
+              }}
               onPrevSegment={() => {
                 void player.skipPrevious();
               }}
@@ -1246,6 +1378,44 @@ function App() {
             >
               Reset Queue
             </button>
+            <div className="rounded-md border border-emerald-500/30 bg-[#0a160f] p-3 text-sm">
+              <p className="font-semibold text-emerald-100">Full audio export</p>
+              <p className="mt-1 text-xs text-emerald-300/80">
+                Convert all normalized segments into one downloadable audio file before playback.
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  className="rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={!isVoiceReadyForPlayback || fullAudioBuild.status === 'building' || playbackData.playbackSegments.length === 0}
+                  onClick={() => {
+                    void buildFullAudio();
+                  }}
+                >
+                  {fullAudioBuild.status === 'building' ? 'Building…' : 'Build Full Audio'}
+                </button>
+                {fullAudioBuild.audioUrl ? (
+                  <a
+                    className="rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-emerald-100 hover:border-emerald-300/70"
+                    download={fullAudioBuild.fileName}
+                    href={fullAudioBuild.audioUrl}
+                  >
+                    Download
+                  </a>
+                ) : null}
+              </div>
+              <progress
+                className="mt-2 h-2 w-full"
+                max={Math.max(fullAudioBuild.totalSegments, 1)}
+                value={fullAudioBuild.builtSegments}
+              />
+              <p className="mt-1 text-xs text-emerald-300/70">
+                {fullAudioBuild.builtSegments} / {fullAudioBuild.totalSegments || playbackData.playbackSegments.length} segments
+              </p>
+              {fullAudioBuild.error ? (
+                <p className="mt-2 rounded border border-rose-700 bg-rose-950/40 p-2 text-xs text-rose-200">{fullAudioBuild.error}</p>
+              ) : null}
+            </div>
           </div>
         </article>
       </section>
