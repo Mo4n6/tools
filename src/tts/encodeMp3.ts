@@ -47,7 +47,7 @@ export async function encodeMp3FromPcm(decodedAudio: DecodedPcmAudio): Promise<B
     : undefined;
 
   const encoder = new lamejs.Mp3Encoder(channelCount, decodedAudio.sampleRate, DEFAULT_BIT_RATE_KBPS);
-  const chunks: Uint8Array[] = [];
+  const chunks: BlobPart[] = [];
 
   for (let offset = 0; offset < leftChannel.length; offset += FRAME_SIZE) {
     const leftChunk = leftChannel.subarray(offset, Math.min(offset + FRAME_SIZE, leftChannel.length));
@@ -57,13 +57,13 @@ export async function encodeMp3FromPcm(decodedAudio: DecodedPcmAudio): Promise<B
       : encoder.encodeBuffer(leftChunk);
 
     if (encodedChunk.length > 0) {
-      chunks.push(new Uint8Array(encodedChunk));
+      chunks.push(Uint8Array.from(encodedChunk));
     }
   }
 
   const flushChunk = encoder.flush();
   if (flushChunk.length > 0) {
-    chunks.push(new Uint8Array(flushChunk));
+    chunks.push(Uint8Array.from(flushChunk));
   }
 
   return new Blob(chunks, { type: MP3_MIME });
