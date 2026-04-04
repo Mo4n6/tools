@@ -83,16 +83,21 @@ export function PlayerControls({
     }
 
     if (segmentCount === 0) {
-      return '0 / 0';
+      return playbackMode === 'continuous' ? '0%' : '0 / 0';
+    }
+
+    if (playbackMode === 'continuous') {
+      const progressRatio = (currentSegmentIndex + 1) / segmentCount;
+      return `${Math.round(Math.min(1, Math.max(0, progressRatio)) * 100)}%`;
     }
 
     return `${currentSegmentIndex + 1} / ${segmentCount}`;
-  }, [currentSegmentIndex, progressTextOverride, segmentCount]);
+  }, [currentSegmentIndex, playbackMode, progressTextOverride, segmentCount]);
 
   useEffect(() => {
     const statusLabel = queueStatus === 'playing' ? 'Playback started.' : `Playback ${queueStatus}.`;
-    setLiveMessage(`${statusLabel} Segment ${progressText}.`);
-  }, [progressText, queueStatus]);
+    setLiveMessage(`${statusLabel} ${progressLabel} ${progressText}.`);
+  }, [progressLabel, progressText, queueStatus]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -223,14 +228,14 @@ export function PlayerControls({
         value={playbackMode}
         onChange={(event) => onPlaybackModeChange(event.target.value as PlaybackMode)}
       >
-        <option value="segmented">Segmented</option>
+        <option value="segmented">Step-by-step</option>
         <option value="continuous">Continuous</option>
       </select>
 
       <div
         className="rounded-md border border-emerald-500/30 bg-[#0a160f] p-3 text-sm"
         aria-live="polite"
-        aria-label={`Progress indicator, segment ${progressText}`}
+        aria-label={`Progress indicator, ${progressText}`}
       >
         <p>
           Status: <span className="font-semibold capitalize">{queueStatus}</span>
@@ -240,7 +245,7 @@ export function PlayerControls({
 
       <div className="grid grid-cols-3 gap-2">
         <button
-          aria-label="Skip to previous segment"
+          aria-label="Skip to previous position"
           className="rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
           onClick={onPrevSegment}
           type="button"
@@ -266,7 +271,7 @@ export function PlayerControls({
           {isPlaying ? 'Pause' : 'Play'}
         </button>
         <button
-          aria-label="Skip to next segment"
+          aria-label="Skip to next position"
           className="rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
           onClick={onNextSegment}
           type="button"
@@ -276,12 +281,12 @@ export function PlayerControls({
       </div>
 
       <button
-        aria-label="Seek to current segment start"
+        aria-label="Seek to current position start"
         className="w-full rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
         onClick={onSeekSegmentStart}
         type="button"
       >
-        Restart Current Segment
+        Restart Current Position
       </button>
 
       {machineHint ? (
@@ -299,12 +304,12 @@ export function PlayerControls({
           <p>Playback error: {machineError}</p>
           {onManualRetry ? (
             <button
-              aria-label="Retry playback with current segment"
+              aria-label="Retry playback with current position"
               className="rounded border border-rose-300/60 bg-rose-900/40 px-2 py-1 text-rose-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300"
               onClick={onManualRetry}
               type="button"
             >
-              Retry Current Segment
+              Retry Current Position
             </button>
           ) : null}
         </div>

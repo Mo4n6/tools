@@ -1366,7 +1366,7 @@ function App() {
                 ? (isExportPreviewPlaying ? 'playing' : 'idle')
                 : player.state}
               currentSegmentIndex={playbackSource === 'exported' ? 0 : player.currentSegmentIndex}
-              segmentCount={playbackSource === 'exported' ? 1 : ingested.document.segments.length}
+              segmentCount={playbackData.playbackSegments.length}
               playbackMode={playbackMode}
               machineError={playbackSource === 'exported' ? null : player.error}
               machineHint={playbackSource === 'exported' ? null : player.hint}
@@ -1378,7 +1378,7 @@ function App() {
               isVoiceReadyForPlayback={isVoiceReadyForPlayback}
               voiceReadinessHelperText={voiceReadinessHelperText}
               playDisabled={!isVoiceReadyForPlayback}
-              progressLabel={playbackSource === 'exported' ? 'Export preview' : 'Segment progress'}
+              progressLabel={playbackSource === 'exported' ? 'Export preview' : 'Progress'}
               progressTextOverride={playbackSource === 'exported'
                 ? `${formatTime(exportPreviewCurrentTime)} / ${formatTime(exportPreviewDuration)}`
                 : undefined}
