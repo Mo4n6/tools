@@ -12,7 +12,8 @@ import { canImportKokoroModule } from './tts/providers/kokoroProvider';
 import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
 import type { KokoroDType, RuntimeDType, TTSProvider, TTSVoice } from './tts/types';
 import { chunkSegmentsByPolicy, defaultChunkingPolicy } from './domain/chunking/policy';
-import { concatAudioBlobs } from './tts/concatAudioBlobs';
+import { concatAudioBlobs, concatAudioBlobsToPcm } from './tts/concatAudioBlobs';
+import { encodeMp3FromPcm } from './tts/encodeMp3';
 
 type PlaybackAnchor = {
   segmentId: string;
@@ -84,6 +85,9 @@ const getNormalizedStoredProvider = (provider: string): KnownProviderLabel => (
     ? provider
     : (isKokoroActivePath ? 'kokoro' : 'web-speech')
 );
+const toFileNameStem = (title: string | undefined): string => (
+  (title || 'playback').replace(/\s+/g, '-').toLowerCase()
+);
 
 type StoredTtsPreferences = {
   voice: string;
@@ -123,6 +127,7 @@ type FullAudioBuildState = {
   fileName: string;
 };
 type PlaybackSource = 'stream' | 'exported';
+type ExportFormat = 'wav' | 'mp3';
 
 const migrateStoredVoice = (voice: string): string => normalizeKokoroVoiceId(voice);
 
@@ -448,6 +453,7 @@ function App() {
     fileName: 'playback.wav',
   });
   const [playbackSource, setPlaybackSource] = useState<PlaybackSource>('stream');
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('wav');
   const fullAudioElementRef = useRef<HTMLAudioElement | null>(null);
   const [exportPreviewCurrentTime, setExportPreviewCurrentTime] = useState(0);
   const [exportPreviewDuration, setExportPreviewDuration] = useState(0);
@@ -529,14 +535,14 @@ function App() {
         totalSegments: 0,
         error: null,
         audioUrl: null,
-        fileName: 'playback.wav',
+        fileName: `playback.${exportFormat}`,
       };
     });
     setPlaybackSource('stream');
     setExportPreviewCurrentTime(0);
     setExportPreviewDuration(0);
     setIsExportPreviewPlaying(false);
-  }, []);
+  }, [exportFormat]);
 
   const formatTime = useCallback((seconds: number): string => {
     if (!Number.isFinite(seconds) || seconds <= 0) {
@@ -569,7 +575,7 @@ function App() {
         totalSegments: 0,
         error: 'No segments available to synthesize.',
         audioUrl: null,
-        fileName: 'playback.wav',
+        fileName: `playback.${exportFormat}`,
       });
       return null;
     }
@@ -582,7 +588,7 @@ function App() {
       totalSegments,
       error: null,
       audioUrl: null,
-      fileName: `${(ingested.title || 'playback').replace(/\s+/g, '-').toLowerCase()}.wav`,
+      fileName: `${toFileNameStem(ingested.title)}.${exportFormat}`,
     });
 
     const blobs: Blob[] = [];
@@ -613,16 +619,31 @@ function App() {
       return null;
     }
 
-    const joinedBlob = await concatAudioBlobs(blobs);
-    const audioUrl = URL.createObjectURL(joinedBlob);
+    const wavBlob = await concatAudioBlobs(blobs);
+    let exportedBlob = wavBlob;
+    let exportError: string | null = null;
+
+    if (exportFormat === 'mp3') {
+      const decodedPcm = await concatAudioBlobsToPcm(blobs);
+      const mp3Blob = await encodeMp3FromPcm(decodedPcm);
+      if (!mp3Blob) {
+        exportError = 'MP3 export is unavailable in this runtime. Downloading WAV instead.';
+      } else {
+        exportedBlob = mp3Blob;
+      }
+    }
+
+    const audioUrl = URL.createObjectURL(exportedBlob);
     setFullAudioBuild((current) => ({
       ...current,
       status: 'ready',
       audioUrl,
       builtSegments: totalSegments,
+      fileName: `${toFileNameStem(ingested.title)}.${exportedBlob.type === 'audio/mpeg' ? 'mp3' : 'wav'}`,
+      error: exportError,
     }));
     return audioUrl;
-  }, [clearFullAudioBuild, ingested.title, playbackData.playbackSegments, provider, rate, voice]);
+  }, [clearFullAudioBuild, exportFormat, ingested.title, playbackData.playbackSegments, provider, rate, voice]);
 
   useEffect(() => {
     setupLocalDebugPerfTelemetry();
@@ -1468,6 +1489,19 @@ function App() {
               <p className="mt-1 text-xs text-emerald-300/80">
                 Convert all normalized segments into one downloadable audio file before playback.
               </p>
+              <label className="mt-2 flex items-center gap-2 text-xs text-emerald-200">
+                <span className="font-medium text-emerald-100">Format</span>
+                <select
+                  className="rounded border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+                  onChange={(event) => {
+                    setExportFormat(event.target.value as ExportFormat);
+                  }}
+                  value={exportFormat}
+                >
+                  <option value="wav">WAV (default)</option>
+                  <option value="mp3">MP3</option>
+                </select>
+              </label>
               <div className="mt-2 flex gap-2">
                 <button
                   type="button"

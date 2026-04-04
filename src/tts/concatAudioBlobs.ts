@@ -1,5 +1,10 @@
 const FALLBACK_AUDIO_MIME = 'audio/wav';
 
+export type DecodedPcmAudio = {
+  channels: Float32Array[];
+  sampleRate: number;
+};
+
 function encodeWavFromFloat32(
   channels: Float32Array[],
   sampleRate: number,
@@ -56,6 +61,19 @@ export async function concatAudioBlobs(blobs: Blob[]): Promise<Blob> {
     return new Blob(blobs, { type: blobs[0]?.type || FALLBACK_AUDIO_MIME });
   }
 
+  const decodedAudio = await concatAudioBlobsToPcm(blobs);
+  return encodeWavFromFloat32(decodedAudio.channels, decodedAudio.sampleRate);
+}
+
+export async function concatAudioBlobsToPcm(blobs: Blob[]): Promise<DecodedPcmAudio> {
+  if (!blobs.length) {
+    throw new Error('Cannot concatenate an empty list of audio blobs.');
+  }
+
+  if (typeof AudioContext === 'undefined') {
+    throw new Error('Audio decoding is unavailable in this runtime.');
+  }
+
   const context = new AudioContext();
   try {
     const decodedBuffers = await Promise.all(
@@ -91,7 +109,10 @@ export async function concatAudioBlobs(blobs: Blob[]): Promise<Blob> {
       writeHead += sourceLength;
     });
 
-    return encodeWavFromFloat32(mergedChannels, maxSampleRate);
+    return {
+      channels: mergedChannels,
+      sampleRate: maxSampleRate,
+    };
   } finally {
     await context.close();
   }
