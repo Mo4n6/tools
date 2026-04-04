@@ -12,6 +12,7 @@ import { canImportKokoroModule } from './tts/providers/kokoroProvider';
 import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
 import type { KokoroDType, RuntimeDType, TTSProvider, TTSVoice } from './tts/types';
 import { chunkSegmentsByPolicy, defaultChunkingPolicy } from './domain/chunking/policy';
+import { concatAudioBlobs } from './tts/concatAudioBlobs';
 
 type PlaybackAnchor = {
   segmentId: string;
@@ -580,7 +581,7 @@ function App() {
       return null;
     }
 
-    const joinedBlob = new Blob(blobs, { type: blobs[0]?.type || 'audio/wav' });
+    const joinedBlob = await concatAudioBlobs(blobs);
     const audioUrl = URL.createObjectURL(joinedBlob);
     setFullAudioBuild((current) => ({
       ...current,

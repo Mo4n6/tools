@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { perfTelemetry } from '../../tts/perfTelemetry';
 import type { TTSAudioSynthesisResult, TTSSynthesisOptions, TTSSynthesisResult, TTSProvider } from '../../tts/types';
 import { splitTextForSynthesisRetry } from '../../domain/chunking/policy';
+import { concatAudioBlobs } from '../../tts/concatAudioBlobs';
 
 export type PlayerMachineState = 'idle' | 'loading' | 'playing' | 'paused' | 'error' | 'finished';
 export type SegmentSynthesisStatus = 'idle' | 'queued' | 'loading' | 'ready' | 'error';
@@ -368,10 +369,7 @@ export function usePlayerController({
           throw new Error('Synthesis fallback returned non-audio result for at least one subchunk.');
         }
         const audioSubResults = subResults as TTSAudioSynthesisResult[];
-        const stitchedBlob = new Blob(
-          audioSubResults.map((subResult) => subResult.blob),
-          { type: audioSubResults[0]?.blob.type || 'audio/mpeg' },
-        );
+        const stitchedBlob = await concatAudioBlobs(audioSubResults.map((subResult) => subResult.blob));
         const stitchedUrl = URL.createObjectURL(stitchedBlob);
         audioSubResults.forEach((subResult) => {
           if (subResult.url.startsWith('blob:')) {
