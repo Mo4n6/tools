@@ -1,4 +1,4 @@
-import { splitTextForSynthesisRetry } from '../domain/chunking/policy';
+import { defaultChunkingPolicy, splitTextForSynthesisRetry } from '../domain/chunking/policy';
 import { concatAudioBlobs } from './concatAudioBlobs';
 import type { TTSAudioSynthesisResult, TTSSegment, TTSSynthesisOptions, TTSSynthesisResult, TTSProvider } from './types';
 
@@ -10,6 +10,8 @@ const DEFAULT_TOKENS_PER_SECOND = 2.6;
 const MIN_SPEECH_RATE = 0.5;
 const MAX_SPEECH_RATE = 2.5;
 const EXPECTED_DURATION_SAFETY_FACTOR = 0.25;
+const PREEMPTIVE_SPLIT_MAX_CHARS = 420;
+const PREEMPTIVE_SPLIT_MAX_TOKENS = 85;
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -167,6 +169,89 @@ export async function synthesizeWithValidation({
     return result;
   };
 
+  const maybePreemptivelySplit = (
+    targetSegment: TTSSegment,
+  ): string[] => {
+    if (splitDepth > 0) {
+      return [];
+    }
+
+    const normalizedText = targetSegment.text.trim();
+    if (!normalizedText) {
+      return [];
+    }
+
+    const estimatedTokens = estimateTokenCount(normalizedText);
+    const exceedsSafeWindow = normalizedText.length > PREEMPTIVE_SPLIT_MAX_CHARS
+      || estimatedTokens > PREEMPTIVE_SPLIT_MAX_TOKENS;
+    if (!exceedsSafeWindow) {
+      return [];
+    }
+
+    const proactivePolicy = {
+      ...defaultChunkingPolicy,
+      maxCharsPerChunk: PREEMPTIVE_SPLIT_MAX_CHARS,
+      maxTokensPerChunk: PREEMPTIVE_SPLIT_MAX_TOKENS,
+    };
+
+    return splitTextForSynthesisRetry(normalizedText, proactivePolicy);
+  };
+
+  const stitchSubchunkResults = async (
+    targetSegment: TTSSegment,
+    subchunks: string[],
+    nextSplitDepth: number,
+  ): Promise<TTSSynthesisResult> => {
+    onSplit?.({ segmentId: targetSegment.id, splitDepth, chunkCount: subchunks.length });
+    const subResults = await Promise.all(
+      subchunks.map((subchunk, index) => (
+        synthesizeWithValidation({
+          provider,
+          segment: { id: `${targetSegment.id}::chunk_${index}`, text: subchunk },
+          synthesisOptions,
+          splitDepth: nextSplitDepth,
+          maxAttempts,
+          maxSplitDepth,
+          backoffBaseMs,
+          minReasonableAudioSeconds,
+          onRetry,
+          onSplit,
+          onRegenerated,
+          onRuntimeDowngrade,
+        })
+      ))
+    );
+
+    if (subResults.some((subResult) => !('blob' in subResult))) {
+      throw new Error('Synthesis fallback returned non-audio result for at least one subchunk.');
+    }
+
+    const audioSubResults = subResults as TTSAudioSynthesisResult[];
+    const stitchedBlob = await concatAudioBlobs(audioSubResults.map((subResult) => subResult.blob));
+    const stitchedUrl = URL.createObjectURL(stitchedBlob);
+    audioSubResults.forEach((subResult) => {
+      if (subResult.url.startsWith('blob:')) {
+        URL.revokeObjectURL(subResult.url);
+      }
+    });
+
+    onRegenerated?.({ segmentId: targetSegment.id, splitDepth, chunkCount: subchunks.length });
+
+    const stitchedResult: TTSAudioSynthesisResult = {
+      segmentId: targetSegment.id,
+      blob: stitchedBlob,
+      url: stitchedUrl,
+      mode: 'audio-url',
+    };
+    await probePlayableAudio(stitchedResult, targetSegment.text, speakingRate, minReasonableAudioSeconds);
+    return stitchedResult;
+  };
+
+  const proactiveSubchunks = maybePreemptivelySplit(segment);
+  if (proactiveSubchunks.length >= 2) {
+    return stitchSubchunkResults(segment, proactiveSubchunks, splitDepth + 1);
+  }
+
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
@@ -196,48 +281,5 @@ export async function synthesizeWithValidation({
   if (subchunks.length < 2) {
     throw buildRegenerationExhaustedError(lastError);
   }
-
-  onSplit?.({ segmentId: segment.id, splitDepth, chunkCount: subchunks.length });
-  const subResults = await Promise.all(
-    subchunks.map((subchunk, index) => (
-      synthesizeWithValidation({
-        provider,
-        segment: { id: `${segment.id}::chunk_${index}`, text: subchunk },
-        synthesisOptions,
-        splitDepth: splitDepth + 1,
-        maxAttempts,
-        maxSplitDepth,
-        backoffBaseMs,
-        minReasonableAudioSeconds,
-        onRetry,
-        onSplit,
-        onRegenerated,
-        onRuntimeDowngrade,
-      })
-    ))
-  );
-
-  if (subResults.some((subResult) => !('blob' in subResult))) {
-    throw new Error('Synthesis fallback returned non-audio result for at least one subchunk.');
-  }
-
-  const audioSubResults = subResults as TTSAudioSynthesisResult[];
-  const stitchedBlob = await concatAudioBlobs(audioSubResults.map((subResult) => subResult.blob));
-  const stitchedUrl = URL.createObjectURL(stitchedBlob);
-  audioSubResults.forEach((subResult) => {
-    if (subResult.url.startsWith('blob:')) {
-      URL.revokeObjectURL(subResult.url);
-    }
-  });
-
-  onRegenerated?.({ segmentId: segment.id, splitDepth, chunkCount: subchunks.length });
-
-  const stitchedResult: TTSAudioSynthesisResult = {
-    segmentId: segment.id,
-    blob: stitchedBlob,
-    url: stitchedUrl,
-    mode: 'audio-url',
-  };
-  await probePlayableAudio(stitchedResult, segment.text, speakingRate, minReasonableAudioSeconds);
-  return stitchedResult;
+  return stitchSubchunkResults(segment, subchunks, splitDepth + 1);
 }
