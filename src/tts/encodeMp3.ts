@@ -1,5 +1,6 @@
 import type { DecodedPcmAudio } from './concatAudioBlobs';
 import { createMp3EncoderAdapter, type Mp3AdapterFailureReason } from './mp3EncoderAdapter';
+import { encodeMp3ViaFfmpegWasm } from './encodeMp3ViaFfmpegWasm';
 
 const MP3_MIME = 'audio/mpeg';
 
@@ -9,6 +10,12 @@ export type Mp3CapabilityProbe = {
   available: boolean;
   code: 'ok' | Mp3AdapterFailureReason;
   reason: string;
+  technicalDetail?: string;
+};
+
+type Mp3FailureDiagnostic = {
+  reason: Mp3AdapterFailureReason;
+  message: string;
   technicalDetail?: string;
 };
 
@@ -22,7 +29,7 @@ let cachedProbe: Mp3CapabilityProbe | null = null;
 let lastMp3Diagnostic: Mp3CapabilityProbe | null = null;
 
 function toCapabilityProbe(
-  result: { ok: true } | { ok: false; diagnostic: { reason: Mp3AdapterFailureReason; message: string; technicalDetail?: string } },
+  result: { ok: true } | { ok: false; diagnostic: Mp3FailureDiagnostic },
 ): Mp3CapabilityProbe {
   if (result.ok) {
     return { available: true, code: 'ok', reason: 'MP3 encoder probe passed.' };
@@ -33,6 +40,15 @@ function toCapabilityProbe(
     code: result.diagnostic.reason,
     reason: result.diagnostic.message,
     technicalDetail: result.diagnostic.technicalDetail,
+  };
+}
+
+function toProbeFromFailure(diagnostic: Mp3FailureDiagnostic): Mp3CapabilityProbe {
+  return {
+    available: false,
+    code: diagnostic.reason,
+    reason: diagnostic.message,
+    technicalDetail: diagnostic.technicalDetail,
   };
 }
 
@@ -51,28 +67,46 @@ export function getLastMp3EncodingDiagnostic(): Mp3CapabilityProbe | null {
 
 export async function encodeMp3FromPcm(decodedAudio: DecodedPcmAudio): Promise<EncodeMp3Result> {
   const capability = probeMp3EncodingCapability();
-  if (!capability.available) {
-    lastMp3Diagnostic = capability;
-    return { blob: null, failureReason: capability.code === 'ok' ? null : capability.code };
-  }
+  let lameFailure: Mp3FailureDiagnostic | null = null;
 
-  const encoded = mp3Adapter.encodeFromPcm(decodedAudio);
-  if (!encoded.ok) {
-    lastMp3Diagnostic = {
-      available: false,
-      code: encoded.diagnostic.reason,
-      reason: encoded.diagnostic.message,
-      technicalDetail: encoded.diagnostic.technicalDetail,
-    };
-
-    if (import.meta.env.DEV) {
-      console.debug('[tts][mp3] MP3 encoder failed; falling back to WAV.', lastMp3Diagnostic);
+  if (capability.available) {
+    const encoded = mp3Adapter.encodeFromPcm(decodedAudio);
+    if (encoded.ok) {
+      lastMp3Diagnostic = null;
+      const blobChunks: BlobPart[] = encoded.chunks.map((chunk) => new Uint8Array(chunk));
+      return { blob: new Blob(blobChunks, { type: MP3_MIME }), failureReason: null };
     }
 
-    return { blob: null, failureReason: encoded.diagnostic.reason };
+    lameFailure = encoded.diagnostic;
+  } else {
+    lameFailure = {
+      reason: capability.code === 'ok' ? 'init_failed' : capability.code,
+      message: capability.reason,
+      technicalDetail: capability.technicalDetail,
+    };
   }
 
-  lastMp3Diagnostic = null;
-  const blobChunks: BlobPart[] = encoded.chunks.map((chunk) => new Uint8Array(chunk));
-  return { blob: new Blob(blobChunks, { type: MP3_MIME }), failureReason: null };
+  const ffmpegResult = await encodeMp3ViaFfmpegWasm(decodedAudio);
+  if (ffmpegResult.blob) {
+    if (import.meta.env.DEV && lameFailure) {
+      console.debug('[tts][mp3] Native MP3 encoder unavailable, ffmpeg.wasm fallback succeeded.', lameFailure);
+    }
+    lastMp3Diagnostic = null;
+    return { blob: ffmpegResult.blob, failureReason: null };
+  }
+
+  const finalFailure = lameFailure
+    ?? ffmpegResult.diagnostic
+    ?? { reason: 'init_failed' as const, message: 'Both native and ffmpeg.wasm MP3 encoders were unavailable.' };
+
+  lastMp3Diagnostic = toProbeFromFailure(finalFailure);
+
+  if (import.meta.env.DEV) {
+    console.debug('[tts][mp3] MP3 encoder failed; falling back to WAV.', {
+      lameDiagnostic: lameFailure,
+      ffmpegDiagnostic: ffmpegResult.diagnostic,
+    });
+  }
+
+  return { blob: null, failureReason: finalFailure.reason };
 }

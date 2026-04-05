@@ -57,10 +57,10 @@ describe('encodeMp3FromPcm', () => {
     const { encodeMp3FromPcm, getLastMp3EncodingDiagnostic } = await import('./encodeMp3');
     await expect(encodeMp3FromPcm(decodedAudio)).resolves.toEqual({
       blob: null,
-      failureReason: 'encode_failed',
+      failureReason: 'init_failed',
     });
     expect(getLastMp3EncodingDiagnostic()).toMatchObject({
-      code: 'encode_failed',
+      code: 'init_failed',
       technicalDetail: 'encode failed',
     });
   });

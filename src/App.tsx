@@ -1364,7 +1364,7 @@ function App() {
           <PreviewPanel
             segments={ingested.document.segments}
             currentSegmentIndex={player.currentSegmentIndex}
-            isContinuousMode={false}
+            isContinuousMode={sourceType === 'text' || ingested.document.segments.some((segment) => segment.kind === 'markdown')}
           />
           <div className="mt-2 space-y-2">
             {ingested.warnings.map((warning) => (
@@ -1459,12 +1459,12 @@ function App() {
                   value={exportFormat}
                 >
                   <option value="wav">WAV</option>
-                  <option value="mp3" disabled={!mp3Capability?.available}>MP3</option>
+                  <option value="mp3">MP3</option>
                 </select>
               </label>
-              {!mp3Capability?.available ? (
+              {mp3Capability && !mp3Capability.available ? (
                 <p className="mt-1 text-xs text-amber-300/90">
-                  MP3 export is unavailable in this browser/runtime. WAV export will still work.
+                  Native MP3 encoder is unavailable in this browser/runtime. We will try ffmpeg.wasm fallback during export; WAV will still work.
                 </p>
               ) : null}
               <div className="mt-2 flex gap-2">
