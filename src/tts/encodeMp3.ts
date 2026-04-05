@@ -53,7 +53,7 @@ export async function encodeMp3FromPcm(decodedAudio: DecodedPcmAudio): Promise<E
   const capability = probeMp3EncodingCapability();
   if (!capability.available) {
     lastMp3Diagnostic = capability;
-    return { blob: null, failureReason: capability.code };
+    return { blob: null, failureReason: capability.code === 'ok' ? null : capability.code };
   }
 
   const encoded = mp3Adapter.encodeFromPcm(decodedAudio);
@@ -73,5 +73,6 @@ export async function encodeMp3FromPcm(decodedAudio: DecodedPcmAudio): Promise<E
   }
 
   lastMp3Diagnostic = null;
-  return { blob: new Blob(encoded.chunks, { type: MP3_MIME }), failureReason: null };
+  const blobChunks: BlobPart[] = encoded.chunks.map((chunk) => new Uint8Array(chunk));
+  return { blob: new Blob(blobChunks, { type: MP3_MIME }), failureReason: null };
 }
