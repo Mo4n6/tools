@@ -6,6 +6,10 @@ export const MIN_REASONABLE_AUDIO_SECONDS = 0.05;
 export const SYNTHESIS_RETRY_MAX_ATTEMPTS = 3;
 export const SYNTHESIS_RETRY_BACKOFF_BASE_MS = 180;
 export const SYNTHESIS_MAX_SPLIT_DEPTH = 3;
+const DEFAULT_TOKENS_PER_SECOND = 2.6;
+const MIN_SPEECH_RATE = 0.5;
+const MAX_SPEECH_RATE = 2.5;
+const EXPECTED_DURATION_SAFETY_FACTOR = 0.25;
 
 export type SynthesisRetryEvent = {
   segmentId: string;
@@ -54,8 +58,39 @@ export function delayMs(ms: number): Promise<void> {
   });
 }
 
+function estimateTokenCount(text: string): number {
+  const normalized = text.trim();
+  if (!normalized) {
+    return 0;
+  }
+
+  const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+  const roughTokenCount = Math.ceil(normalized.length / 4);
+  return Math.max(wordCount, roughTokenCount);
+}
+
+export function estimateMinimumDurationSeconds(
+  text: string,
+  speechRate = 1,
+  minReasonableAudioSeconds = MIN_REASONABLE_AUDIO_SECONDS,
+): number {
+  const clampedRate = Number.isFinite(speechRate)
+    ? Math.min(MAX_SPEECH_RATE, Math.max(MIN_SPEECH_RATE, speechRate))
+    : 1;
+  const tokenCount = estimateTokenCount(text);
+  if (tokenCount <= 0) {
+    return minReasonableAudioSeconds;
+  }
+
+  const expectedDurationSeconds = tokenCount / (DEFAULT_TOKENS_PER_SECOND * clampedRate);
+  const plausibilityFloor = expectedDurationSeconds * EXPECTED_DURATION_SAFETY_FACTOR;
+  return Math.max(minReasonableAudioSeconds, plausibilityFloor);
+}
+
 export async function probePlayableAudio(
   result: TTSSynthesisResult,
+  text: string,
+  speechRate = 1,
   minReasonableAudioSeconds = MIN_REASONABLE_AUDIO_SECONDS,
 ): Promise<void> {
   if (!('blob' in result)) {
@@ -70,8 +105,12 @@ export async function probePlayableAudio(
     const context = new AudioContext();
     try {
       const decoded = await context.decodeAudioData(await result.blob.arrayBuffer());
-      if (!Number.isFinite(decoded.duration) || decoded.duration < minReasonableAudioSeconds) {
-        throw new Error('Audio decode probe failed: suspiciously short duration.');
+      const minimumExpectedDuration = estimateMinimumDurationSeconds(text, speechRate, minReasonableAudioSeconds);
+      if (!Number.isFinite(decoded.duration) || decoded.duration < minimumExpectedDuration) {
+        const decodedDuration = Number.isFinite(decoded.duration) ? decoded.duration.toFixed(3) : 'NaN';
+        throw new Error(
+          `Audio decode probe failed: duration_too_short decoded=${decodedDuration}s expected_min=${minimumExpectedDuration.toFixed(3)}s.`
+        );
       }
     } finally {
       await context.close();
@@ -96,12 +135,13 @@ export async function synthesizeWithValidation({
   const runtimeAwareProvider = provider as TTSProvider & {
     getRuntimeDevice?: () => string;
   };
+  const speakingRate = synthesisOptions?.rate ?? 1;
 
   const synthesizeWithProbe = async (targetSegment: TTSSegment): Promise<TTSSynthesisResult> => {
     const runtimeBeforeProbe = runtimeAwareProvider.getRuntimeDevice?.() ?? 'unknown';
     let result = await provider.synthesize(targetSegment, synthesisOptions);
     try {
-      await probePlayableAudio(result, minReasonableAudioSeconds);
+      await probePlayableAudio(result, targetSegment.text, speakingRate, minReasonableAudioSeconds);
     } catch (probeError) {
       if (runtimeBeforeProbe !== 'webgpu') {
         throw probeError;
@@ -112,7 +152,7 @@ export async function synthesizeWithValidation({
       const reason = probeError instanceof Error ? probeError.message : String(probeError);
       onRuntimeDowngrade?.({ segmentId: targetSegment.id, reason });
       result = await provider.synthesizeWithRuntime(targetSegment, synthesisOptions, 'wasm');
-      await probePlayableAudio(result, minReasonableAudioSeconds);
+      await probePlayableAudio(result, targetSegment.text, speakingRate, minReasonableAudioSeconds);
     }
 
     return result;
@@ -183,10 +223,12 @@ export async function synthesizeWithValidation({
 
   onRegenerated?.({ segmentId: segment.id, splitDepth, chunkCount: subchunks.length });
 
-  return {
+  const stitchedResult: TTSAudioSynthesisResult = {
     segmentId: segment.id,
     blob: stitchedBlob,
     url: stitchedUrl,
     mode: 'audio-url',
   };
+  await probePlayableAudio(stitchedResult, segment.text, speakingRate, minReasonableAudioSeconds);
+  return stitchedResult;
 }
