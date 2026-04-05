@@ -58,6 +58,8 @@ const UNKNOWN_PROVIDER_ID = 'unknown-provider';
 const UNKNOWN_RUNTIME_SIGNATURE = 'unknown-runtime';
 const WASM_FAILURE_DEGRADE_THRESHOLD = 3;
 const WEB_SPEECH_STABILITY_HINT = 'Switched to system voice for stability.';
+const PLAYBACK_RUNTIME_RETRY_MAX_ATTEMPTS = 2;
+const PLAYBACK_RUNTIME_RETRY_BACKOFF_BASE_MS = 200;
 
 function getProviderId(provider: TTSProvider): string {
   const providerWithId = provider as TTSProvider & { providerId?: string; id?: string };
@@ -175,6 +177,12 @@ function isLikelyWasmFailure(message: string, runtimeSignature: string): boolean
   return normalized.includes('wasm')
     || normalized.includes('webassembly')
     || runtimeSignature.toLowerCase().includes('wasm');
+}
+
+function delayPlaybackRetry(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 export function usePlayerController({
@@ -331,6 +339,7 @@ export function usePlayerController({
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to synthesize audio segment.';
+      const failureReason = message.includes('duration_too_short') ? 'duration_too_short' : message;
       if (isLikelyWasmFailure(message, providerRuntimeSignature)) {
         wasmFailureCountRef.current += 1;
       }
@@ -344,7 +353,7 @@ export function usePlayerController({
       perfTelemetry.sink.log({
         type: 'tts.synth_failure',
         segmentId: segment.id,
-        reason: message,
+        reason: failureReason,
       });
       setQueueEntry({ cacheKey, segmentId: segment.id, synthesisStatus: 'error', audioUrl: null, error: message });
       dispatch({ type: 'SET_ERROR', error: message });
@@ -389,6 +398,7 @@ export function usePlayerController({
 
     activeAudioRef.current.onended = null;
     activeAudioRef.current.ontimeupdate = null;
+    activeAudioRef.current.onerror = null;
     activeAudioRef.current.pause();
     activeAudioRef.current = null;
   }, []);
@@ -409,7 +419,7 @@ export function usePlayerController({
     activeUtteranceRef.current = null;
   }, []);
 
-  const playIndex = useCallback(async (segmentIndex: number, offset = 0) => {
+  const playIndex = useCallback(async (segmentIndex: number, offset = 0, runtimeRetryAttempt = 0) => {
     if (!segments.length) {
       dispatch({ type: 'SET_STATE', state: 'idle' });
       return;
@@ -601,6 +611,51 @@ export function usePlayerController({
       })();
     };
 
+    let runtimeErrorHandled = false;
+    const handlePlaybackRuntimeError = async (runtimeError: unknown) => {
+      if (runtimeErrorHandled) {
+        return;
+      }
+      runtimeErrorHandled = true;
+
+      const errorName = runtimeError instanceof Error ? runtimeError.name : 'UnknownError';
+      const errorMessage = runtimeError instanceof Error ? runtimeError.message : String(runtimeError);
+      const blobMimeType = audioResult.blob?.type || null;
+      const playbackErrorMessage = `Audio playback failed: playback_runtime_error ${errorName}: ${errorMessage}`;
+
+      console.error('Audio playback failed.', {
+        errorName,
+        errorMessage,
+        provider: providerId,
+        runtime: providerRuntimeSignature,
+        voice: synthesisOptions?.voice ?? null,
+        rate: synthesisOptions?.rate ?? null,
+        audioUrl: audioResult.url ?? null,
+        blobMimeType,
+        runtimeRetryAttempt,
+      });
+      perfTelemetry.sink.log({
+        type: 'tts.synth_failure',
+        segmentId: segment.id,
+        reason: 'playback_runtime_error',
+      });
+
+      if (runtimeRetryAttempt < PLAYBACK_RUNTIME_RETRY_MAX_ATTEMPTS) {
+        cleanupAudio();
+        dispatch({ type: 'SET_STATE', state: 'loading' });
+        const backoffMs = PLAYBACK_RUNTIME_RETRY_BACKOFF_BASE_MS * (2 ** runtimeRetryAttempt);
+        await delayPlaybackRetry(backoffMs);
+        await playIndex(boundedIndex, offset, runtimeRetryAttempt + 1);
+        return;
+      }
+
+      dispatch({ type: 'SET_ERROR', error: playbackErrorMessage });
+    };
+
+    audio.onerror = () => {
+      void handlePlaybackRuntimeError(new Error('Audio element emitted error.'));
+    };
+
     activeAudioRef.current = audio;
     dispatch({ type: 'SET_INDEX', index: boundedIndex });
 
@@ -615,27 +670,7 @@ export function usePlayerController({
     try {
       await audio.play();
     } catch (error) {
-      const errorName = error instanceof Error ? error.name : 'UnknownError';
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      const blobMimeType = audioResult.blob?.type || null;
-      const playbackErrorMessage = `Audio playback failed: ${errorName}: ${errorMessage}`;
-
-      console.error('Audio playback failed.', {
-        errorName,
-        errorMessage,
-        provider: providerId,
-        runtime: providerRuntimeSignature,
-        voice: synthesisOptions?.voice ?? null,
-        rate: synthesisOptions?.rate ?? null,
-        audioUrl: audioResult.url ?? null,
-        blobMimeType,
-      });
-      perfTelemetry.sink.log({
-        type: 'tts.synth_failure',
-        segmentId: segment.id,
-        reason: playbackErrorMessage,
-      });
-      dispatch({ type: 'SET_ERROR', error: playbackErrorMessage });
+      await handlePlaybackRuntimeError(error);
       return;
     }
     if (!firstAudioLoggedRef.current && playRequestStartRef.current != null) {
