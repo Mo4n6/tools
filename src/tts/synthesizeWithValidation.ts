@@ -1,0 +1,192 @@
+import { splitTextForSynthesisRetry } from '../domain/chunking/policy';
+import { concatAudioBlobs } from './concatAudioBlobs';
+import type { TTSAudioSynthesisResult, TTSSegment, TTSSynthesisOptions, TTSSynthesisResult, TTSProvider } from './types';
+
+export const MIN_REASONABLE_AUDIO_SECONDS = 0.05;
+export const SYNTHESIS_RETRY_MAX_ATTEMPTS = 3;
+export const SYNTHESIS_RETRY_BACKOFF_BASE_MS = 180;
+export const SYNTHESIS_MAX_SPLIT_DEPTH = 3;
+
+export type SynthesisRetryEvent = {
+  segmentId: string;
+  attempt: number;
+  maxAttempts: number;
+  splitDepth: number;
+  delayMs: number;
+  reason: string;
+};
+
+export type SynthesisSplitEvent = {
+  segmentId: string;
+  splitDepth: number;
+  chunkCount: number;
+};
+
+export type SynthesisRegeneratedEvent = {
+  segmentId: string;
+  splitDepth: number;
+  chunkCount: number;
+};
+
+export type SynthesisRuntimeDowngradeEvent = {
+  segmentId: string;
+  reason: string;
+};
+
+export interface SynthesizeWithValidationParams {
+  provider: TTSProvider;
+  segment: TTSSegment;
+  synthesisOptions?: TTSSynthesisOptions;
+  splitDepth?: number;
+  maxAttempts?: number;
+  maxSplitDepth?: number;
+  backoffBaseMs?: number;
+  minReasonableAudioSeconds?: number;
+  onRetry?: (event: SynthesisRetryEvent) => void;
+  onSplit?: (event: SynthesisSplitEvent) => void;
+  onRegenerated?: (event: SynthesisRegeneratedEvent) => void;
+  onRuntimeDowngrade?: (event: SynthesisRuntimeDowngradeEvent) => void;
+}
+
+export function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+export async function probePlayableAudio(
+  result: TTSSynthesisResult,
+  minReasonableAudioSeconds = MIN_REASONABLE_AUDIO_SECONDS,
+): Promise<void> {
+  if (!('blob' in result)) {
+    return;
+  }
+
+  if (result.blob.size === 0) {
+    throw new Error('Audio decode probe failed: empty blob.');
+  }
+
+  if (typeof AudioContext !== 'undefined') {
+    const context = new AudioContext();
+    try {
+      const decoded = await context.decodeAudioData(await result.blob.arrayBuffer());
+      if (!Number.isFinite(decoded.duration) || decoded.duration < minReasonableAudioSeconds) {
+        throw new Error('Audio decode probe failed: suspiciously short duration.');
+      }
+    } finally {
+      await context.close();
+    }
+  }
+}
+
+export async function synthesizeWithValidation({
+  provider,
+  segment,
+  synthesisOptions,
+  splitDepth = 0,
+  maxAttempts = SYNTHESIS_RETRY_MAX_ATTEMPTS,
+  maxSplitDepth = SYNTHESIS_MAX_SPLIT_DEPTH,
+  backoffBaseMs = SYNTHESIS_RETRY_BACKOFF_BASE_MS,
+  minReasonableAudioSeconds = MIN_REASONABLE_AUDIO_SECONDS,
+  onRetry,
+  onSplit,
+  onRegenerated,
+  onRuntimeDowngrade,
+}: SynthesizeWithValidationParams): Promise<TTSSynthesisResult> {
+  const runtimeAwareProvider = provider as TTSProvider & {
+    getRuntimeDevice?: () => string;
+  };
+
+  const synthesizeWithProbe = async (targetSegment: TTSSegment): Promise<TTSSynthesisResult> => {
+    const runtimeBeforeProbe = runtimeAwareProvider.getRuntimeDevice?.() ?? 'unknown';
+    let result = await provider.synthesize(targetSegment, synthesisOptions);
+    try {
+      await probePlayableAudio(result, minReasonableAudioSeconds);
+    } catch (probeError) {
+      if (runtimeBeforeProbe !== 'webgpu') {
+        throw probeError;
+      }
+      if (!provider.synthesizeWithRuntime) {
+        throw probeError;
+      }
+      const reason = probeError instanceof Error ? probeError.message : String(probeError);
+      onRuntimeDowngrade?.({ segmentId: targetSegment.id, reason });
+      result = await provider.synthesizeWithRuntime(targetSegment, synthesisOptions, 'wasm');
+      await probePlayableAudio(result, minReasonableAudioSeconds);
+    }
+
+    return result;
+  };
+
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await synthesizeWithProbe(segment);
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) {
+        const backoffMs = backoffBaseMs * (2 ** (attempt - 1));
+        onRetry?.({
+          segmentId: segment.id,
+          attempt,
+          maxAttempts,
+          splitDepth,
+          delayMs: backoffMs,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        await delayMs(backoffMs);
+      }
+    }
+  }
+
+  if (splitDepth >= maxSplitDepth) {
+    throw lastError;
+  }
+
+  const subchunks = splitTextForSynthesisRetry(segment.text);
+  if (subchunks.length < 2) {
+    throw lastError;
+  }
+
+  onSplit?.({ segmentId: segment.id, splitDepth, chunkCount: subchunks.length });
+  const subResults = await Promise.all(
+    subchunks.map((subchunk, index) => (
+      synthesizeWithValidation({
+        provider,
+        segment: { id: `${segment.id}::chunk_${index}`, text: subchunk },
+        synthesisOptions,
+        splitDepth: splitDepth + 1,
+        maxAttempts,
+        maxSplitDepth,
+        backoffBaseMs,
+        minReasonableAudioSeconds,
+        onRetry,
+        onSplit,
+        onRegenerated,
+        onRuntimeDowngrade,
+      })
+    ))
+  );
+
+  if (subResults.some((subResult) => !('blob' in subResult))) {
+    throw new Error('Synthesis fallback returned non-audio result for at least one subchunk.');
+  }
+
+  const audioSubResults = subResults as TTSAudioSynthesisResult[];
+  const stitchedBlob = await concatAudioBlobs(audioSubResults.map((subResult) => subResult.blob));
+  const stitchedUrl = URL.createObjectURL(stitchedBlob);
+  audioSubResults.forEach((subResult) => {
+    if (subResult.url.startsWith('blob:')) {
+      URL.revokeObjectURL(subResult.url);
+    }
+  });
+
+  onRegenerated?.({ segmentId: segment.id, splitDepth, chunkCount: subchunks.length });
+
+  return {
+    segmentId: segment.id,
+    blob: stitchedBlob,
+    url: stitchedUrl,
+    mode: 'audio-url',
+  };
+}
