@@ -26,6 +26,10 @@ function getProductionBasePath(env: NodeJS.ProcessEnv): string {
   return '/';
 }
 
+function isMp3EncoderAsset(id: string): boolean {
+  return id.includes('node_modules/lamejs') || id.includes('/src/tts/mp3EncoderAdapter.ts');
+}
+
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
   base: mode === 'production' ? getProductionBasePath(process.env) : '/',
@@ -37,7 +41,7 @@ export default defineConfig(({ mode }) => ({
             return 'kokoro';
           }
 
-          if (id.includes('node_modules/lamejs')) {
+          if (isMp3EncoderAsset(id)) {
             return 'mp3-encoder';
           }
         },
