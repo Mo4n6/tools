@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { perfTelemetry } from '../../tts/perfTelemetry';
 import type { TTSAudioSynthesisResult, TTSSynthesisOptions, TTSSynthesisResult, TTSProvider } from '../../tts/types';
-import { splitTextForSynthesisRetry } from '../../domain/chunking/policy';
-import { concatAudioBlobs } from '../../tts/concatAudioBlobs';
+import {
+  synthesizeWithValidation,
+  SYNTHESIS_RETRY_MAX_ATTEMPTS,
+  SYNTHESIS_RETRY_BACKOFF_BASE_MS,
+  SYNTHESIS_MAX_SPLIT_DEPTH,
+} from '../../tts/synthesizeWithValidation';
 
 export type PlayerMachineState = 'idle' | 'loading' | 'playing' | 'paused' | 'error' | 'finished';
 export type SegmentSynthesisStatus = 'idle' | 'queued' | 'loading' | 'ready' | 'error';
@@ -52,10 +56,6 @@ type Action =
 const DEFAULT_LOOKAHEAD = 2;
 const UNKNOWN_PROVIDER_ID = 'unknown-provider';
 const UNKNOWN_RUNTIME_SIGNATURE = 'unknown-runtime';
-const MIN_REASONABLE_AUDIO_SECONDS = 0.05;
-const SYNTHESIS_RETRY_MAX_ATTEMPTS = 3;
-const SYNTHESIS_RETRY_BACKOFF_BASE_MS = 180;
-const SYNTHESIS_MAX_SPLIT_DEPTH = 3;
 const WASM_FAILURE_DEGRADE_THRESHOLD = 3;
 const WEB_SPEECH_STABILITY_HINT = 'Switched to system voice for stability.';
 
@@ -97,28 +97,6 @@ function getProviderRuntimeSignature(provider: TTSProvider): string {
     ?? UNKNOWN_RUNTIME_SIGNATURE;
   const dtype = providerWithRuntime.dtype ?? 'unknown-dtype';
   return `${runtime}|${dtype}`;
-}
-
-async function probePlayableAudio(result: TTSSynthesisResult): Promise<void> {
-  if (!('blob' in result)) {
-    return;
-  }
-
-  if (result.blob.size === 0) {
-    throw new Error('Audio decode probe failed: empty blob.');
-  }
-
-  if (typeof AudioContext !== 'undefined') {
-    const context = new AudioContext();
-    try {
-      const decoded = await context.decodeAudioData(await result.blob.arrayBuffer());
-      if (!Number.isFinite(decoded.duration) || decoded.duration < MIN_REASONABLE_AUDIO_SECONDS) {
-        throw new Error('Audio decode probe failed: suspiciously short duration.');
-      }
-    } finally {
-      await context.close();
-    }
-  }
 }
 
 function createInitialState(cursor?: PlayerResumeCursor): PlayerInternalState {
@@ -190,12 +168,6 @@ function findNextPlaybackAnchorIndex(
   }
 
   return null;
-}
-
-function delayMs(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 function isLikelyWasmFailure(message: string, runtimeSignature: string): boolean {
@@ -324,83 +296,24 @@ export function usePlayerController({
     setQueueEntry({ cacheKey, segmentId: segment.id, synthesisStatus: 'loading', audioUrl: existing?.audioUrl ?? null });
 
     try {
-      const runtimeAwareProvider = provider as TTSProvider & {
-        getRuntimeDevice?: () => string;
-      };
-
-      const synthesizeWithProbe = async (id: string, text: string): Promise<TTSSynthesisResult> => {
-        const runtimeBeforeProbe = runtimeAwareProvider.getRuntimeDevice?.() ?? 'unknown';
-        let result = await provider.synthesize({ id, text }, synthesisOptions);
-        try {
-          await probePlayableAudio(result);
-        } catch (probeError) {
-          if (runtimeBeforeProbe !== 'webgpu') {
-            throw probeError;
-          }
-          if (!provider.synthesizeWithRuntime) {
-            throw probeError;
-          }
-          result = await provider.synthesizeWithRuntime(
-            { id, text },
-            synthesisOptions,
-            'wasm'
-          );
-          await probePlayableAudio(result);
-        }
-        return result;
-      };
-
-      const synthesizeWithRetries = async (
-        id: string,
-        text: string,
-        splitDepth = 0,
-      ): Promise<TTSSynthesisResult> => {
-        let lastError: unknown = null;
-        for (let attempt = 1; attempt <= SYNTHESIS_RETRY_MAX_ATTEMPTS; attempt += 1) {
-          try {
-            return await synthesizeWithProbe(id, text);
-          } catch (error) {
-            lastError = error;
-            if (attempt < SYNTHESIS_RETRY_MAX_ATTEMPTS) {
-              const backoffMs = SYNTHESIS_RETRY_BACKOFF_BASE_MS * (2 ** (attempt - 1));
-              await delayMs(backoffMs);
-            }
-          }
-        }
-
-        if (splitDepth >= SYNTHESIS_MAX_SPLIT_DEPTH) {
-          throw lastError;
-        }
-
-        const subchunks = splitTextForSynthesisRetry(text);
-        if (subchunks.length < 2) {
-          throw lastError;
-        }
-
-        const subResults = await Promise.all(
-          subchunks.map((subchunk, index) => synthesizeWithRetries(`${id}::chunk_${index}`, subchunk, splitDepth + 1))
-        );
-        if (subResults.some((subResult) => !('blob' in subResult))) {
-          throw new Error('Synthesis fallback returned non-audio result for at least one subchunk.');
-        }
-        const audioSubResults = subResults as TTSAudioSynthesisResult[];
-        const stitchedBlob = await concatAudioBlobs(audioSubResults.map((subResult) => subResult.blob));
-        const stitchedUrl = URL.createObjectURL(stitchedBlob);
-        audioSubResults.forEach((subResult) => {
-          if (subResult.url.startsWith('blob:')) {
-            URL.revokeObjectURL(subResult.url);
-          }
-        });
-        return {
-          segmentId: id,
-          blob: stitchedBlob,
-          url: stitchedUrl,
-          mode: 'audio-url',
-        };
-      };
-
       const synthStartedAt = perfTelemetry.now();
-      const result = await synthesizeWithRetries(segment.id, segment.text);
+      const result = await synthesizeWithValidation({
+        provider,
+        segment: { id: segment.id, text: segment.text },
+        synthesisOptions,
+        maxAttempts: SYNTHESIS_RETRY_MAX_ATTEMPTS,
+        backoffBaseMs: SYNTHESIS_RETRY_BACKOFF_BASE_MS,
+        maxSplitDepth: SYNTHESIS_MAX_SPLIT_DEPTH,
+        onRuntimeDowngrade: ({ segmentId, reason }) => {
+          perfTelemetry.sink.log({
+            type: 'tts.runtime_downgrade',
+            transition: 'webgpu->wasm',
+            reason,
+            triggerCategory: 'validation',
+            segmentId,
+          });
+        },
+      });
       wasmFailureCountRef.current = 0;
 
       perfTelemetry.sink.log({

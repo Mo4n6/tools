@@ -13,6 +13,12 @@ import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
 import type { KokoroDType, RuntimeDType, TTSProvider, TTSVoice } from './tts/types';
 import { chunkSegmentsByPolicy, defaultChunkingPolicy } from './domain/chunking/policy';
 import { buildFullAudioExport, MP3_FALLBACK_WARNING, type ExportFormat } from './tts/buildFullAudioExport';
+import {
+  SYNTHESIS_MAX_SPLIT_DEPTH,
+  SYNTHESIS_RETRY_BACKOFF_BASE_MS,
+  SYNTHESIS_RETRY_MAX_ATTEMPTS,
+  synthesizeWithValidation,
+} from './tts/synthesizeWithValidation';
 
 type PlaybackAnchor = {
   segmentId: string;
@@ -122,6 +128,8 @@ type FullAudioBuildState = {
   builtSegments: number;
   totalSegments: number;
   error: string | null;
+  failedSegmentId: string | null;
+  failedSegmentIndex: number | null;
   audioUrl: string | null;
   fileName: string;
 };
@@ -402,12 +410,15 @@ function App() {
     builtSegments: 0,
     totalSegments: 0,
     error: null,
+    failedSegmentId: null,
+    failedSegmentIndex: null,
     audioUrl: null,
     fileName: 'playback.wav',
   });
   const [playbackSource, setPlaybackSource] = useState<PlaybackSource>('stream');
   const [exportFormat, setExportFormat] = useState<ExportFormat>('wav');
   const fullAudioElementRef = useRef<HTMLAudioElement | null>(null);
+  const fullAudioSegmentCacheRef = useRef<Map<string, Blob>>(new Map());
   const [exportPreviewCurrentTime, setExportPreviewCurrentTime] = useState(0);
   const [exportPreviewDuration, setExportPreviewDuration] = useState(0);
   const [isExportPreviewPlaying, setIsExportPreviewPlaying] = useState(false);
@@ -455,10 +466,13 @@ function App() {
         builtSegments: 0,
         totalSegments: 0,
         error: null,
+        failedSegmentId: null,
+        failedSegmentIndex: null,
         audioUrl: null,
         fileName: `playback.${exportFormat}`,
       };
     });
+    fullAudioSegmentCacheRef.current.clear();
     setPlaybackSource('stream');
     setExportPreviewCurrentTime(0);
     setExportPreviewDuration(0);
@@ -488,48 +502,136 @@ function App() {
     audioElement.currentTime = targetTime;
   }, []);
 
-  const buildFullAudio = useCallback(async () => {
+  const buildFullAudio = useCallback(async (retryFromSegmentId?: string) => {
     if (!playbackData.playbackSegments.length) {
       setFullAudioBuild({
         status: 'error',
         builtSegments: 0,
         totalSegments: 0,
         error: 'No segments available to synthesize.',
+        failedSegmentId: null,
+        failedSegmentIndex: null,
         audioUrl: null,
         fileName: `playback.${exportFormat}`,
       });
       return null;
     }
 
-    clearFullAudioBuild();
     const totalSegments = playbackData.playbackSegments.length;
+    const resolvedRetryIndex = retryFromSegmentId
+      ? playbackData.playbackSegments.findIndex((segment) => segment.id === retryFromSegmentId)
+      : -1;
+    const retryStartIndex = resolvedRetryIndex >= 0 ? resolvedRetryIndex : 0;
+    if (!retryFromSegmentId) {
+      clearFullAudioBuild();
+    } else {
+      setFullAudioBuild((current) => {
+        if (current.audioUrl?.startsWith('blob:')) {
+          URL.revokeObjectURL(current.audioUrl);
+        }
+        return {
+          ...current,
+          audioUrl: null,
+        };
+      });
+      setPlaybackSource('stream');
+      setExportPreviewCurrentTime(0);
+      setExportPreviewDuration(0);
+      setIsExportPreviewPlaying(false);
+    }
+
     setFullAudioBuild({
       status: 'building',
-      builtSegments: 0,
+      builtSegments: retryStartIndex,
       totalSegments,
       error: null,
+      failedSegmentId: null,
+      failedSegmentIndex: null,
       audioUrl: null,
       fileName: `${toFileNameStem(ingested.title)}.${exportFormat}`,
     });
 
+    let builtSegmentsCount = retryStartIndex;
     try {
       const blobs: Blob[] = [];
+      for (let index = 0; index < retryStartIndex; index += 1) {
+        const cachedBlob = fullAudioSegmentCacheRef.current.get(playbackData.playbackSegments[index].id);
+        if (!cachedBlob) {
+          throw new Error(`Retry cache miss for segment ${index + 1}. Please rebuild from the start.`);
+        }
+        blobs.push(cachedBlob);
+      }
+
       for (let index = 0; index < totalSegments; index += 1) {
         const segment = playbackData.playbackSegments[index];
-        const result = await provider.synthesize(segment, { voice, rate });
+        if (index < retryStartIndex) {
+          continue;
+        }
+
+        const synthStartedAt = perfTelemetry.now();
+        const result = await synthesizeWithValidation({
+          provider,
+          segment,
+          synthesisOptions: { voice, rate },
+          maxAttempts: SYNTHESIS_RETRY_MAX_ATTEMPTS,
+          backoffBaseMs: SYNTHESIS_RETRY_BACKOFF_BASE_MS,
+          maxSplitDepth: SYNTHESIS_MAX_SPLIT_DEPTH,
+          onRetry: ({ segmentId, attempt, maxAttempts, splitDepth, reason }) => {
+            perfTelemetry.sink.log({
+              type: 'tts.segment_retry',
+              segmentId,
+              attempt,
+              maxAttempts,
+              splitDepth,
+              reason,
+            });
+          },
+          onRegenerated: ({ segmentId, splitDepth, chunkCount }) => {
+            perfTelemetry.sink.log({
+              type: 'tts.segment_regenerated',
+              segmentId,
+              splitDepth,
+              chunkCount,
+            });
+          },
+          onRuntimeDowngrade: ({ segmentId, reason }) => {
+            perfTelemetry.sink.log({
+              type: 'tts.runtime_downgrade',
+              transition: 'webgpu->wasm',
+              reason,
+              triggerCategory: 'validation',
+              segmentId,
+            });
+          },
+        });
         if (!('blob' in result)) {
           setFullAudioBuild((current) => ({
             ...current,
             status: 'error',
             error: 'Current voice/runtime only supports live native speech playback. Try a Kokoro voice for downloadable audio.',
+            failedSegmentId: segment.id,
+            failedSegmentIndex: index,
           }));
+          perfTelemetry.sink.log({
+            type: 'tts.export_build_outcome',
+            status: 'failure',
+            reason: 'native-spoken-only',
+            segmentId: segment.id,
+          });
           return null;
         }
         blobs.push(result.blob);
+        fullAudioSegmentCacheRef.current.set(segment.id, result.blob);
+        perfTelemetry.sink.log({
+          type: 'tts.segment_synth',
+          segmentId: segment.id,
+          durationMs: Math.round(perfTelemetry.now() - synthStartedAt),
+        });
         setFullAudioBuild((current) => ({
           ...current,
           builtSegments: index + 1,
         }));
+        builtSegmentsCount = index + 1;
       }
 
       if (!blobs.length) {
@@ -537,7 +639,14 @@ function App() {
           ...current,
           status: 'error',
           error: 'Synthesis returned empty audio content.',
+          failedSegmentId: null,
+          failedSegmentIndex: null,
         }));
+        perfTelemetry.sink.log({
+          type: 'tts.export_build_outcome',
+          status: 'failure',
+          reason: 'empty-audio',
+        });
         return null;
       }
 
@@ -551,15 +660,36 @@ function App() {
         builtSegments: totalSegments,
         fileName: `${toFileNameStem(ingested.title)}.${exportedBlob.type === 'audio/mpeg' ? 'mp3' : 'wav'}`,
         error: exportWarning,
+        failedSegmentId: null,
+        failedSegmentIndex: null,
       }));
+      perfTelemetry.sink.log({
+        type: 'tts.export_build_outcome',
+        status: 'success',
+        reason: exportWarning ? 'success-with-warning' : 'success',
+      });
       return audioUrl;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const failedIndex = builtSegmentsCount < totalSegments
+        ? Math.max(0, Math.min(playbackData.playbackSegments.length - 1, builtSegmentsCount))
+        : null;
+      const failedSegment = failedIndex == null ? null : playbackData.playbackSegments[failedIndex];
       setFullAudioBuild((current) => ({
         ...current,
         status: 'error',
-        error: `Build failed: ${message}`,
+        error: failedSegment
+          ? `Build failed at segment ${failedIndex! + 1}/${totalSegments} (${failedSegment.id}): ${message}`
+          : `Build failed during export: ${message}`,
+        failedSegmentId: failedSegment?.id ?? null,
+        failedSegmentIndex: failedSegment ? failedIndex : null,
       }));
+      perfTelemetry.sink.log({
+        type: 'tts.export_build_outcome',
+        status: 'failure',
+        reason: message,
+        segmentId: failedSegment?.id,
+      });
       return null;
     }
   }, [clearFullAudioBuild, exportFormat, ingested.title, playbackData.playbackSegments, provider, rate, voice]);
@@ -1502,15 +1632,28 @@ function App() {
                 )}%
               </p>
               {fullAudioBuild.error ? (
-                <p
+                <div
                   className={`mt-2 rounded border p-2 text-xs ${fullAudioBuild.status === 'ready'
                     ? 'border-amber-600 bg-amber-950/40 text-amber-100'
                     : 'border-rose-700 bg-rose-950/40 text-rose-200'}`}
                 >
-                  {fullAudioBuild.status === 'ready' && fullAudioBuild.error === MP3_FALLBACK_WARNING
-                    ? `Warning: ${fullAudioBuild.error}`
-                    : fullAudioBuild.error}
-                </p>
+                  <p>
+                    {fullAudioBuild.status === 'ready' && fullAudioBuild.error === MP3_FALLBACK_WARNING
+                      ? `Warning: ${fullAudioBuild.error}`
+                      : fullAudioBuild.error}
+                  </p>
+                  {fullAudioBuild.status === 'error' && fullAudioBuild.failedSegmentId ? (
+                    <button
+                      type="button"
+                      className="mt-2 rounded border border-rose-400/60 bg-rose-950/30 px-2 py-1 text-rose-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300"
+                      onClick={() => {
+                        void buildFullAudio(fullAudioBuild.failedSegmentId ?? undefined);
+                      }}
+                    >
+                      Retry from failed segment #{(fullAudioBuild.failedSegmentIndex ?? 0) + 1}
+                    </button>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           </div>

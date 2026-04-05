@@ -21,9 +21,29 @@ export type PerfMetricEvent =
     durationMs: number;
   }
   | {
+    type: 'tts.segment_retry';
+    segmentId: string;
+    attempt: number;
+    maxAttempts: number;
+    splitDepth: number;
+    reason: string;
+  }
+  | {
+    type: 'tts.segment_regenerated';
+    segmentId: string;
+    splitDepth: number;
+    chunkCount: number;
+  }
+  | {
     type: 'tts.synth_failure';
     segmentId: string;
     reason: string;
+  }
+  | {
+    type: 'tts.export_build_outcome';
+    status: 'success' | 'failure';
+    reason: string;
+    segmentId?: string;
   }
   | {
     type: 'tts.queue_underrun';
