@@ -1426,10 +1426,18 @@ function App() {
                   playExportedAudio();
                   return;
                 }
-                clearWebGpuUnstableProfileForCurrentBrowser();
-                setForceWebGpuRetry(true);
-                setProviderInitNonce((current) => current + 1);
-                void player.retryCurrentSegment();
+                if (player.state === 'paused') {
+                  void player.resume();
+                  return;
+                }
+                if (player.state === 'error') {
+                  void player.retryCurrentSegment();
+                  return;
+                }
+                if (player.state === 'playing' || player.state === 'loading') {
+                  return;
+                }
+                void player.play();
               }}
               onPause={() => {
                 if (playbackSource === 'exported') {

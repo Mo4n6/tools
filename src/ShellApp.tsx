@@ -82,10 +82,10 @@ const ShellApp = (): JSX.Element => {
   );
 
   return (
-    <div className="flex min-h-screen bg-[#050706] font-mono text-emerald-100">
-      <aside className="w-72 border-r border-emerald-500/30 bg-[#07110a] p-4 shadow-[inset_-1px_0_0_rgba(16,185,129,0.25)]">
+    <div className="flex min-h-screen flex-col bg-[#050706] font-mono text-emerald-100 md:flex-row">
+      <aside className="w-full border-b border-emerald-500/30 bg-[#07110a] p-4 shadow-[inset_0_-1px_0_rgba(16,185,129,0.25)] md:w-72 md:shrink-0 md:border-b-0 md:border-r md:shadow-[inset_-1px_0_0_rgba(16,185,129,0.25)]">
         <h1 className="text-lg font-semibold text-emerald-200">Tools</h1>
-        <nav className="mt-4 space-y-2" aria-label="Tool Navigation">
+        <nav className="mt-4 flex gap-2 overflow-x-auto pb-1 md:block md:space-y-2 md:overflow-visible md:pb-0" aria-label="Tool Navigation">
           {toolDefinitions.map((tool) => {
             const isActive = tool.path === activeTool.path;
             return (
@@ -96,7 +96,7 @@ const ShellApp = (): JSX.Element => {
                   event.preventDefault();
                   navigateTo(tool.path);
                 }}
-                className={`block rounded-md border px-3 py-2 transition ${
+                className={`block min-w-[12rem] rounded-md border px-3 py-2 transition md:min-w-0 ${
                   isActive
                     ? 'border-emerald-400 bg-emerald-500/15 text-emerald-100 shadow-[0_0_0_1px_rgba(52,211,153,0.45),0_0_12px_rgba(16,185,129,0.25)]'
                     : 'border-emerald-500/25 bg-[#0a160f] text-emerald-300/90 hover:border-emerald-400/50 hover:bg-emerald-500/10'
