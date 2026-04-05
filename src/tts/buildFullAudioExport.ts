@@ -10,14 +10,14 @@ export async function buildFullAudioExport(blobs: Blob[], exportFormat: ExportFo
   }
 
   const decodedPcm = await concatAudioBlobsToPcm(blobs);
-  const mp3Blob = await encodeMp3FromPcm(decodedPcm);
-  if (!mp3Blob) {
+  const mp3Result = await encodeMp3FromPcm(decodedPcm);
+  if (!mp3Result.blob) {
     const mp3Diagnostic = getLastMp3EncodingDiagnostic();
     const warning = mp3Diagnostic
       ? `${MP3_FALLBACK_WARNING} (${mp3Diagnostic.code}: ${mp3Diagnostic.technicalDetail ?? mp3Diagnostic.reason})`
-      : MP3_FALLBACK_WARNING;
+      : `${MP3_FALLBACK_WARNING} (${mp3Result.failureReason ?? 'init_failed'})`;
     return { blob: wavBlob, warning };
   }
 
-  return { blob: mp3Blob, warning: null };
+  return { blob: mp3Result.blob, warning: null };
 }
