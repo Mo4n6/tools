@@ -11,7 +11,7 @@ import type { TTSFallbackError } from './tts/errors';
 import { canImportKokoroModule } from './tts/providers/kokoroProvider';
 import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
 import type { KokoroDType, RuntimeDType, TTSProvider, TTSVoice } from './tts/types';
-import { chunkSegmentsByPolicy, defaultChunkingPolicy } from './domain/chunking/policy';
+import { chunkSegmentsByPolicy, defaultChunkingPolicy, getChunkPieceSeparator } from './domain/chunking/policy';
 import { buildFullAudioExport, type ExportFormat } from './tts/buildFullAudioExport';
 import { MP3_FALLBACK_WARNING, probeMp3EncodingCapability, type Mp3CapabilityProbe } from './tts/encodeMp3';
 import { PreviewPanel } from './features/preview/PreviewPanel';
@@ -61,20 +61,31 @@ function buildContinuousPlayback(segments: SpeakableSegment[]): {
   seekAnchors: PlaybackAnchor[];
 } {
   const chunkedSegments = chunkSegmentsByPolicy(segments, defaultChunkingPolicy);
+  const segmentById = new Map(segments.map((segment) => [segment.id, segment]));
   const playbackSegments = chunkedSegments.map(({ id, text }) => ({ id, text }));
 
   const seekAnchors: PlaybackAnchor[] = [];
 
   chunkedSegments.forEach((chunk, playbackSegmentIndex) => {
     let runningOffset = 0;
+    let previousPiece: (typeof chunk.pieces)[number] | undefined;
 
     chunk.pieces.forEach((piece) => {
+      if (previousPiece) {
+        const previousSegment = segmentById.get(previousPiece.segmentId);
+        const currentSegment = segmentById.get(piece.segmentId);
+        if (currentSegment) {
+          runningOffset += getChunkPieceSeparator(previousSegment, currentSegment, defaultChunkingPolicy).length;
+        }
+      }
+
       seekAnchors.push({
         segmentId: piece.segmentId,
         playbackSegmentIndex,
         playbackCharOffset: runningOffset,
       });
-      runningOffset += piece.text.length + defaultChunkingPolicy.prosodySpacing.length;
+      runningOffset += piece.text.length;
+      previousPiece = piece;
     });
   });
 

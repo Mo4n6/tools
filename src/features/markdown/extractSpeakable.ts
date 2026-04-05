@@ -94,6 +94,7 @@ export function extractSpeakable(raw: string, policy: MarkdownReadPolicy = defau
             text: listText,
             position: position++,
             sourceOffset,
+            meta: { isListItemBoundary: true },
           }),
         );
 

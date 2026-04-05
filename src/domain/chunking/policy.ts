@@ -4,6 +4,7 @@ export interface ChunkingPolicy {
   maxCharsPerChunk: number;
   maxTokensPerChunk: number;
   prosodySpacing: string;
+  markdownListItemSeparator: string;
 }
 
 export interface ChunkPiece {
@@ -21,7 +22,28 @@ export const defaultChunkingPolicy: ChunkingPolicy = {
   maxCharsPerChunk: 900,
   maxTokensPerChunk: 160,
   prosodySpacing: ' ',
+  markdownListItemSeparator: '. ',
 };
+
+function endsWithTerminalPunctuation(text: string): boolean {
+  return /[.!?]["')\]]*$/.test(text.trim());
+}
+
+function isMarkdownListItem(segment?: SpeakableSegment): boolean {
+  return segment?.kind === 'markdown' && segment.blockType === 'list_item';
+}
+
+export function getChunkPieceSeparator(
+  previousSegment: SpeakableSegment | undefined,
+  nextSegment: SpeakableSegment,
+  policy: ChunkingPolicy,
+): string {
+  if (isMarkdownListItem(previousSegment) && isMarkdownListItem(nextSegment)) {
+    return previousSegment && endsWithTerminalPunctuation(previousSegment.text) ? ' ' : policy.markdownListItemSeparator;
+  }
+
+  return policy.prosodySpacing;
+}
 
 const sentenceSplitPattern = /(?<=[.!?])\s+(?=[A-Z0-9"'])/g;
 
@@ -148,6 +170,7 @@ export function chunkSegmentsByPolicy(
   policy: ChunkingPolicy = defaultChunkingPolicy,
 ): ChunkedPlaybackSegment[] {
   const chunkedSegments: ChunkedPlaybackSegment[] = [];
+  const segmentById = new Map(segments.map((segment) => [segment.id, segment]));
 
   let currentText = '';
   let currentTokens = 0;
@@ -174,7 +197,9 @@ export function chunkSegmentsByPolicy(
 
     for (const piece of pieces) {
       const pieceTokens = estimateTokens(piece);
-      const spacer = currentText ? policy.prosodySpacing : '';
+      const previousPiece = currentPieces[currentPieces.length - 1];
+      const previousSegment = previousPiece ? segmentById.get(previousPiece.segmentId) : undefined;
+      const spacer = currentText ? getChunkPieceSeparator(previousSegment, segment, policy) : '';
       const candidateText = `${currentText}${spacer}${piece}`;
       const exceedsChars = candidateText.length > policy.maxCharsPerChunk;
       const exceedsTokens = currentTokens + pieceTokens > policy.maxTokensPerChunk;
@@ -183,7 +208,7 @@ export function chunkSegmentsByPolicy(
         flush();
       }
 
-      currentText = currentText ? `${currentText}${policy.prosodySpacing}${piece}` : piece;
+      currentText = currentText ? `${currentText}${spacer}${piece}` : piece;
       currentTokens += pieceTokens;
       currentPieces.push({ segmentId: segment.id, text: piece });
     }
