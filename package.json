@@ -18,6 +18,7 @@
     "check:deployed-assets": "node scripts/check-deployed-assets.mjs"
   },
   "dependencies": {
+    "@ffmpeg/ffmpeg": "^0.12.15",
     "@mozilla/readability": "^0.6.0",
     "dompurify": "^3.3.3",
     "jsdom": "^26.1.0",

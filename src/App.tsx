@@ -1364,7 +1364,7 @@ function App() {
           <PreviewPanel
             segments={ingested.document.segments}
             currentSegmentIndex={player.currentSegmentIndex}
-            isContinuousMode={false}
+            isContinuousMode={sourceType === 'text' || ingested.document.segments.some((segment) => segment.kind === 'markdown')}
           />
           <div className="mt-2 space-y-2">
             {ingested.warnings.map((warning) => (
