@@ -238,6 +238,17 @@ export function usePlayerController({
     queueVersionRef.current += 1;
   }, []);
 
+  const resetQueueEntries = useCallback(() => {
+    nextPrefetchInFlightRef.current.clear();
+    queueRef.current.forEach((entry) => {
+      if (entry.audioUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(entry.audioUrl);
+      }
+    });
+    queueRef.current.clear();
+    bumpQueueVersion();
+  }, [bumpQueueVersion]);
+
   const providerId = getProviderId(provider);
   const providerRuntimeSignature = getProviderRuntimeSignature(provider);
   const getCacheKey = useCallback((segmentId: string, segmentText: string) => {
@@ -753,6 +764,38 @@ export function usePlayerController({
   }, [machine.charOffset, machine.currentSegmentIndex, persistCursor]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    let nextCursor: PlayerResumeCursor = { segmentIndex: 0, charOffset: 0 };
+    try {
+      const raw = window.localStorage.getItem(persistKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<PlayerResumeCursor>;
+        nextCursor = {
+          segmentIndex: Math.max(0, parsed.segmentIndex ?? 0),
+          charOffset: Math.max(0, parsed.charOffset ?? 0),
+        };
+      }
+    } catch {
+      nextCursor = { segmentIndex: 0, charOffset: 0 };
+    }
+
+    transitioningRef.current = false;
+    cleanupAudio();
+    cleanupNativeSpeech();
+    wasmFailureCountRef.current = 0;
+    webSpeechFallbackActiveRef.current = false;
+    resetQueueEntries();
+    dispatch({ type: 'SET_STATE', state: 'idle' });
+    dispatch({ type: 'RESET_ERROR' });
+    dispatch({ type: 'RESET_HINT' });
+    dispatch({ type: 'SET_INDEX', index: nextCursor.segmentIndex });
+    dispatch({ type: 'SET_CHAR_OFFSET', charOffset: nextCursor.charOffset });
+  }, [cleanupAudio, cleanupNativeSpeech, persistKey, resetQueueEntries]);
+
+  useEffect(() => {
     const synthesisIdentity = JSON.stringify({
       providerId,
       providerRuntimeSignature,
@@ -773,36 +816,22 @@ export function usePlayerController({
     transitioningRef.current = false;
     cleanupAudio();
     cleanupNativeSpeech();
-    nextPrefetchInFlightRef.current.clear();
-    queueRef.current.forEach((entry) => {
-      if (entry.audioUrl?.startsWith('blob:')) {
-        URL.revokeObjectURL(entry.audioUrl);
-      }
-    });
-    queueRef.current.clear();
+    resetQueueEntries();
     wasmFailureCountRef.current = 0;
     webSpeechFallbackActiveRef.current = false;
-    bumpQueueVersion();
     dispatch({ type: 'SET_STATE', state: 'idle' });
     dispatch({ type: 'RESET_ERROR' });
     dispatch({ type: 'RESET_HINT' });
-  }, [bumpQueueVersion, cleanupAudio, cleanupNativeSpeech, providerId, providerRuntimeSignature, synthesisOptions?.rate, synthesisOptions?.voice]);
+  }, [cleanupAudio, cleanupNativeSpeech, providerId, providerRuntimeSignature, resetQueueEntries, synthesisOptions?.rate, synthesisOptions?.voice]);
 
   const retryCurrentSegment = useCallback(async () => {
     wasmFailureCountRef.current = 0;
     webSpeechFallbackActiveRef.current = false;
-    nextPrefetchInFlightRef.current.clear();
-    queueRef.current.forEach((entry) => {
-      if (entry.audioUrl?.startsWith('blob:')) {
-        URL.revokeObjectURL(entry.audioUrl);
-      }
-    });
-    queueRef.current.clear();
-    bumpQueueVersion();
+    resetQueueEntries();
     dispatch({ type: 'RESET_ERROR' });
     dispatch({ type: 'RESET_HINT' });
     await playIndex(machine.currentSegmentIndex, 0);
-  }, [bumpQueueVersion, machine.currentSegmentIndex, playIndex]);
+  }, [machine.currentSegmentIndex, playIndex, resetQueueEntries]);
 
   useEffect(() => {
     return () => {

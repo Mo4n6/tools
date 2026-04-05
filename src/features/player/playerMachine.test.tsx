@@ -34,18 +34,20 @@ function HookHarness({
   provider,
   customSegments = segments,
   synthesisOptions,
+  persistKey = 'player-machine-test',
   onController,
 }: {
   provider: TTSProvider;
   customSegments?: { id: string; text: string }[];
   synthesisOptions?: { voice?: string; rate?: number };
+  persistKey?: string;
   onController: (controller: UsePlayerControllerResult) => void;
 }): React.JSX.Element {
   const controller = usePlayerController({
     provider,
     segments: customSegments,
     synthesisOptions,
-    persistKey: 'player-machine-test',
+    persistKey,
     prefetchCount: 0,
   });
 
@@ -272,6 +274,137 @@ describe('usePlayerController transitions', () => {
     expect(getController().queue[0]?.synthesisStatus).toBe('idle');
     expect(getController().queue[0]?.audioUrl).toBeNull();
     Object.assign(globalThis, { URL: originalURL });
+  });
+
+  it('switches documents after pausing at segment N and starts the new document at the beginning', async () => {
+    const docA = [
+      { id: 'shared-1', text: 'Shared opening segment' },
+      { id: 'doc-a-2', text: 'Document A second segment' },
+    ];
+    const docB = [
+      { id: 'shared-1', text: 'Shared opening segment' },
+      { id: 'doc-b-2', text: 'Document B second segment' },
+    ];
+    const provider: TTSProvider = {
+      listVoices: vi.fn(async () => []),
+      warmup: vi.fn(async () => undefined),
+      synthesize: vi.fn(async ({ id }) => ({
+        segmentId: id,
+        blob: new Blob(['ok'], { type: 'audio/mpeg' }),
+        url: `blob:${id}`,
+      })),
+    };
+
+    let controller: UsePlayerControllerResult | null = null;
+    const getController = (): UsePlayerControllerResult => {
+      if (!controller) {
+        throw new Error('Controller was not initialized');
+      }
+      return controller;
+    };
+
+    await act(async () => {
+      root?.render(
+        <HookHarness
+          provider={provider}
+          customSegments={docA}
+          persistKey="player-machine-doc-a"
+          onController={(value) => { controller = value; }}
+        />,
+      );
+    });
+
+    await act(async () => {
+      await getController().play();
+      await getController().skipNext();
+    });
+    act(() => {
+      getController().pause();
+    });
+    expect(getController().currentSegmentIndex).toBe(1);
+
+    await act(async () => {
+      root?.render(
+        <HookHarness
+          provider={provider}
+          customSegments={docB}
+          persistKey="player-machine-doc-b"
+          onController={(value) => { controller = value; }}
+        />,
+      );
+    });
+
+    expect(getController().state).toBe('idle');
+    expect(getController().currentSegmentIndex).toBe(0);
+    expect(getController().charOffset).toBe(0);
+    expect(getController().queue[0]?.synthesisStatus).toBe('idle');
+    expect(getController().queue[0]?.audioUrl).toBeNull();
+  });
+
+  it('preserves resume only within the same document fingerprint key', async () => {
+    const provider: TTSProvider = {
+      listVoices: vi.fn(async () => []),
+      warmup: vi.fn(async () => undefined),
+      synthesize: vi.fn(async ({ id }) => ({
+        segmentId: id,
+        blob: new Blob(['ok'], { type: 'audio/mpeg' }),
+        url: `blob:${id}`,
+      })),
+    };
+
+    let controller: UsePlayerControllerResult | null = null;
+    const getController = (): UsePlayerControllerResult => {
+      if (!controller) {
+        throw new Error('Controller was not initialized');
+      }
+      return controller;
+    };
+
+    await act(async () => {
+      root?.render(
+        <HookHarness
+          provider={provider}
+          persistKey="player-machine-fingerprint-a"
+          onController={(value) => { controller = value; }}
+        />,
+      );
+    });
+
+    await act(async () => {
+      await getController().play();
+      await getController().seekSegment(1, 3);
+    });
+    act(() => {
+      getController().pause();
+    });
+    expect(getController().currentSegmentIndex).toBe(1);
+    expect(getController().charOffset).toBe(3);
+
+    await act(async () => {
+      root?.render(
+        <HookHarness
+          provider={provider}
+          persistKey="player-machine-fingerprint-b"
+          onController={(value) => { controller = value; }}
+        />,
+      );
+    });
+
+    expect(getController().currentSegmentIndex).toBe(0);
+    expect(getController().charOffset).toBe(0);
+
+    await act(async () => {
+      root?.render(
+        <HookHarness
+          provider={provider}
+          persistKey="player-machine-fingerprint-a"
+          onController={(value) => { controller = value; }}
+        />,
+      );
+    });
+
+    expect(getController().currentSegmentIndex).toBe(1);
+    expect(getController().charOffset).toBe(3);
   });
 
   it('runs decode probe before ready and retries once with wasm when webgpu probe fails', async () => {

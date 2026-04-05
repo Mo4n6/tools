@@ -28,6 +28,26 @@ type PlaybackAnchor = {
   playbackCharOffset: number;
 };
 
+function normalizeFingerprintText(text: string): string {
+  return text.normalize('NFKC').replace(/\s+/g, ' ').trim();
+}
+
+function hashFingerprintValue(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function buildDocumentFingerprint(segments: SpeakableSegment[]): string {
+  const normalizedParts = segments.map((segment) => (
+    `${segment.id}:${hashFingerprintValue(normalizeFingerprintText(segment.text))}`
+  ));
+  return `${segments.length}:${hashFingerprintValue(normalizedParts.join('|'))}`;
+}
+
 function shouldDefaultContinuousMode(segments: SpeakableSegment[]): boolean {
   if (!segments.length) {
     return false;
@@ -454,11 +474,21 @@ function App() {
     };
   }, [ingested.document.segments, playbackMode]);
 
+  const documentFingerprint = useMemo(
+    () => buildDocumentFingerprint(ingested.document.segments),
+    [ingested.document.segments],
+  );
+  const playerPersistKey = useMemo(
+    () => `reader-player-cursor:${documentFingerprint}`,
+    [documentFingerprint],
+  );
+
   const player = usePlayerController({
     provider,
     segments: playbackData.playbackSegments,
     seekAnchors: playbackData.seekAnchors,
     synthesisOptions: { voice, rate },
+    persistKey: playerPersistKey,
   });
 
   const clearFullAudioBuild = useCallback(() => {
