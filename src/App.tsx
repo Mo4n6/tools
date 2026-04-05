@@ -1462,9 +1462,9 @@ function App() {
                   <option value="mp3">MP3</option>
                 </select>
               </label>
-              {mp3Capability && !mp3Capability.available ? (
+              {exportFormat === 'mp3' && mp3Capability && !mp3Capability.available ? (
                 <p className="mt-1 text-xs text-amber-300/90">
-                  Native MP3 encoder is unavailable in this browser/runtime. We will try ffmpeg.wasm fallback during export; WAV will still work.
+                  MP3 may be unavailable in this browser/runtime and can fall back to WAV at build time.
                 </p>
               ) : null}
               <div className="mt-2 flex gap-2">
