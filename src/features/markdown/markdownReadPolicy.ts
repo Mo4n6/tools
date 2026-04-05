@@ -6,8 +6,16 @@ export interface MarkdownReadPolicy {
   listPrefixStyle: ListPrefixStyle;
 }
 
-export const defaultMarkdownReadPolicy: MarkdownReadPolicy = {
+export const plainMarkdownReadPolicy: MarkdownReadPolicy = {
+  includeCodeBlocks: false,
+  announceHeadings: false,
+  listPrefixStyle: 'none',
+};
+
+export const expressiveMarkdownReadPolicy: MarkdownReadPolicy = {
   includeCodeBlocks: false,
   announceHeadings: true,
   listPrefixStyle: 'bullet',
 };
+
+export const defaultMarkdownReadPolicy: MarkdownReadPolicy = plainMarkdownReadPolicy;

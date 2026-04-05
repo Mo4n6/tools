@@ -13,6 +13,7 @@ import { WebSpeechProvider } from './tts/providers/webSpeechProvider';
 import type { KokoroDType, RuntimeDType, TTSProvider, TTSVoice } from './tts/types';
 import { chunkSegmentsByPolicy, defaultChunkingPolicy } from './domain/chunking/policy';
 import { buildFullAudioExport, MP3_FALLBACK_WARNING, type ExportFormat } from './tts/buildFullAudioExport';
+import { PreviewPanel } from './features/preview/PreviewPanel';
 import {
   SYNTHESIS_MAX_SPLIT_DEPTH,
   SYNTHESIS_RETRY_BACKOFF_BASE_MS,
@@ -1411,25 +1412,12 @@ function App() {
         <article className="rounded-xl border border-emerald-500/35 bg-[#07110a] p-4 shadow-lg shadow-black/20">
           <h2 className="text-lg font-semibold">Preview panel</h2>
           <p className="mt-2 text-sm text-emerald-300/70">Normalized content is ready for preview.</p>
-          <div className="mt-3 max-h-[420px] space-y-2 overflow-auto pr-1">
-            {ingested.document.segments.map((segment, index) => (
-              <div
-                key={segment.id}
-                className={`rounded-md border p-2 text-sm ${
-                  player.currentSegmentIndex === index
-                    ? 'border-emerald-400/80 bg-emerald-500/10'
-                    : 'border-emerald-500/30 bg-[#0a160f]'
-                }`}
-              >
-                <div className="mb-1 flex items-center justify-between text-xs text-emerald-300/70">
-                  <span>{segment.blockType}</span>
-                  <span>
-                    {segment.sourceOffset?.start ?? 0}-{segment.sourceOffset?.end ?? segment.text.length}
-                  </span>
-                </div>
-                <p>{segment.text}</p>
-              </div>
-            ))}
+          <PreviewPanel
+            segments={ingested.document.segments}
+            currentSegmentIndex={player.currentSegmentIndex}
+            isContinuousMode={playbackMode === 'continuous'}
+          />
+          <div className="mt-2 space-y-2">
             {ingested.warnings.map((warning) => (
               <p key={warning.code} className="rounded border border-amber-700 bg-amber-950/40 p-2 text-xs text-amber-200">
                 {warning.message}

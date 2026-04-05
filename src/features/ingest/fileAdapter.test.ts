@@ -141,7 +141,12 @@ describe('ingestFile type routing and validation', () => {
 
     expect(normalized.title).toBeUndefined();
     expect(normalized.segments.length).toBeGreaterThan(0);
-    expect(normalized.segments.map((segment) => segment.text).join(' ')).toContain('Main Title');
+    const joined = normalized.segments.map((segment) => segment.text).join(' ');
+
+    expect(joined).toContain('Main Title');
+    expect(joined).not.toContain('Heading level');
+    expect(joined).not.toContain('Bullet:');
+    expect(joined).not.toContain('Numbered item');
   });
 
   it('throws UNSUPPORTED_FILE_TYPE for unsupported file types', async () => {
