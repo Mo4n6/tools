@@ -6,6 +6,7 @@ import {
   SYNTHESIS_RETRY_MAX_ATTEMPTS,
   SYNTHESIS_RETRY_BACKOFF_BASE_MS,
   SYNTHESIS_MAX_SPLIT_DEPTH,
+  estimateMinimumDurationSeconds,
 } from '../../tts/synthesizeWithValidation';
 
 export type PlayerMachineState = 'idle' | 'loading' | 'playing' | 'paused' | 'error' | 'finished';
@@ -60,6 +61,7 @@ const WASM_FAILURE_DEGRADE_THRESHOLD = 3;
 const WEB_SPEECH_STABILITY_HINT = 'Switched to system voice for stability.';
 const PLAYBACK_RUNTIME_RETRY_MAX_ATTEMPTS = 2;
 const PLAYBACK_RUNTIME_RETRY_BACKOFF_BASE_MS = 200;
+const PLAYBACK_MIN_COMPLETION_RATIO = 0.6;
 
 function getProviderId(provider: TTSProvider): string {
   const providerWithId = provider as TTSProvider & { providerId?: string; id?: string };
@@ -332,6 +334,30 @@ export function usePlayerController({
             segmentId,
           });
         },
+        onRetry: ({ segmentId, attempt, maxAttempts, splitDepth, reason }) => {
+          perfTelemetry.sink.log({
+            type: 'tts.segment_retry',
+            segmentId,
+            attempt,
+            maxAttempts,
+            splitDepth,
+            reason,
+          });
+        },
+        onRegenerated: ({ segmentId, splitDepth, chunkCount }) => {
+          perfTelemetry.sink.log({
+            type: 'tts.segment_regenerated',
+            segmentId,
+            splitDepth,
+            chunkCount,
+            code: 'regen_success',
+          });
+          perfTelemetry.sink.log({
+            type: 'tts.validation_code',
+            segmentId,
+            code: 'regen_success',
+          });
+        },
       });
       wasmFailureCountRef.current = 0;
 
@@ -350,7 +376,17 @@ export function usePlayerController({
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to synthesize audio segment.';
-      const failureReason = message.includes('duration_too_short') ? 'duration_too_short' : message;
+      const failureReason = message.includes('duration_too_short')
+        ? 'duration_too_short'
+        : (message.includes('regen_exhausted') ? 'regen_exhausted' : message);
+      if (failureReason === 'duration_too_short' || failureReason === 'regen_exhausted') {
+        perfTelemetry.sink.log({
+          type: 'tts.validation_code',
+          segmentId: segment.id,
+          code: failureReason,
+          detail: message,
+        });
+      }
       if (isLikelyWasmFailure(message, providerRuntimeSignature)) {
         wasmFailureCountRef.current += 1;
       }
@@ -587,6 +623,33 @@ export function usePlayerController({
     };
 
     audio.onended = () => {
+      const minimumExpectedDuration = estimateMinimumDurationSeconds(
+        segment.text,
+        synthesisOptions?.rate ?? 1,
+      );
+      const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+      const ratioPlayed = duration > 0 ? audio.currentTime / duration : 0;
+      const shortDurationCompletion = duration > 0
+        && duration < minimumExpectedDuration
+        && ratioPlayed < PLAYBACK_MIN_COMPLETION_RATIO;
+      if (shortDurationCompletion) {
+        dispatch({
+          type: 'SET_ERROR',
+          error: `Audio playback failed: duration_too_short decoded=${duration.toFixed(3)}s expected_min=${minimumExpectedDuration.toFixed(3)}s.`,
+        });
+        perfTelemetry.sink.log({
+          type: 'tts.synth_failure',
+          segmentId: segment.id,
+          reason: 'duration_too_short',
+        });
+        perfTelemetry.sink.log({
+          type: 'tts.validation_code',
+          segmentId: segment.id,
+          code: 'duration_too_short',
+          detail: `onended_duration=${duration.toFixed(3)} expected_min=${minimumExpectedDuration.toFixed(3)} played_ratio=${ratioPlayed.toFixed(3)}`,
+        });
+        return;
+      }
       if (transitioningRef.current) {
         return;
       }
@@ -664,6 +727,11 @@ export function usePlayerController({
     };
 
     audio.onerror = () => {
+      perfTelemetry.sink.log({
+        type: 'tts.synth_failure',
+        segmentId: segment.id,
+        reason: 'playback_audio_error',
+      });
       void handlePlaybackRuntimeError(new Error('Audio element emitted error.'));
     };
 
