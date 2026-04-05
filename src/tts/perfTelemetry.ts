@@ -33,6 +33,13 @@ export type PerfMetricEvent =
     segmentId: string;
     splitDepth: number;
     chunkCount: number;
+    code?: 'regen_success';
+  }
+  | {
+    type: 'tts.validation_code';
+    segmentId: string;
+    code: 'duration_too_short' | 'regen_success' | 'regen_exhausted';
+    detail?: string;
   }
   | {
     type: 'tts.synth_failure';

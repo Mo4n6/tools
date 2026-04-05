@@ -11,6 +11,15 @@ const MIN_SPEECH_RATE = 0.5;
 const MAX_SPEECH_RATE = 2.5;
 const EXPECTED_DURATION_SAFETY_FACTOR = 0.25;
 
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function buildRegenerationExhaustedError(error: unknown): Error {
+  const reason = toErrorMessage(error);
+  return new Error(`regen_exhausted: ${reason}`);
+}
+
 export type SynthesisRetryEvent = {
   segmentId: string;
   attempt: number;
@@ -172,7 +181,7 @@ export async function synthesizeWithValidation({
           maxAttempts,
           splitDepth,
           delayMs: backoffMs,
-          reason: error instanceof Error ? error.message : String(error),
+          reason: toErrorMessage(error),
         });
         await delayMs(backoffMs);
       }
@@ -180,12 +189,12 @@ export async function synthesizeWithValidation({
   }
 
   if (splitDepth >= maxSplitDepth) {
-    throw lastError;
+    throw buildRegenerationExhaustedError(lastError);
   }
 
   const subchunks = splitTextForSynthesisRetry(segment.text);
   if (subchunks.length < 2) {
-    throw lastError;
+    throw buildRegenerationExhaustedError(lastError);
   }
 
   onSplit?.({ segmentId: segment.id, splitDepth, chunkCount: subchunks.length });
