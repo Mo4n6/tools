@@ -255,6 +255,7 @@ type DevTtsDiagnostics = {
 
 const KOKORO_MODULE_NOT_BUNDLED_HINT = 'Install/add kokoro-js dependency and avoid @vite-ignore for this import.';
 const KOKORO_DTYPE_OPTIONS: KokoroDType[] = ['fp32', 'fp16', 'q8', 'q4', 'q4f16'];
+const AUDIO_REPLAY_EPSILON_SECONDS = 0.05;
 
 const loadStoredKokoroDtype = (): KokoroDType | 'auto' => {
   if (typeof window === 'undefined') {
@@ -502,6 +503,38 @@ function App() {
     audioElement.currentTime = targetTime;
   }, []);
 
+  const syncExportPreviewStateFromAudio = useCallback((audioElement: HTMLAudioElement) => {
+    const duration = Number.isFinite(audioElement.duration) ? audioElement.duration : 0;
+    const endedTime = duration > 0 ? duration : audioElement.currentTime || 0;
+    setExportPreviewCurrentTime(audioElement.ended ? endedTime : (audioElement.currentTime || 0));
+    setExportPreviewDuration(duration);
+    setIsExportPreviewPlaying(!audioElement.paused && !audioElement.ended);
+  }, []);
+
+  const playExportedAudio = useCallback(() => {
+    const audioElement = fullAudioElementRef.current;
+    if (!audioElement) {
+      return;
+    }
+
+    const duration = Number.isFinite(audioElement.duration) ? audioElement.duration : 0;
+    const isReplayAtEnd = audioElement.ended
+      || (duration > 0 && audioElement.currentTime >= Math.max(0, duration - AUDIO_REPLAY_EPSILON_SECONDS));
+    if (isReplayAtEnd) {
+      audioElement.currentTime = 0;
+      syncExportPreviewStateFromAudio(audioElement);
+    }
+
+    void audioElement.play().catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      setFullAudioBuild((current) => ({
+        ...current,
+        status: 'error',
+        error: `Exported audio playback failed: ${message}`,
+      }));
+    });
+  }, [syncExportPreviewStateFromAudio]);
+
   const buildFullAudio = useCallback(async (retryFromSegmentId?: string) => {
     if (!playbackData.playbackSegments.length) {
       setFullAudioBuild({
@@ -709,9 +742,7 @@ function App() {
     }
 
     const syncPreviewState = () => {
-      setExportPreviewCurrentTime(audioElement.currentTime || 0);
-      setExportPreviewDuration(Number.isFinite(audioElement.duration) ? audioElement.duration : 0);
-      setIsExportPreviewPlaying(!audioElement.paused);
+      syncExportPreviewStateFromAudio(audioElement);
     };
 
     syncPreviewState();
@@ -728,7 +759,7 @@ function App() {
       audioElement.removeEventListener('pause', syncPreviewState);
       audioElement.removeEventListener('ended', syncPreviewState);
     };
-  }, [fullAudioBuild.audioUrl]);
+  }, [fullAudioBuild.audioUrl, syncExportPreviewStateFromAudio]);
 
   useEffect(() => {
     return () => {
@@ -1457,18 +1488,7 @@ function App() {
                   return;
                 }
                 if (playbackSource === 'exported') {
-                  const audioElement = fullAudioElementRef.current;
-                  if (!audioElement) {
-                    return;
-                  }
-                  void audioElement.play().catch((error) => {
-                    const message = error instanceof Error ? error.message : String(error);
-                    setFullAudioBuild((current) => ({
-                      ...current,
-                      status: 'error',
-                      error: `Exported audio playback failed: ${message}`,
-                    }));
-                  });
+                  playExportedAudio();
                   return;
                 }
 
@@ -1595,19 +1615,8 @@ function App() {
                       type="button"
                       className="rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
                       onClick={() => {
-                        const audioElement = fullAudioElementRef.current;
-                        if (!audioElement) {
-                          return;
-                        }
                         setPlaybackSource('exported');
-                        void audioElement.play().catch((error) => {
-                          const message = error instanceof Error ? error.message : String(error);
-                          setFullAudioBuild((current) => ({
-                            ...current,
-                            status: 'error',
-                            error: `Exported audio playback failed: ${message}`,
-                          }));
-                        });
+                        playExportedAudio();
                       }}
                     >
                       Play exported audio
@@ -1615,6 +1624,13 @@ function App() {
                     <audio
                       ref={fullAudioElementRef}
                       className="sr-only"
+                      onEnded={() => {
+                        const audioElement = fullAudioElementRef.current;
+                        if (!audioElement) {
+                          return;
+                        }
+                        syncExportPreviewStateFromAudio(audioElement);
+                      }}
                       preload="metadata"
                       src={fullAudioBuild.audioUrl}
                     />
