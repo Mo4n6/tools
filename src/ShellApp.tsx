@@ -21,21 +21,21 @@ const ComingSoonTool = ({ name }: { name: string }): JSX.Element => (
 
 const toolDefinitions: ToolDefinition[] = [
   {
-    path: '/tools/momoro-reader',
+    path: '/momoro-reader',
     label: 'Momoro Reader',
     description: 'Read and listen to documents.',
     render: () => <MomoroReaderApp />,
     available: true,
   },
   {
-    path: '/tools/highlights',
+    path: '/highlights',
     label: 'Highlights',
     description: 'Collect and review key excerpts.',
     render: () => <ComingSoonTool name="Highlights" />,
     available: false,
   },
   {
-    path: '/tools/library',
+    path: '/library',
     label: 'Library',
     description: 'Store and organize imported content.',
     render: () => <ComingSoonTool name="Library" />,
@@ -135,7 +135,7 @@ const ShellApp = (): JSX.Element => {
             return (
               <a
                 key={tool.path}
-                href={tool.path}
+                href={`#${tool.path}`}
                 onClick={(event) => {
                   event.preventDefault();
                   navigateTo(tool.path);
