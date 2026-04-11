@@ -479,6 +479,7 @@ function App() {
   );
   const [providerInitNonce, setProviderInitNonce] = useState(0);
   const [forceWebGpuRetry, setForceWebGpuRetry] = useState(false);
+  const [hasResolvedProviderSelection, setHasResolvedProviderSelection] = useState(false);
   const [fullAudioBuild, setFullAudioBuild] = useState<FullAudioBuildState>({
     status: 'idle',
     builtSegments: 0,
@@ -937,11 +938,13 @@ function App() {
       setShowFallbackBanner(selectedProvider.fallbackToWebSpeech && !selectedProvider.fallbackIntentional);
       setShowInformationalFallbackBanner(Boolean(selectedProvider.fallbackIntentional));
       setProviderFallbackError(selectedProvider.fallbackError ?? null);
+      setHasResolvedProviderSelection(true);
     }
   }, [forceWebGpuRetry, selectedKokoroDtype, shouldSkipKokoroInitOnPages]);   // keep your existing deps or update if needed
 
   useEffect(() => {
     let active = true;
+    setHasResolvedProviderSelection(false);
 
     void initializeProvider(() => active);
 
@@ -982,6 +985,14 @@ function App() {
     let active = true;
 
     const ensureVoiceAvailable = async () => {
+      if (!hasResolvedProviderSelection) {
+        if (active) {
+          setIsVoiceReadyForPlayback(false);
+          setVoiceReadinessHelperText('Initializing voice provider…');
+        }
+        return;
+      }
+
       if (active) {
         setIsVoiceReadyForPlayback(false);
         setVoiceReadinessHelperText('Loading voices…');
@@ -1062,6 +1073,7 @@ function App() {
       active = false;
     };
   }, [
+    hasResolvedProviderSelection,
     hasCompletedVoiceMigration,
     hasPendingVoiceMigrationNormalization,
     provider,
@@ -1144,6 +1156,9 @@ function App() {
     if (!hasQueuedUrlAutoPlayRef.current || hasStartedUrlAutoPlayRef.current) {
       return;
     }
+    if (!hasResolvedProviderSelection) {
+      return;
+    }
     if (!isVoiceReadyForPlayback || player.state === 'loading' || player.state === 'playing') {
       return;
     }
@@ -1153,7 +1168,7 @@ function App() {
 
     hasStartedUrlAutoPlayRef.current = true;
     void player.seekSegment(0, 0);
-  }, [ingested.document.segments.length, isVoiceReadyForPlayback, player.seekSegment, player.state, sourceType]);
+  }, [hasResolvedProviderSelection, ingested.document.segments.length, isVoiceReadyForPlayback, player.seekSegment, player.state, sourceType]);
 
   const runtimeStatus = useMemo(() => {
     if (providerRuntimeMetadata.providerType === 'web-speech') {
