@@ -54,7 +54,10 @@ function decodeBase64UrlText(encoded: string): string | null {
     return null;
   }
 
-  const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/');
+  const normalized = encoded
+    .replace(/\s+/g, '+')
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
   const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
 
   try {
@@ -66,22 +69,41 @@ function decodeBase64UrlText(encoded: string): string | null {
   }
 }
 
+function getHashQueryString(hash: string): string {
+  if (!hash.startsWith('#')) {
+    return '';
+  }
+
+  const queryIndex = hash.indexOf('?');
+  if (queryIndex < 0) {
+    return '';
+  }
+
+  return hash.slice(queryIndex);
+}
+
 function readUrlBase64Bootstrap(): UrlBase64Bootstrap {
   if (typeof window === 'undefined') {
     return { text: null, error: null, paramKey: null };
   }
 
-  const params = new URLSearchParams(window.location.search);
-  for (const paramKey of URL_BASE64_TEXT_PARAM_KEYS) {
-    const encodedValue = params.get(paramKey);
-    if (typeof encodedValue !== 'string') {
-      continue;
+  const paramSets = [
+    new URLSearchParams(window.location.search),
+    new URLSearchParams(getHashQueryString(window.location.hash)),
+  ];
+
+  for (const params of paramSets) {
+    for (const paramKey of URL_BASE64_TEXT_PARAM_KEYS) {
+      const encodedValue = params.get(paramKey);
+      if (typeof encodedValue !== 'string') {
+        continue;
+      }
+      const decoded = decodeBase64UrlText(encodedValue);
+      if (decoded === null) {
+        return { text: null, error: `Unable to decode URL parameter "${paramKey}" as base64 text.`, paramKey };
+      }
+      return { text: decoded, error: null, paramKey };
     }
-    const decoded = decodeBase64UrlText(encodedValue);
-    if (decoded === null) {
-      return { text: null, error: `Unable to decode URL parameter "${paramKey}" as base64 text.`, paramKey };
-    }
-    return { text: decoded, error: null, paramKey };
   }
 
   return { text: null, error: null, paramKey: null };
