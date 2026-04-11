@@ -1234,7 +1234,7 @@ function App() {
               Pass base64-encoded text in the query string using <code>?text64=</code>, <code>?b64=</code>, or <code>?text_base64=</code>.
             </p>
             <p className="mt-1">
-              Example: <code>/tools/momoro-reader?b64=&lt;base64text&gt;</code>
+              Example: <code>https://&lt;domain&gt;/tools/momoro-reader?b64=&lt;base64text&gt;</code>
             </p>
             <p className="mt-1">
               When present, the app decodes the text, loads it into the paste field, and starts playback automatically using the current default voice/rate settings.
