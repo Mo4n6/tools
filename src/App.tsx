@@ -41,6 +41,55 @@ function buildDocumentFingerprint(segments: SpeakableSegment[]): string {
   return `${segments.length}:${hashFingerprintValue(normalizedParts.join('|'))}`;
 }
 
+type UrlBase64Bootstrap = {
+  text: string | null;
+  error: string | null;
+  paramKey: string | null;
+};
+
+const URL_BASE64_TEXT_PARAM_KEYS = ['text64', 'b64', 'text_base64'] as const;
+
+function decodeBase64UrlText(encoded: string): string | null {
+  if (!encoded) {
+    return null;
+  }
+
+  const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+
+  try {
+    const binary = window.atob(padded);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function readUrlBase64Bootstrap(): UrlBase64Bootstrap {
+  if (typeof window === 'undefined') {
+    return { text: null, error: null, paramKey: null };
+  }
+
+  const hashQueryIndex = window.location.hash.indexOf('?');
+  const hashQuery = hashQueryIndex >= 0 ? window.location.hash.slice(hashQueryIndex + 1) : '';
+  const params = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(hashQuery);
+  for (const paramKey of URL_BASE64_TEXT_PARAM_KEYS) {
+    const encodedValue = params.get(paramKey) ?? hashParams.get(paramKey);
+    if (typeof encodedValue !== 'string') {
+      continue;
+    }
+    const decoded = decodeBase64UrlText(encodedValue);
+    if (decoded === null) {
+      return { text: null, error: `Unable to decode URL parameter "${paramKey}" as base64 text.`, paramKey };
+    }
+    return { text: decoded, error: null, paramKey };
+  }
+
+  return { text: null, error: null, paramKey: null };
+}
+
 
 const isUrlIngestEnabled = import.meta.env.VITE_ENABLE_URL_INGEST !== 'false';
 const isPagesStyleBase = import.meta.env.BASE_URL !== '/';
@@ -341,8 +390,9 @@ const getFallbackBucketLabel = (
 
 function App() {
   const isProduction = import.meta.env.PROD;
+  const urlBase64Bootstrap = useMemo(readUrlBase64Bootstrap, []);
   const [sourceType, setSourceType] = useState<SourceType>('text');
-  const [textInput, setTextInput] = useState('Paste text to normalize and preview for playback.');
+  const [textInput, setTextInput] = useState(urlBase64Bootstrap.text ?? 'Paste text to normalize and preview for playback.');
   const [urlInput, setUrlInput] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedFileName, setSelectedFileName] = useState('');
@@ -376,6 +426,7 @@ function App() {
   const [mp3Capability, setMp3Capability] = useState<Mp3CapabilityProbe | null>(null);
   const [firstAudioTimingMs, setFirstAudioTimingMs] = useState<number | null>(null);
   const [showDetails, setShowDetails] = useState(!isProduction);
+  const [showUrlBase64Help, setShowUrlBase64Help] = useState(false);
   const [voice, setVoice] = useState(storedPreferences?.voice ?? '');
   const [availableVoices, setAvailableVoices] = useState<TTSVoice[]>([]);
   const [rate, setRate] = useState(storedPreferences?.rate ?? 1);
@@ -406,6 +457,8 @@ function App() {
   const [exportPreviewCurrentTime, setExportPreviewCurrentTime] = useState(0);
   const [exportPreviewDuration, setExportPreviewDuration] = useState(0);
   const [isExportPreviewPlaying, setIsExportPreviewPlaying] = useState(false);
+  const hasQueuedUrlAutoPlayRef = useRef(Boolean(urlBase64Bootstrap.text));
+  const hasStartedUrlAutoPlayRef = useRef(false);
 
   const shouldSuppressNextVoiceMigrationWarning = (
     hasPendingVoiceMigrationNormalization && !hasCompletedVoiceMigration
@@ -1048,6 +1101,21 @@ function App() {
     setSourceType('file');
   };
 
+  useEffect(() => {
+    if (!hasQueuedUrlAutoPlayRef.current || hasStartedUrlAutoPlayRef.current) {
+      return;
+    }
+    if (!isVoiceReadyForPlayback || player.state === 'loading' || player.state === 'playing') {
+      return;
+    }
+    if (sourceType !== 'text' || ingested.document.segments.length === 0) {
+      return;
+    }
+
+    hasStartedUrlAutoPlayRef.current = true;
+    void player.seekSegment(0, 0);
+  }, [ingested.document.segments.length, isVoiceReadyForPlayback, player.seekSegment, player.state, sourceType]);
+
   const runtimeStatus = useMemo(() => {
     if (providerRuntimeMetadata.providerType === 'web-speech') {
       return {
@@ -1111,7 +1179,38 @@ function App() {
             >
               {showModelLicenseInfo ? 'Hide License Info' : 'Show License Info'}
             </button>
+            <button
+              type="button"
+              className="rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-xs text-emerald-100 hover:border-emerald-300/70"
+              onClick={() => setShowUrlBase64Help((current) => !current)}
+            >
+              {showUrlBase64Help ? 'Hide URL Input Help' : 'URL Input Help'}
+            </button>
           </div>
+        ) : null}
+        {showUrlBase64Help ? (
+          <div className="mt-2 rounded-md border border-emerald-500/45 bg-[#07110a] px-3 py-2 text-xs text-emerald-200/90">
+            <p className="font-semibold text-emerald-100">Base64 URL input</p>
+            <p className="mt-1">
+              Pass base64-encoded text in the query string using <code>?text64=</code>, <code>?b64=</code>, or <code>?text_base64=</code>.
+            </p>
+            <p className="mt-1">
+              When present, the app decodes the text, loads it into the paste field, and starts playback automatically using the current default voice/rate settings.
+            </p>
+            <p className="mt-1 text-emerald-300/80">
+              Works with either direct query strings or hash-route query strings (for example <code>/tools/?b64=...#/momoro-reader</code>).
+            </p>
+          </div>
+        ) : null}
+        {urlBase64Bootstrap.paramKey ? (
+          <p className="mt-2 text-xs text-emerald-300/80">
+            Loaded base64 text from URL parameter <code>{urlBase64Bootstrap.paramKey}</code>.
+          </p>
+        ) : null}
+        {urlBase64Bootstrap.error ? (
+          <p className="mt-2 rounded border border-amber-700 bg-amber-950/40 p-2 text-xs text-amber-200">
+            {urlBase64Bootstrap.error}
+          </p>
         ) : null}
         {shouldShowAdvancedDetails ? (
           <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-emerald-200/90">
@@ -1432,6 +1531,10 @@ function App() {
                 }
                 if (player.state === 'error') {
                   void player.retryCurrentSegment();
+                  return;
+                }
+                if (player.state === 'finished') {
+                  void player.seekSegment(0, 0);
                   return;
                 }
                 if (player.state === 'playing' || player.state === 'loading') {

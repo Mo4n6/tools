@@ -60,6 +60,7 @@ export function PlayerControls({
   const [liveMessage, setLiveMessage] = useState('Playback idle.');
   const isPlaying = queueStatus === 'playing' || queueStatus === 'loading';
   const canPlay = !playDisabled;
+  const playButtonLabel = queueStatus === 'finished' ? 'Replay' : 'Play';
   const progressText = useMemo(() => {
     if (progressTextOverride) {
       return progressTextOverride;
@@ -187,7 +188,7 @@ export function PlayerControls({
           }}
           type="button"
         >
-          {isPlaying ? 'Pause' : 'Play'}
+          {isPlaying ? 'Pause' : playButtonLabel}
         </button>
       </div>
 
