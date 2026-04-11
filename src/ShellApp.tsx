@@ -45,29 +45,73 @@ const toolDefinitions: ToolDefinition[] = [
 
 const defaultToolPath = toolDefinitions[0]?.path ?? '/';
 
-const getNormalizedPath = (path: string): string => {
-  if (path === '/') {
-    return defaultToolPath;
+const normalizeToolPath = (path: string): string => {
+  if (path.startsWith('/tools/')) {
+    return path;
+  }
+  if (path.startsWith('/')) {
+    return `/tools${path}`;
+  }
+  return `/tools/${path}`;
+};
+
+const getPathFromHash = (hash: string): string => {
+  if (!hash.startsWith('#')) {
+    return '';
+  }
+  const hashWithoutPound = hash.slice(1);
+  const routeOnly = hashWithoutPound.split('?')[0] ?? '';
+  if (!routeOnly.startsWith('/')) {
+    return '';
+  }
+  return normalizeToolPath(routeOnly);
+};
+
+const getLegacyPathFromPathname = (pathname: string): string => {
+  const normalizedPathname = pathname.endsWith('/') && pathname.length > 1
+    ? pathname.slice(0, -1)
+    : pathname;
+  const legacyMatch = toolDefinitions.find((tool) => (
+    normalizedPathname === `/tools${tool.path}` || normalizedPathname === tool.path
+  ));
+  return legacyMatch?.path ?? '';
+};
+
+const getNormalizedPath = (pathname: string, hash: string): string => {
+  const normalizedPathname = pathname.endsWith('/') && pathname.length > 1
+    ? pathname.slice(0, -1)
+    : pathname;
+  if (toolDefinitions.some((tool) => tool.path === normalizedPathname)) {
+    return normalizedPathname;
+  }
+  const hashPath = getPathFromHash(hash);
+  if (hashPath) {
+    return hashPath;
+  }
+  const legacyPath = getLegacyPathFromPathname(pathname);
+  if (legacyPath) {
+    return legacyPath;
   }
 
-  return path;
+  return defaultToolPath;
 };
 
 const navigateTo = (path: string): void => {
-  window.history.pushState({}, '', path);
+  const normalizedPath = normalizeToolPath(path);
+  if (window.location.pathname === normalizedPath) {
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    return;
+  }
+  window.history.pushState({}, '', `${normalizedPath}${window.location.search}`);
   window.dispatchEvent(new PopStateEvent('popstate'));
 };
 
 const ShellApp = (): JSX.Element => {
-  const [currentPath, setCurrentPath] = useState<string>(() => getNormalizedPath(window.location.pathname));
+  const [currentPath, setCurrentPath] = useState<string>(() => getNormalizedPath(window.location.pathname, window.location.hash));
 
   useEffect(() => {
-    if (window.location.pathname === '/') {
-      window.history.replaceState({}, '', defaultToolPath);
-    }
-
     const handlePopState = (): void => {
-      setCurrentPath(getNormalizedPath(window.location.pathname));
+      setCurrentPath(getNormalizedPath(window.location.pathname, window.location.hash));
     };
 
     window.addEventListener('popstate', handlePopState);

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Redirecting…</title>
+    <script>
+      (function redirectToSpaEntry(location) {
+        var parts = location.pathname.split('/').filter(Boolean);
+        var usesToolsPrefix = parts[0] === 'tools';
+        var basePath = usesToolsPrefix ? '/tools' : '';
+        var routePath = '/' + parts.slice(usesToolsPrefix ? 1 : 0).join('/');
+        var encodedRoute = routePath.replace(/^\//, '');
+        var encodedSearch = location.search ? '&' + location.search.slice(1).replace(/&/g, '~and~') : '';
+        var encodedHash = location.hash ? '&' + location.hash.slice(1).replace(/&/g, '~and~') : '';
+        location.replace(basePath + '/?/' + encodedRoute + encodedSearch + encodedHash);
+      }(window.location));
+    </script>
+  </head>
+  <body></body>
+</html>
