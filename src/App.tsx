@@ -82,6 +82,22 @@ function getHashQueryString(hash: string): string {
   return hash.slice(queryIndex);
 }
 
+function getSpaFallbackSearchParams(): URLSearchParams | null {
+  if (typeof window === 'undefined' || !window.location.search.startsWith('?/')) {
+    return null;
+  }
+
+  const rawValue = window.location.search.slice(2).replace(/~and~/g, '&');
+  const withLeadingSlash = rawValue.startsWith('/') ? rawValue : `/${rawValue}`;
+
+  try {
+    const parsed = new URL(withLeadingSlash, window.location.origin);
+    return new URLSearchParams(parsed.search);
+  } catch {
+    return null;
+  }
+}
+
 function readUrlBase64Bootstrap(): UrlBase64Bootstrap {
   if (typeof window === 'undefined') {
     return { text: null, error: null, paramKey: null };
@@ -90,9 +106,13 @@ function readUrlBase64Bootstrap(): UrlBase64Bootstrap {
   const paramSets = [
     new URLSearchParams(window.location.search),
     new URLSearchParams(getHashQueryString(window.location.hash)),
+    getSpaFallbackSearchParams(),
   ];
 
   for (const params of paramSets) {
+    if (!params) {
+      continue;
+    }
     for (const paramKey of URL_BASE64_TEXT_PARAM_KEYS) {
       const encodedValue = params.get(paramKey);
       if (typeof encodedValue !== 'string') {

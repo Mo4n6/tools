@@ -45,6 +45,32 @@ const toolDefinitions: ToolDefinition[] = [
 
 const defaultToolPath = toolDefinitions[0]?.path ?? '/';
 
+type SpaFallbackLocation = {
+  pathname: string;
+  search: string;
+  hash: string;
+};
+
+const parseSpaFallbackLocation = (search: string): SpaFallbackLocation | null => {
+  if (!search.startsWith('?/')) {
+    return null;
+  }
+
+  const rawValue = search.slice(2).replace(/~and~/g, '&');
+  const withLeadingSlash = rawValue.startsWith('/') ? rawValue : `/${rawValue}`;
+
+  try {
+    const parsed = new URL(withLeadingSlash, window.location.origin);
+    return {
+      pathname: parsed.pathname,
+      search: parsed.search,
+      hash: parsed.hash,
+    };
+  } catch {
+    return null;
+  }
+};
+
 const normalizeToolPath = (path: string): string => {
   if (path.startsWith('/tools/')) {
     return path;
@@ -78,13 +104,16 @@ const getLegacyPathFromPathname = (pathname: string): string => {
 };
 
 const getNormalizedPath = (pathname: string, hash: string): string => {
-  const normalizedPathname = pathname.endsWith('/') && pathname.length > 1
-    ? pathname.slice(0, -1)
-    : pathname;
+  const spaFallbackLocation = parseSpaFallbackLocation(window.location.search);
+  const resolvedPathname = spaFallbackLocation?.pathname ?? pathname;
+  const resolvedHash = spaFallbackLocation?.hash ?? hash;
+  const normalizedPathname = resolvedPathname.endsWith('/') && resolvedPathname.length > 1
+    ? resolvedPathname.slice(0, -1)
+    : resolvedPathname;
   if (toolDefinitions.some((tool) => tool.path === normalizedPathname)) {
     return normalizedPathname;
   }
-  const hashPath = getPathFromHash(hash);
+  const hashPath = getPathFromHash(resolvedHash);
   if (hashPath) {
     return hashPath;
   }
