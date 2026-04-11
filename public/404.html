@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Redirecting…</title>
+    <script>
+      (function redirectToSpaEntry(location) {
+        var path = location.pathname + location.search + location.hash;
+        var normalizedPath = path.replace(/&/g, '~and~');
+        location.replace('/?/' + normalizedPath.replace(/^\//, ''));
+      }(window.location));
+    </script>
+  </head>
+  <body></body>
+</html>

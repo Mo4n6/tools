@@ -7,6 +7,20 @@
   </head>
   <body class="bg-slate-950">
     <div id="root"></div>
+    <script>
+      (function routeFrom404Redirect(location) {
+        if (location.search[1] !== '/') {
+          return;
+        }
+        const decoded = location.search
+          .slice(1)
+          .split('&')
+          .map((segment) => segment.replace(/~and~/g, '&'))
+          .join('?');
+        const normalizedPath = decoded.startsWith('/') ? decoded : `/${decoded}`;
+        window.history.replaceState(null, '', `${normalizedPath}${location.hash}`);
+      }(window.location));
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

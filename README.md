@@ -12,6 +12,8 @@ Workflow runs:
 
 - `https://<your-github-username>.github.io/tts-reader-mvp/`
 - Built assets should resolve from `https://<your-github-username>.github.io/tts-reader-mvp/assets/...`
+- Tools shell route (hash-safe): `https://<host>/<base-path>#/momoro-reader`
+- Pretty route (with SPA 404 redirect fallback): `https://<host>/tools/momoro-reader?b64=<base64>`
 
 ### MVP scope supported on Pages
 
