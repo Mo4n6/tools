@@ -11,8 +11,8 @@
         var basePath = '/';
 
         if (segments.length > 0) {
-          if (segments[0] === 'tools' && segments.length > 1) {
-            basePath = '/' + segments[0] + '/' + segments[1] + '/';
+          if (segments[0] === 'tools') {
+            basePath = '/tools/';
           } else {
             basePath = '/' + segments[0] + '/';
           }
