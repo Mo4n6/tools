@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import MomoroReaderApp from './App';
+import MoongateApp from './features/moongate/MoongateApp';
 
 type ToolDefinition = {
   path: string;
@@ -25,6 +26,13 @@ const toolDefinitions: ToolDefinition[] = [
     label: 'Momoro Reader',
     description: 'Read and listen to documents.',
     render: () => <MomoroReaderApp />,
+    available: true,
+  },
+  {
+    path: '/moongate',
+    label: 'Moongate',
+    description: 'Binaural beats for sleep, focus, and calm.',
+    render: () => <MoongateApp />,
     available: true,
   },
   {
@@ -90,7 +98,13 @@ const getPathFromHash = (hash: string): string => {
   if (!routeOnly.startsWith('/')) {
     return '';
   }
-  return normalizeToolPath(routeOnly);
+  const normalizedRoute = routeOnly.endsWith('/') && routeOnly.length > 1
+    ? routeOnly.slice(0, -1)
+    : routeOnly;
+  const hashMatch = toolDefinitions.find((tool) => (
+    normalizedRoute === tool.path || normalizedRoute === `/tools${tool.path}`
+  ));
+  return hashMatch?.path ?? '';
 };
 
 const getLegacyPathFromPathname = (pathname: string): string => {
