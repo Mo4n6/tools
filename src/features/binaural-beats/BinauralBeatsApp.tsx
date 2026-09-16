@@ -61,7 +61,7 @@ const rangeClassName = 'mt-1 w-full accent-emerald-400 focus-visible:outline-non
 const selectClassName = 'mt-1 w-full rounded-md border border-emerald-500/30 bg-[#0a160f] p-2 text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400';
 const secondaryButtonClassName = 'rounded-md border border-emerald-500/40 bg-[#07110a] px-2 py-1 text-xs text-emerald-100 hover:border-emerald-300/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60';
 
-type PlaybackStatus = 'idle' | 'playing' | 'fading';
+type PlaybackStatus = 'idle' | 'starting' | 'playing' | 'fading';
 
 const BinauralBeatsApp = (): JSX.Element => {
   const [settings, setSettings] = useState<BinauralSettings>(() => parseSettings(readStorage(SETTINGS_STORAGE_KEY)) ?? DEFAULT_SETTINGS);
@@ -79,7 +79,10 @@ const BinauralBeatsApp = (): JSX.Element => {
   const webAudioSupported = useMemo(() => isWebAudioSupported(), []);
   const activePreset = useMemo(() => findMatchingPreset(settings), [settings]);
   const band = BAND_INFO[bandForBeat(settings.beatHz)];
-  const isPlaying = status !== 'idle';
+  const isStarting = status === 'starting';
+  const isPlaying = status === 'playing' || status === 'fading';
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
   useEffect(() => {
     writeStorage(SETTINGS_STORAGE_KEY, settings);
@@ -93,6 +96,8 @@ const BinauralBeatsApp = (): JSX.Element => {
     if (!isPlaying) {
       return;
     }
+    // Also runs on the starting -> playing transition so edits made while the
+    // context was resuming are applied.
     engineRef.current?.update(settings);
   }, [isPlaying, settings]);
 
@@ -136,12 +141,17 @@ const BinauralBeatsApp = (): JSX.Element => {
 
   const play = useCallback(async (): Promise<void> => {
     setError(null);
+    setStatus('starting');
     const engine = engineRef.current ?? new BinauralEngine();
     engineRef.current = engine;
     try {
       await engine.start(settings);
+      if (!engine.isRunning) {
+        // Disposed (unmounted) while the context was resuming.
+        return;
+      }
       setStatus('playing');
-      scheduleTimer(settings.timerMinutes);
+      scheduleTimer(settingsRef.current.timerMinutes);
     } catch (startError) {
       setStatus('idle');
       setError(startError instanceof Error ? startError.message : 'Unable to start audio.');
@@ -149,12 +159,15 @@ const BinauralBeatsApp = (): JSX.Element => {
   }, [scheduleTimer, settings]);
 
   const togglePlayback = useCallback((): void => {
+    if (isStarting) {
+      return;
+    }
     if (isPlaying) {
       stop();
     } else {
       void play();
     }
-  }, [isPlaying, play, stop]);
+  }, [isPlaying, isStarting, play, stop]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -191,13 +204,21 @@ const BinauralBeatsApp = (): JSX.Element => {
     setSettings((current) => clampSettings({ ...current, ...patch }));
   };
 
-  const handleTimerChange = (timerMinutes: number): void => {
-    updateSettings({ timerMinutes });
-    if (isPlaying) {
+  // Replaces the whole settings object and, while playing, reschedules the
+  // sleep timer if it changed. Any in-progress fade-out is cancelled so the
+  // engine is audible again under the new timer.
+  const applySettings = (next: BinauralSettings): void => {
+    const clamped = clampSettings(next);
+    setSettings(clamped);
+    if (isPlaying && clamped.timerMinutes !== settings.timerMinutes) {
+      engineRef.current?.cancelFade();
       setStatus('playing');
-      engineRef.current?.update({ ...settings, timerMinutes });
-      scheduleTimer(timerMinutes);
+      scheduleTimer(clamped.timerMinutes);
     }
+  };
+
+  const handleTimerChange = (timerMinutes: number): void => {
+    applySettings({ ...settings, timerMinutes });
   };
 
   const saveFavorite = (): void => {
@@ -210,7 +231,13 @@ const BinauralBeatsApp = (): JSX.Element => {
   };
 
   const remainingMs = timerEndsAt === null ? null : Math.max(0, timerEndsAt - now);
-  const statusLabel = status === 'fading' ? 'Fading out' : status === 'playing' ? 'Playing' : 'Idle';
+  const statusLabels: Record<PlaybackStatus, string> = {
+    idle: 'Idle',
+    starting: 'Starting',
+    playing: 'Playing',
+    fading: 'Fading out',
+  };
+  const statusLabel = statusLabels[status];
 
   return (
     <div className="w-full p-2 font-mono text-emerald-100 md:p-4">
@@ -374,10 +401,10 @@ const BinauralBeatsApp = (): JSX.Element => {
             type="button"
             aria-label={isPlaying ? 'Stop playback' : 'Start playback'}
             className="mt-3 w-full rounded-md border border-emerald-400 bg-emerald-500/15 px-2 py-2 text-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={!webAudioSupported}
+            disabled={!webAudioSupported || isStarting}
             onClick={togglePlayback}
           >
-            {isPlaying ? 'Stop' : 'Play'}
+            {isStarting ? 'Starting…' : isPlaying ? 'Stop' : 'Play'}
           </button>
           <p className="mt-1 text-xs text-emerald-300/70">Space toggles playback.</p>
 
@@ -428,7 +455,7 @@ const BinauralBeatsApp = (): JSX.Element => {
                     type="button"
                     className="min-w-0 flex-1 truncate text-left text-emerald-100 hover:text-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
                     title={describeSettings(favorite.settings)}
-                    onClick={() => setSettings(favorite.settings)}
+                    onClick={() => applySettings(favorite.settings)}
                   >
                     {favorite.name}
                   </button>

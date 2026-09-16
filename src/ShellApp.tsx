@@ -131,7 +131,7 @@ const getNormalizedPath = (pathname: string, hash: string): string => {
   if (hashPath) {
     return hashPath;
   }
-  const legacyPath = getLegacyPathFromPathname(pathname);
+  const legacyPath = getLegacyPathFromPathname(resolvedPathname);
   if (legacyPath) {
     return legacyPath;
   }

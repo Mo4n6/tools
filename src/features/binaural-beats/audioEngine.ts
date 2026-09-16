@@ -5,6 +5,7 @@ const NOISE_BUFFER_SECONDS = 4;
 const RAMP_SECONDS = 0.05;
 const START_FADE_SECONDS = 1.5;
 const STOP_FADE_SECONDS = 0.6;
+const RESTORE_FADE_SECONDS = 0.5;
 
 type AudioContextConstructor = new () => AudioContext;
 
@@ -44,16 +45,37 @@ export class BinauralEngine {
 
   private running = false;
 
+  private startPromise: Promise<void> | null = null;
+
   get isRunning(): boolean {
     return this.running;
   }
 
+  get isStarting(): boolean {
+    return this.startPromise !== null;
+  }
+
   async start(settings: BinauralSettings): Promise<void> {
+    if (this.startPromise) {
+      await this.startPromise;
+      this.update(settings);
+      return;
+    }
     if (this.running) {
       this.update(settings);
       return;
     }
 
+    const startPromise = this.startGraph(settings).finally(() => {
+      if (this.startPromise === startPromise) {
+        this.startPromise = null;
+      }
+    });
+    this.startPromise = startPromise;
+    await startPromise;
+  }
+
+  private async startGraph(settings: BinauralSettings): Promise<void> {
     const AudioContextCtor = resolveAudioContextConstructor();
     if (!AudioContextCtor) {
       throw new Error('Web Audio is not supported in this browser.');
@@ -63,6 +85,10 @@ export class BinauralEngine {
     this.context = context;
     if (context.state === 'suspended') {
       await context.resume();
+    }
+    if (this.context !== context || context.state === 'closed') {
+      // Disposed while waiting for the context to resume.
+      return;
     }
 
     const now = context.currentTime;
@@ -111,6 +137,18 @@ export class BinauralEngine {
     this.rightOscillator?.frequency.setTargetAtTime(settings.carrierHz + settings.beatHz, now, RAMP_SECONDS);
     this.toneGain?.gain.setTargetAtTime(settings.toneVolume, now, RAMP_SECONDS);
     this.syncNoise(settings);
+  }
+
+  cancelFade(): void {
+    const context = this.context;
+    const masterGain = this.masterGain;
+    if (!this.running || !context || !masterGain) {
+      return;
+    }
+    const now = context.currentTime;
+    masterGain.gain.cancelScheduledValues(now);
+    masterGain.gain.setValueAtTime(masterGain.gain.value, now);
+    masterGain.gain.linearRampToValueAtTime(1, now + RESTORE_FADE_SECONDS);
   }
 
   fadeOut(seconds: number): void {
