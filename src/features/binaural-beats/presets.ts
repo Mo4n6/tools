@@ -2,7 +2,7 @@ export type NoiseType = 'none' | 'white' | 'pink' | 'brown';
 
 export type BrainwaveBand = 'delta' | 'theta' | 'alpha' | 'beta' | 'gamma';
 
-export type MoongateSettings = {
+export type BinauralSettings = {
   carrierHz: number;
   beatHz: number;
   toneVolume: number;
@@ -11,18 +11,18 @@ export type MoongateSettings = {
   timerMinutes: number;
 };
 
-export type MoongatePreset = {
+export type BinauralPreset = {
   id: string;
   name: string;
   intent: string;
   bands: BrainwaveBand[];
-  settings: Pick<MoongateSettings, 'carrierHz' | 'beatHz' | 'noiseType'>;
+  settings: Pick<BinauralSettings, 'carrierHz' | 'beatHz' | 'noiseType'>;
 };
 
-export type MoongateFavorite = {
+export type BinauralFavorite = {
   id: string;
   name: string;
-  settings: MoongateSettings;
+  settings: BinauralSettings;
 };
 
 export const CARRIER_HZ_MIN = 80;
@@ -46,7 +46,7 @@ export const BAND_INFO: Record<BrainwaveBand, { label: string; rangeHz: [number,
   gamma: { label: 'Gamma', rangeHz: [30, 40], intent: 'Peak concentration' },
 };
 
-export const DEFAULT_SETTINGS: MoongateSettings = {
+export const DEFAULT_SETTINGS: BinauralSettings = {
   carrierHz: 200,
   beatHz: 6,
   toneVolume: 0.5,
@@ -55,7 +55,7 @@ export const DEFAULT_SETTINGS: MoongateSettings = {
   timerMinutes: 0,
 };
 
-export const PRESETS: MoongatePreset[] = [
+export const PRESETS: BinauralPreset[] = [
   {
     id: 'deep-sleep',
     name: 'Deep Sleep',
@@ -127,7 +127,7 @@ export const bandForBeat = (beatHz: number): BrainwaveBand => {
   return 'gamma';
 };
 
-export const clampSettings = (settings: MoongateSettings): MoongateSettings => ({
+export const clampSettings = (settings: BinauralSettings): BinauralSettings => ({
   carrierHz: clamp(settings.carrierHz, CARRIER_HZ_MIN, CARRIER_HZ_MAX),
   beatHz: clamp(settings.beatHz, BEAT_HZ_MIN, BEAT_HZ_MAX),
   toneVolume: clamp(settings.toneVolume, VOLUME_MIN, VOLUME_MAX),
@@ -136,22 +136,22 @@ export const clampSettings = (settings: MoongateSettings): MoongateSettings => (
   timerMinutes: clamp(Math.round(settings.timerMinutes), TIMER_MINUTES_MIN, TIMER_MINUTES_MAX),
 });
 
-export const applyPreset = (current: MoongateSettings, preset: MoongatePreset): MoongateSettings => clampSettings({
+export const applyPreset = (current: BinauralSettings, preset: BinauralPreset): BinauralSettings => clampSettings({
   ...current,
   ...preset.settings,
 });
 
-export const settingsMatchPreset = (settings: MoongateSettings, preset: MoongatePreset): boolean => (
+export const settingsMatchPreset = (settings: BinauralSettings, preset: BinauralPreset): boolean => (
   settings.carrierHz === preset.settings.carrierHz
   && settings.beatHz === preset.settings.beatHz
   && settings.noiseType === preset.settings.noiseType
 );
 
-export const findMatchingPreset = (settings: MoongateSettings): MoongatePreset | null => (
+export const findMatchingPreset = (settings: BinauralSettings): BinauralPreset | null => (
   PRESETS.find((preset) => settingsMatchPreset(settings, preset)) ?? null
 );
 
-export const parseSettings = (value: unknown): MoongateSettings | null => {
+export const parseSettings = (value: unknown): BinauralSettings | null => {
   if (!value || typeof value !== 'object') {
     return null;
   }
@@ -173,11 +173,11 @@ export const parseSettings = (value: unknown): MoongateSettings | null => {
   });
 };
 
-export const parseFavorites = (value: unknown): MoongateFavorite[] => {
+export const parseFavorites = (value: unknown): BinauralFavorite[] => {
   if (!Array.isArray(value)) {
     return [];
   }
-  const favorites: MoongateFavorite[] = [];
+  const favorites: BinauralFavorite[] = [];
   const seenIds = new Set<string>();
   for (const entry of value) {
     if (!entry || typeof entry !== 'object') {
@@ -200,7 +200,7 @@ export const parseFavorites = (value: unknown): MoongateFavorite[] => {
   return favorites;
 };
 
-export const describeSettings = (settings: MoongateSettings): string => {
+export const describeSettings = (settings: BinauralSettings): string => {
   const band = BAND_INFO[bandForBeat(settings.beatHz)];
   const noise = settings.noiseType === 'none' ? 'no noise' : `${settings.noiseType} noise`;
   return `${band.label} ${settings.beatHz} Hz on ${settings.carrierHz} Hz, ${noise}`;

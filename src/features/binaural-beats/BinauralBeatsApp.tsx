@@ -18,13 +18,13 @@ import {
   formatRemaining,
   parseFavorites,
   parseSettings,
-  type MoongateFavorite,
-  type MoongateSettings,
+  type BinauralFavorite,
+  type BinauralSettings,
   type NoiseType,
 } from './presets';
 
-const SETTINGS_STORAGE_KEY = 'moongate.settings.v1';
-const FAVORITES_STORAGE_KEY = 'moongate.favorites.v1';
+const SETTINGS_STORAGE_KEY = 'binaural-beats.settings.v1';
+const FAVORITES_STORAGE_KEY = 'binaural-beats.favorites.v1';
 const TIMER_FADE_SECONDS = 10;
 const MAX_FAVORITES = 24;
 
@@ -63,9 +63,9 @@ const secondaryButtonClassName = 'rounded-md border border-emerald-500/40 bg-[#0
 
 type PlaybackStatus = 'idle' | 'playing' | 'fading';
 
-const MoongateApp = (): JSX.Element => {
-  const [settings, setSettings] = useState<MoongateSettings>(() => parseSettings(readStorage(SETTINGS_STORAGE_KEY)) ?? DEFAULT_SETTINGS);
-  const [favorites, setFavorites] = useState<MoongateFavorite[]>(() => parseFavorites(readStorage(FAVORITES_STORAGE_KEY)));
+const BinauralBeatsApp = (): JSX.Element => {
+  const [settings, setSettings] = useState<BinauralSettings>(() => parseSettings(readStorage(SETTINGS_STORAGE_KEY)) ?? DEFAULT_SETTINGS);
+  const [favorites, setFavorites] = useState<BinauralFavorite[]>(() => parseFavorites(readStorage(FAVORITES_STORAGE_KEY)));
   const [favoriteName, setFavoriteName] = useState('');
   const [status, setStatus] = useState<PlaybackStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -187,7 +187,7 @@ const MoongateApp = (): JSX.Element => {
     engineRef.current = null;
   }, [clearTimers]);
 
-  const updateSettings = (patch: Partial<MoongateSettings>): void => {
+  const updateSettings = (patch: Partial<BinauralSettings>): void => {
     setSettings((current) => clampSettings({ ...current, ...patch }));
   };
 
@@ -215,7 +215,7 @@ const MoongateApp = (): JSX.Element => {
   return (
     <div className="w-full p-2 font-mono text-emerald-100 md:p-4">
       <header className="mb-6">
-        <h1 className="text-3xl font-bold">Moongate</h1>
+        <h1 className="text-3xl font-bold">Binaural Beats</h1>
         <p className="mt-2 text-sm text-emerald-300/70">
           Binaural beat soundscapes for sleep, focus, and relaxation. Generated locally with Web Audio; nothing leaves the browser.
         </p>
@@ -285,11 +285,11 @@ const MoongateApp = (): JSX.Element => {
             {activePreset ? `Preset: ${activePreset.name}` : 'Custom mix'} · {band.label} ({band.rangeHz[0]}–{band.rangeHz[1]} Hz): {band.intent}
           </p>
 
-          <label className={`mt-3 ${labelClassName}`} htmlFor="moongate-beat">
+          <label className={`mt-3 ${labelClassName}`} htmlFor="binaural-beat">
             Beat frequency: {settings.beatHz.toFixed(1)} Hz
           </label>
           <input
-            id="moongate-beat"
+            id="binaural-beat"
             type="range"
             className={rangeClassName}
             min={BEAT_HZ_MIN}
@@ -299,11 +299,11 @@ const MoongateApp = (): JSX.Element => {
             onChange={(event) => updateSettings({ beatHz: Number(event.target.value) })}
           />
 
-          <label className={`mt-3 ${labelClassName}`} htmlFor="moongate-carrier">
+          <label className={`mt-3 ${labelClassName}`} htmlFor="binaural-carrier">
             Carrier tone: {settings.carrierHz} Hz
           </label>
           <input
-            id="moongate-carrier"
+            id="binaural-carrier"
             type="range"
             className={rangeClassName}
             min={CARRIER_HZ_MIN}
@@ -313,11 +313,11 @@ const MoongateApp = (): JSX.Element => {
             onChange={(event) => updateSettings({ carrierHz: Number(event.target.value) })}
           />
 
-          <label className={`mt-3 ${labelClassName}`} htmlFor="moongate-tone-volume">
+          <label className={`mt-3 ${labelClassName}`} htmlFor="binaural-tone-volume">
             Tone volume: {Math.round(settings.toneVolume * 100)}%
           </label>
           <input
-            id="moongate-tone-volume"
+            id="binaural-tone-volume"
             type="range"
             className={rangeClassName}
             min={0}
@@ -327,11 +327,11 @@ const MoongateApp = (): JSX.Element => {
             onChange={(event) => updateSettings({ toneVolume: Number(event.target.value) })}
           />
 
-          <label className={`mt-3 ${labelClassName}`} htmlFor="moongate-noise-type">
+          <label className={`mt-3 ${labelClassName}`} htmlFor="binaural-noise-type">
             Background layer
           </label>
           <select
-            id="moongate-noise-type"
+            id="binaural-noise-type"
             className={selectClassName}
             value={settings.noiseType}
             onChange={(event) => updateSettings({ noiseType: event.target.value as NoiseType })}
@@ -343,11 +343,11 @@ const MoongateApp = (): JSX.Element => {
             ))}
           </select>
 
-          <label className={`mt-3 ${labelClassName}`} htmlFor="moongate-noise-volume">
+          <label className={`mt-3 ${labelClassName}`} htmlFor="binaural-noise-volume">
             Background volume: {Math.round(settings.noiseVolume * 100)}%
           </label>
           <input
-            id="moongate-noise-volume"
+            id="binaural-noise-volume"
             type="range"
             className={rangeClassName}
             min={0}
@@ -381,11 +381,11 @@ const MoongateApp = (): JSX.Element => {
           </button>
           <p className="mt-1 text-xs text-emerald-300/70">Space toggles playback.</p>
 
-          <label className={`mt-4 ${labelClassName}`} htmlFor="moongate-timer">
+          <label className={`mt-4 ${labelClassName}`} htmlFor="binaural-timer">
             Sleep timer
           </label>
           <select
-            id="moongate-timer"
+            id="binaural-timer"
             className={selectClassName}
             value={settings.timerMinutes}
             onChange={(event) => handleTimerChange(Number(event.target.value))}
@@ -450,4 +450,4 @@ const MoongateApp = (): JSX.Element => {
   );
 };
 
-export default MoongateApp;
+export default BinauralBeatsApp;

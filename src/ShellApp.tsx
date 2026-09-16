@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import MomoroReaderApp from './App';
-import MoongateApp from './features/moongate/MoongateApp';
+import BinauralBeatsApp from './features/binaural-beats/BinauralBeatsApp';
 
 type ToolDefinition = {
   path: string;
@@ -29,10 +29,10 @@ const toolDefinitions: ToolDefinition[] = [
     available: true,
   },
   {
-    path: '/moongate',
-    label: 'Moongate',
+    path: '/binaural-beats',
+    label: 'Binaural Beats',
     description: 'Binaural beats for sleep, focus, and calm.',
-    render: () => <MoongateApp />,
+    render: () => <BinauralBeatsApp />,
     available: true,
   },
   {

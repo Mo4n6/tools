@@ -1,5 +1,5 @@
 import { clampToUnitRange, generateNoise } from './noise';
-import type { MoongateSettings, NoiseType } from './presets';
+import type { BinauralSettings, NoiseType } from './presets';
 
 const NOISE_BUFFER_SECONDS = 4;
 const RAMP_SECONDS = 0.05;
@@ -48,7 +48,7 @@ export class BinauralEngine {
     return this.running;
   }
 
-  async start(settings: MoongateSettings): Promise<void> {
+  async start(settings: BinauralSettings): Promise<void> {
     if (this.running) {
       this.update(settings);
       return;
@@ -101,7 +101,7 @@ export class BinauralEngine {
     this.syncNoise(settings);
   }
 
-  update(settings: MoongateSettings): void {
+  update(settings: BinauralSettings): void {
     const context = this.context;
     if (!this.running || !context) {
       return;
@@ -178,7 +178,7 @@ export class BinauralEngine {
     }
   }
 
-  private syncNoise(settings: MoongateSettings): void {
+  private syncNoise(settings: BinauralSettings): void {
     const context = this.context;
     const masterGain = this.masterGain;
     if (!context || !masterGain) {
