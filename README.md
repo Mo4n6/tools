@@ -14,6 +14,8 @@ Workflow runs:
 - Built assets should resolve from `https://<your-github-username>.github.io/tts-reader-mvp/assets/...`
 - Tools shell route (hash-safe): `https://<host>/<base-path>#/momoro-reader`
 - Binaural Beats route: `https://<host>/<base-path>#/binaural-beats` or `https://<host>/tools/binaural-beats`
+- Dead Letter route: `https://<host>/<base-path>#/dead-letter` or `https://<host>/tools/dead-letter`
+- Dead Letter standalone file (also what the tab's download button serves): `https://<host>/<base-path>dead-letter.html`
 - Pretty route (with SPA 404 redirect fallback): `https://<host>/tools/momoro-reader?b64=<base64text>`
 
 ### MVP scope supported on Pages
@@ -63,6 +65,19 @@ In GitHub repository settings:
 
 1. Go to **Settings → Pages**.
 2. Under **Build and deployment**, set **Source** to **GitHub Actions**.
+
+## Static single-file tools
+
+Some tools ship as one self-contained HTML file rather than as a React view, so they can be
+downloaded and run from disk with no server and no network. `public/dead-letter.html` is the
+first of these: Vite copies `public/` verbatim, so the file served under the base path and the
+file the download button hands over are the same bytes.
+
+The shell tab (`src/features/dead-letter/DeadLetterApp.tsx`) embeds that file in an iframe and
+links to it with a `download` attribute. The page carries its own Content-Security-Policy and
+its own copy of the shell palette; it deliberately links no site stylesheet, because that would
+break the `file://` copy. See [Tools shell routing and UI conventions](docs/tools-shell-routing-and-ui.md)
+for the full pattern.
 
 ## Additional docs
 

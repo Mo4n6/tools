@@ -1,0 +1,2459 @@
+<!DOCTYPE html>
+<!--
+  Dead Letter — offline .eml / .msg viewer and email header analysis
+  ===================================================================
+  Single-file static page. No build step, no dependencies, no network requests.
+
+  INTEGRATION NOTES (for whoever adds this to the tools site):
+  - This copy lives in the tools repo at public/dead-letter.html. Vite copies public/ verbatim,
+    so it deploys to <base>/dead-letter.html and is served unmodified.
+  - The Dead Letter tab (src/features/dead-letter/DeadLetterApp.tsx) embeds this file in an
+    iframe and links to it with a download attribute. The downloaded file is byte-identical to
+    the served one and runs the same from file:// with no network at all.
+  - Do not add analytics, fonts, or any external script/style to this page. The
+    <meta http-equiv="Content-Security-Policy"> below is part of the tool's guarantee
+    ("nothing leaves this tab") and will block them anyway. Keep it as the first element
+    in <head>. If the site injects a shared header/nav, inject it as inline markup only.
+  - Do NOT link the site's stylesheet in here: it would need the site origin in style-src and
+    would break the file:// copy. The palette below is a standalone copy of the tools-shell
+    theme (emerald on near-black, monospace). Keep it in sync by hand if the shell changes.
+    All selectors are prefixed dl- so they never collide with site styles.
+  - Rendering of the email body happens inside <iframe sandbox=""> loaded from a blob: URL
+    whose document carries its own no-network CSP. frame-src blob: and img-src data: blob:
+    in the CSP below are required for that; do not tighten them further.
+  - Settings (trusted authserv-id, .bin suffix for downloads) are the only thing persisted,
+    in localStorage under "deadletter.settings".
+  - Everything else (parsed messages, attachments, hashes) lives in page memory and is gone
+    on reload.
+
+  Supported input: RFC 822/2822/5322 .eml and .txt with any MIME nesting (base64,
+  quoted-printable, uuencode, RFC 2047 headers, RFC 2231 filenames, message/rfc822),
+  Outlook .msg (CFB/MAPI incl. RTF-encapsulated HTML bodies and embedded messages),
+  bare HTML/text files saved as .eml, pasted headers or full source.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; frame-src blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'; manifest-src 'none'; worker-src 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<link rel="icon" href="data:,">
+<meta name="description" content="Dead Letter: open .eml and .msg files safely in the browser, analyze headers, hops, authentication, links and attachments. Nothing leaves the page.">
+<title>Dead Letter — offline .eml / .msg viewer and header analysis</title>
+<style>
+:root {
+  /* Tools-shell theme: emerald on near-black, monospace. Dark only, like the rest of the site. */
+  color-scheme: dark;
+  --dl-bg: #050706; --dl-bg2: #07110a; --dl-bg3: #0a160f;
+  --dl-line: rgba(16, 185, 129, .3); --dl-line2: rgba(16, 185, 129, .45);
+  --dl-fg: #d1fae5; --dl-fg2: rgba(167, 243, 208, .85); --dl-fg3: rgba(110, 231, 183, .62);
+  --dl-accent: #34d399; --dl-accent-soft: #6ee7b7; --dl-accent-bg: rgba(16, 185, 129, .15);
+  --dl-glow: 0 0 12px rgba(16, 185, 129, .25);
+  /* The rendered mail body keeps a light canvas: HTML mail is authored for white backgrounds. */
+  --dl-paper: #f4f1e9;
+  --dl-red: #fb7185; --dl-red-bg: rgba(251, 113, 133, .14);
+  --dl-ochre: #fbbf24; --dl-ochre-bg: rgba(251, 191, 36, .14);
+  --dl-blue: #a5b4fc; --dl-blue-bg: rgba(165, 180, 252, .14);
+  --dl-green: #34d399;
+  --dl-focus: #34d399;
+  --dl-font: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
+  --dl-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
+  --dl-display: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
+  --dl-serif: var(--dl-display);
+  --dl-radius: 6px;
+}
+html, body { margin: 0; padding: 0; }
+body { background: var(--dl-bg); color: var(--dl-fg); font: 13.5px/1.5 var(--dl-font); min-height: 100vh; -webkit-font-smoothing: antialiased; }
+* { box-sizing: border-box; }
+.dl-app { display: flex; flex-direction: column; min-height: 100vh; }
+.dl-app a { color: var(--dl-accent-soft); }
+.dl-app input[type=checkbox] { accent-color: var(--dl-accent); }
+.dl-app ::-webkit-scrollbar { width: 10px; height: 10px; }
+.dl-app ::-webkit-scrollbar-track { background: var(--dl-bg); }
+.dl-app ::-webkit-scrollbar-thumb { background: rgba(16, 185, 129, .28); border-radius: 6px; }
+.dl-app ::-webkit-scrollbar-thumb:hover { background: rgba(16, 185, 129, .45); }
+.dl-app button { font: inherit; color: var(--dl-fg); background: var(--dl-bg3); border: 1px solid var(--dl-line2); border-radius: var(--dl-radius); padding: 4px 10px; cursor: pointer; }
+.dl-app button:hover { border-color: rgba(110, 231, 183, .7); background: rgba(16, 185, 129, .1); }
+.dl-app button:focus-visible, .dl-app input:focus-visible, .dl-app textarea:focus-visible, .dl-app [tabindex]:focus-visible { outline: 2px solid var(--dl-focus); outline-offset: 1px; }
+.dl-app button.dl-primary { background: var(--dl-accent-bg); color: #ecfdf5; border-color: var(--dl-accent); box-shadow: var(--dl-glow); }
+.dl-app button.dl-primary:hover { background: rgba(16, 185, 129, .26); border-color: var(--dl-accent-soft); }
+.dl-app button.dl-small { padding: 1px 7px; font-size: 12px; }
+.dl-app button.dl-linkish { background: none; border: none; padding: 0; color: var(--dl-accent-soft); text-decoration: underline; }
+.dl-app button.dl-linkish:hover { background: none; color: #a7f3d0; }
+.dl-app input[type=text], .dl-app textarea { font: inherit; color: var(--dl-fg); background: var(--dl-bg3); border: 1px solid var(--dl-line2); border-radius: var(--dl-radius); padding: 5px 8px; }
+.dl-app input[type=text]::placeholder, .dl-app textarea::placeholder { color: rgba(110, 231, 183, .4); }
+.dl-app textarea { font-family: var(--dl-mono); font-size: 12px; }
+.dl-mono, .dl-app code, .dl-app pre, .dl-app td.dl-mono { font-family: var(--dl-mono); font-size: 12.5px; }
+.dl-app pre { white-space: pre-wrap; word-break: break-word; margin: 0; }
+.dl-muted { color: var(--dl-fg2); }
+.dl-dim { color: var(--dl-fg3); }
+.dl-wrap { overflow-wrap: anywhere; }
+
+/* top bar */
+.dl-top { display: flex; align-items: baseline; gap: 18px; padding: 10px 18px; border-bottom: 1px solid var(--dl-line); background: var(--dl-bg2); flex-wrap: wrap; box-shadow: inset 0 -1px 0 rgba(16, 185, 129, .25); }
+.dl-brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.dl-name { font-family: var(--dl-display); font-size: 21px; font-weight: 600; letter-spacing: .02em; color: #a7f3d0; }
+.dl-name svg { width: 22px; height: 16px; vertical-align: -1px; margin-right: 7px; }
+.dl-tagline { color: var(--dl-fg2); font-size: 13px; }
+.dl-topactions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.dl-settings { padding: 10px 18px; border-bottom: 1px solid var(--dl-line); background: var(--dl-bg2); display: flex; gap: 18px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+/* The class sets display, so the hidden attribute needs an explicit rule (same as .dl-pane). */
+.dl-settings[hidden] { display: none; }
+.dl-settings label { display: flex; align-items: center; gap: 6px; }
+.dl-settings input[type=text] { width: 260px; font-family: var(--dl-mono); font-size: 12px; }
+
+/* layout */
+.dl-body { display: flex; flex: 1; min-height: 0; }
+.dl-side { width: 260px; flex: 0 0 260px; border-right: 1px solid var(--dl-line); padding: 12px; display: flex; flex-direction: column; gap: 10px; background: var(--dl-bg2); }
+.dl-main { flex: 1; min-width: 0; padding: 14px 18px 40px; }
+@media (max-width: 860px) { .dl-body { flex-direction: column; } .dl-side { width: auto; flex: none; border-right: 0; border-bottom: 1px solid var(--dl-line); } .dl-main { padding: 12px; } }
+
+/* envelope drop zone: the one bold element */
+.dl-drop { position: relative; border: 1.5px dashed var(--dl-fg3); border-radius: var(--dl-radius); padding: 26px 14px 16px; text-align: center; color: var(--dl-fg2); cursor: pointer; background: var(--dl-bg3); min-height: 92px; transition: border-color .15s, box-shadow .15s; }
+.dl-drop::before { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .55;
+  background:
+    linear-gradient(to bottom right, transparent calc(50% - 1px), var(--dl-fg3) calc(50% - .5px), var(--dl-fg3) calc(50% + .5px), transparent calc(50% + 1px)) top left / 50% 56% no-repeat,
+    linear-gradient(to bottom left, transparent calc(50% - 1px), var(--dl-fg3) calc(50% - .5px), var(--dl-fg3) calc(50% + .5px), transparent calc(50% + 1px)) top right / 50% 56% no-repeat; }
+.dl-drop.dl-over, .dl-drop:hover { border-color: var(--dl-accent); color: var(--dl-fg); box-shadow: var(--dl-glow); }
+.dl-drop.dl-over::before, .dl-drop:hover::before { opacity: .9; }
+.dl-drop strong { display: block; font-weight: 600; color: var(--dl-fg); }
+.dl-drop-big { padding: 64px 24px 44px; min-height: 220px; font-size: 15px; margin: 30px auto 18px; max-width: 640px; }
+.dl-drop-big::before { background-size: 50% 52%, 50% 52%; }
+.dl-drop-big strong { font-size: 19px; font-family: var(--dl-display); font-weight: 600; color: #a7f3d0; margin-bottom: 6px; }
+.dl-empty { max-width: 760px; margin: 0 auto; }
+.dl-empty h1 { font-family: var(--dl-display); font-weight: 600; font-size: 23px; letter-spacing: .01em; color: #a7f3d0; margin: 24px 0 4px; }
+.dl-empty p { color: var(--dl-fg2); margin: 6px 0; max-width: 62ch; }
+.dl-paste { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.dl-paste textarea { width: 100%; min-height: 130px; resize: vertical; }
+.dl-paste-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.dl-guarantee { margin-top: 26px; border-top: 1px solid var(--dl-line); padding-top: 14px; font-size: 13px; color: var(--dl-fg2); }
+.dl-guarantee ul { margin: 6px 0 0; padding-left: 18px; }
+.dl-guarantee li { margin: 3px 0; }
+
+/* message list */
+.dl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; overflow: auto; }
+.dl-item { display: block; width: 100%; text-align: left; background: var(--dl-bg3); border: 1px solid var(--dl-line); border-radius: var(--dl-radius); padding: 7px 9px; cursor: pointer; position: relative; transition: border-color .15s, background-color .15s; }
+.dl-item:hover { border-color: rgba(52, 211, 153, .5); background: rgba(16, 185, 129, .1); }
+.dl-item.dl-active { border-color: var(--dl-accent); background: var(--dl-accent-bg); box-shadow: 0 0 0 1px rgba(52, 211, 153, .45), var(--dl-glow); }
+.dl-item .dl-i-name { font-family: var(--dl-mono); font-size: 11.5px; color: var(--dl-fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 20px; }
+.dl-item .dl-i-subj { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 2px 0; }
+.dl-item .dl-i-meta { font-size: 11.5px; color: var(--dl-fg3); display: flex; gap: 8px; }
+.dl-item .dl-i-meta .dl-h { color: var(--dl-red); }
+.dl-item .dl-i-meta .dl-m { color: var(--dl-ochre); }
+.dl-item .dl-x { position: absolute; top: 4px; right: 4px; padding: 0 5px; font-size: 12px; line-height: 16px; border: 0; background: transparent; color: var(--dl-fg3); }
+.dl-item .dl-x:hover { color: var(--dl-red); }
+.dl-item.dl-child { margin-left: 14px; }
+.dl-side-hint { font-size: 12px; color: var(--dl-fg3); }
+
+/* summary card */
+.dl-subject { font-family: var(--dl-display); font-weight: 600; font-size: 20px; color: #a7f3d0; margin: 0 0 8px; line-height: 1.3; overflow-wrap: anywhere; }
+.dl-env { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 0; font-size: 13px; }
+.dl-env dt { color: var(--dl-fg3); }
+.dl-env dd { margin: 0; overflow-wrap: anywhere; }
+.dl-env dd .dl-mono { font-size: 12.5px; }
+.dl-card { background: var(--dl-bg2); border: 1px solid rgba(16, 185, 129, .35); border-radius: 12px; padding: 14px 16px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, .25); }
+.dl-summary { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: start; }
+.dl-counts { display: flex; flex-direction: column; gap: 6px; min-width: 120px; text-align: right; }
+.dl-count { font-size: 13px; }
+.dl-count b { font-size: 21px; font-family: var(--dl-display); font-weight: 600; margin-right: 6px; }
+.dl-count.dl-high b { color: var(--dl-red); }
+.dl-count.dl-medium b { color: var(--dl-ochre); }
+.dl-count.dl-info b { color: var(--dl-blue); }
+@media (max-width: 860px) { .dl-summary { grid-template-columns: 1fr; } .dl-counts { flex-direction: row; text-align: left; } }
+
+/* verdict chips */
+.dl-chip { display: inline-block; font-family: var(--dl-mono); font-size: 11.5px; padding: 1px 6px; border-radius: 2px; border: 1px solid var(--dl-line2); color: var(--dl-fg2); margin-right: 4px; white-space: nowrap; }
+.dl-chip.dl-pass { color: var(--dl-green); border-color: var(--dl-green); }
+.dl-chip.dl-fail { color: var(--dl-red); border-color: var(--dl-red); background: var(--dl-red-bg); }
+.dl-chip.dl-warn { color: var(--dl-ochre); border-color: var(--dl-ochre); background: var(--dl-ochre-bg); }
+.dl-chip.dl-note { color: var(--dl-blue); border-color: var(--dl-blue); }
+
+/* tabs */
+.dl-tabs { display: flex; gap: 2px; margin: 16px 0 0; border-bottom: 1px solid var(--dl-line); flex-wrap: wrap; }
+.dl-tabs button { background: transparent; border: 1px solid transparent; border-bottom: 0; border-radius: 3px 3px 0 0; padding: 7px 12px; color: var(--dl-fg2); margin-bottom: -1px; }
+.dl-tabs button[aria-selected=true] { background: var(--dl-bg2); border-color: rgba(16, 185, 129, .45); border-top-color: var(--dl-accent); color: #a7f3d0; }
+.dl-tabs button .dl-n { color: var(--dl-fg3); font-family: var(--dl-mono); font-size: 11px; margin-left: 4px; }
+.dl-tabs button .dl-n.dl-h { color: var(--dl-red); }
+.dl-pane { background: var(--dl-bg2); border: 1px solid var(--dl-line); border-top: 0; padding: 14px 16px; border-radius: 0 0 12px 12px; }
+.dl-pane[hidden] { display: none; }
+.dl-pane h3 { font-size: 13px; font-weight: 600; margin: 18px 0 8px; color: var(--dl-fg2); }
+.dl-pane h3:first-child { margin-top: 0; }
+.dl-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; font-size: 13px; }
+.dl-toolbar .dl-spacer { flex: 1; }
+
+/* findings */
+.dl-findings { list-style: none; margin: 0; padding: 0; }
+.dl-f { display: grid; grid-template-columns: 62px 1fr; gap: 12px; padding: 9px 4px; border-bottom: 1px solid var(--dl-line); cursor: pointer; }
+.dl-f:last-child { border-bottom: 0; }
+.dl-f:hover { background: rgba(16, 185, 129, .08); }
+.dl-f b { font-weight: 600; }
+.dl-f p { margin: 2px 0 0; color: var(--dl-fg2); font-size: 13px; overflow-wrap: anywhere; }
+.dl-stamp { font-family: var(--dl-mono); font-size: 11.5px; text-align: center; border: 1.5px solid; border-radius: 2px; padding: 1px 4px; height: fit-content; margin-top: 2px; letter-spacing: .02em; }
+.dl-f-high .dl-stamp { color: var(--dl-red); border-color: var(--dl-red); background: var(--dl-red-bg); }
+.dl-f-medium .dl-stamp { color: var(--dl-ochre); border-color: var(--dl-ochre); background: var(--dl-ochre-bg); }
+.dl-f-info .dl-stamp { color: var(--dl-blue); border-color: var(--dl-blue); background: var(--dl-blue-bg); }
+.dl-none { color: var(--dl-fg3); padding: 8px 0; }
+
+/* tables */
+.dl-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dl-table th { text-align: left; font-weight: 600; color: var(--dl-fg2); border-bottom: 1px solid var(--dl-line2); padding: 5px 8px 5px 0; white-space: nowrap; }
+.dl-table td { vertical-align: top; border-bottom: 1px solid var(--dl-line); padding: 6px 8px 6px 0; overflow-wrap: anywhere; }
+.dl-table tr.dl-origin td { background: var(--dl-ochre-bg); }
+.dl-table tr.dl-sub td { background: var(--dl-bg); font-size: 12.5px; }
+.dl-table .dl-num { color: var(--dl-fg3); font-family: var(--dl-mono); font-size: 12px; white-space: nowrap; }
+.dl-scroll { overflow-x: auto; }
+.dl-flag { display: inline-block; font-family: var(--dl-mono); font-size: 11px; padding: 0 5px; border-radius: 2px; border: 1px solid var(--dl-line2); color: var(--dl-fg2); margin: 1px 3px 1px 0; }
+.dl-flag.dl-high { color: var(--dl-red); border-color: var(--dl-red); }
+.dl-flag.dl-medium { color: var(--dl-ochre); border-color: var(--dl-ochre); }
+.dl-copy { font-family: var(--dl-mono); font-size: 11px; padding: 0 5px; margin-left: 4px; vertical-align: 1px; }
+.dl-hdr-name { font-family: var(--dl-mono); font-size: 12px; color: var(--dl-ochre); white-space: nowrap; }
+.dl-hdr-val { font-family: var(--dl-mono); font-size: 12px; }
+.dl-synth { color: var(--dl-fg3); font-style: italic; font-family: var(--dl-font); font-size: 11.5px; }
+.dl-search { width: 280px; max-width: 100%; }
+
+/* body pane */
+.dl-bodybar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
+.dl-seg { display: inline-flex; border: 1px solid var(--dl-line2); border-radius: var(--dl-radius); overflow: hidden; }
+.dl-seg button { border: 0; border-radius: 0; background: transparent; padding: 3px 10px; }
+.dl-seg button[aria-pressed=true] { background: var(--dl-accent-bg); color: #ecfdf5; box-shadow: inset 0 0 0 1px rgba(52, 211, 153, .5); }
+.dl-notice { font-size: 12.5px; color: var(--dl-fg2); }
+/* The rendered body keeps the light paper canvas; mail HTML assumes a white page. */
+.dl-frame { width: 100%; height: 70vh; min-height: 420px; border: 1px solid var(--dl-line2); border-radius: var(--dl-radius); background: var(--dl-paper); }
+/* Text, source and RTF views are our own rendering, so they follow the shell theme. */
+.dl-paper { background: var(--dl-bg3); color: var(--dl-fg); border: 1px solid var(--dl-line2); border-radius: var(--dl-radius); padding: 18px 22px; max-height: 70vh; overflow: auto; font-family: var(--dl-mono); font-size: 12.5px; line-height: 1.5; }
+.dl-paper.dl-prose { font-size: 14px; line-height: 1.6; max-width: none; }
+.dl-tree { font-family: var(--dl-mono); font-size: 12px; line-height: 1.6; }
+.dl-tree .dl-t-att { color: var(--dl-ochre); }
+.dl-tree .dl-t-dim { color: var(--dl-fg3); }
+
+/* attachments */
+.dl-att-actions { white-space: nowrap; }
+.dl-att-actions button { margin-right: 4px; }
+.dl-att-detail { font-size: 12.5px; }
+.dl-att-detail dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 4px 0; }
+.dl-att-detail dt { color: var(--dl-fg3); }
+.dl-att-detail dd { margin: 0; font-family: var(--dl-mono); font-size: 12px; overflow-wrap: anywhere; }
+.dl-preview img { max-width: 100%; max-height: 360px; background: var(--dl-paper); border: 1px solid var(--dl-line2); }
+.dl-preview pre { max-height: 320px; overflow: auto; background: var(--dl-bg3); color: var(--dl-fg); border: 1px solid var(--dl-line); padding: 10px; border-radius: var(--dl-radius); }
+.dl-zip { margin: 6px 0 0; padding-left: 18px; font-family: var(--dl-mono); font-size: 12px; }
+.dl-zip .dl-enc { color: var(--dl-red); }
+
+/* report */
+.dl-report { width: 100%; min-height: 360px; height: 60vh; resize: vertical; font-size: 12px; }
+.dl-toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--dl-bg3); color: var(--dl-fg); border: 1px solid var(--dl-accent); box-shadow: var(--dl-glow); padding: 6px 14px; border-radius: var(--dl-radius); font-size: 13px; opacity: 0; transition: opacity .15s; pointer-events: none; }
+.dl-toast.dl-show { opacity: 1; }
+.dl-error { color: var(--dl-red); }
+@media (prefers-reduced-motion: reduce) { .dl-toast { transition: none; } }
+@media print { .dl-side, .dl-top, .dl-tabs, .dl-settings { display: none !important; } .dl-pane[hidden] { display: block !important; } }
+</style>
+</head>
+<body>
+<div class="dl-app">
+  <header class="dl-top">
+    <div class="dl-brand">
+      <span class="dl-name"><svg viewBox="0 0 22 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1.5" width="20" height="13" rx="1"/><path d="M1.5 2.5 11 9.5l9.5-7"/></svg>Dead Letter</span>
+      <span class="dl-tagline">Offline .eml / .msg viewer and header analysis. Nothing leaves this tab.</span>
+    </div>
+    <div class="dl-topactions">
+      <button id="dl-open" type="button">Open files</button>
+      <button id="dl-settings-btn" type="button" aria-controls="dl-settings">Settings</button>
+    </div>
+  </header>
+  <div class="dl-settings" id="dl-settings" hidden>
+    <label for="dl-authserv">Trusted authserv-id <input type="text" id="dl-authserv" placeholder="mx.yourcompany.com" spellcheck="false" autocomplete="off"></label>
+    <span class="dl-dim">The Authentication-Results header written by your own gateway. Leave empty to use the topmost one.</span>
+    <label><input type="checkbox" id="dl-binsuffix"> Append .bin to downloaded attachments</label>
+  </div>
+  <div class="dl-body">
+    <aside class="dl-side">
+      <div class="dl-drop" id="dl-drop-side" tabindex="0" role="button" aria-label="Open .eml or .msg files"><strong>Drop .eml or .msg</strong>or click to choose</div>
+      <div class="dl-side-hint" id="dl-side-hint"></div>
+      <ul class="dl-list" id="dl-list"></ul>
+    </aside>
+    <main class="dl-main" id="dl-main"></main>
+  </div>
+</div>
+<input type="file" id="dl-file" multiple accept=".eml,.msg,.txt,.mbox,.mht,.mhtml,message/rfc822,application/vnd.ms-outlook" hidden>
+<div class="dl-toast" id="dl-toast" role="status" aria-live="polite"></div>
+<script>
+var DL = {};
+(function () {
+"use strict";
+
+/* ---------- util ---------- */
+
+DL.latin1 = function (bytes) {
+  // byte-preserving decode (one char per byte)
+  var s = '';
+  var CH = 8192;
+  for (var i = 0; i < bytes.length; i += CH) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  }
+  return s;
+};
+
+DL.bytesFromLatin1 = function (str) {
+  var out = new Uint8Array(str.length);
+  for (var i = 0; i < str.length; i++) out[i] = str.charCodeAt(i) & 0xff;
+  return out;
+};
+
+DL.decodeText = function (bytes, charset) {
+  var cs = (charset || '').toLowerCase().replace(/^["']|["']$/g, '').trim();
+  var aliases = {
+    'us-ascii': 'utf-8', 'ascii': 'utf-8', '': 'utf-8', 'utf8': 'utf-8',
+    'cp1252': 'windows-1252', 'latin1': 'windows-1252', 'latin-1': 'windows-1252', 'iso-8859-1': 'windows-1252',
+    'unicode': 'utf-16le', 'utf-16': 'utf-16le', 'ucs-2': 'utf-16le',
+    'ansi_x3.4-1968': 'utf-8', 'x-unknown': 'utf-8', 'unknown-8bit': 'utf-8', '8bit': 'utf-8', '7bit': 'utf-8', 'binary': 'utf-8',
+    'cp1251': 'windows-1251', 'cp1250': 'windows-1250', 'cp1256': 'windows-1256', 'cp932': 'shift_jis', 'ms932': 'shift_jis',
+    'cp936': 'gbk', 'cp949': 'euc-kr', 'cp950': 'big5', 'sjis': 'shift_jis', 'x-sjis': 'shift_jis', 'utf7': 'utf-8', 'utf-7': 'utf-8'
+  };
+  if (aliases.hasOwnProperty(cs)) cs = aliases[cs];
+  if (cs === 'utf-8') {
+    // strict first; if invalid, treat as windows-1252 (common mislabel)
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+    catch (e) { return new TextDecoder('windows-1252').decode(bytes); }
+  }
+  try { return new TextDecoder(cs).decode(bytes); }
+  catch (e) {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+    catch (e2) { return new TextDecoder('windows-1252').decode(bytes); }
+  }
+};
+
+DL.guessDecode = function (bytes) {
+  // UTF-8 if valid, else windows-1252
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes.subarray(2));
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(bytes.subarray(2));
+  return DL.decodeText(bytes, 'utf-8');
+};
+
+DL.hex = function (bytes) {
+  var s = '';
+  for (var i = 0; i < bytes.length; i++) s += (bytes[i] < 16 ? '0' : '') + bytes[i].toString(16);
+  return s;
+};
+
+DL.b64decode = function (str) {
+  var clean = str.replace(/[^A-Za-z0-9+\/=_-]/g, '').replace(/-/g, '+').replace(/_/g, '/');
+  clean = clean.replace(/=+$/, '');
+  while (clean.length % 4) clean += '=';
+  var bin;
+  try { bin = atob(clean); }
+  catch (e) {
+    // salvage: decode in chunks of 4, dropping bad tail
+    var trimmed = clean.slice(0, clean.length - (clean.length % 4));
+    try { bin = atob(trimmed); } catch (e2) { bin = ''; }
+  }
+  return DL.bytesFromLatin1(bin);
+};
+
+DL.b64encode = function (bytes) {
+  return btoa(DL.latin1(bytes));
+};
+
+DL.qpDecode = function (str, isHeaderQ) {
+  var s = str.replace(/=\r?\n/g, '');
+  if (isHeaderQ) s = s.replace(/_/g, ' ');
+  var out = [];
+  for (var i = 0; i < s.length; i++) {
+    var c = s.charCodeAt(i);
+    if (c === 61 && i + 2 < s.length && /^[0-9A-Fa-f]{2}$/.test(s.substr(i + 1, 2))) {
+      out.push(parseInt(s.substr(i + 1, 2), 16)); i += 2;
+    } else out.push(c & 0xff);
+  }
+  return new Uint8Array(out);
+};
+
+DL.escapeHtml = function (s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+};
+
+DL.defang = function (s) {
+  return String(s == null ? '' : s)
+    .replace(/https?:\/\//gi, function (m) { return m.replace(/http/i, 'hxxp').replace('://', '[:]//'); })
+    .replace(/ftp:\/\//gi, 'fxp[:]//')
+    .replace(/\./g, '[.]')
+    .replace(/@/g, '[@]');
+};
+
+DL.formatBytes = function (n) {
+  if (n == null) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(2) + ' MB';
+};
+
+DL.pad2 = function (n) { return (n < 10 ? '0' : '') + n; };
+
+DL.fmtUtc = function (d) {
+  if (!(d instanceof Date) || isNaN(d.getTime())) return '';
+  return d.getUTCFullYear() + '-' + DL.pad2(d.getUTCMonth() + 1) + '-' + DL.pad2(d.getUTCDate()) + ' ' +
+    DL.pad2(d.getUTCHours()) + ':' + DL.pad2(d.getUTCMinutes()) + ':' + DL.pad2(d.getUTCSeconds()) + ' UTC';
+};
+
+DL.fmtDelta = function (ms) {
+  if (ms == null || isNaN(ms)) return '';
+  var sign = ms < 0 ? '-' : '';
+  var s = Math.abs(ms) / 1000;
+  if (s < 60) return sign + Math.round(s) + 's';
+  if (s < 3600) return sign + Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's';
+  if (s < 86400) return sign + Math.floor(s / 3600) + 'h ' + Math.round((s % 3600) / 60) + 'm';
+  return sign + (s / 86400).toFixed(1) + 'd';
+};
+
+DL.parseMailDate = function (str) {
+  if (!str) return null;
+  var s = String(str).replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim();
+  // strip day-name garbage like "Wed," mismatches; Date.parse handles RFC 2822
+  var t = Date.parse(s);
+  if (isNaN(t)) {
+    // try removing weekday
+    t = Date.parse(s.replace(/^[A-Za-z]{3,},?\s*/, ''));
+  }
+  if (isNaN(t)) {
+    // "16 Sep 2026 14:03:09 +0000" with named tz like GMT/EST
+    var m = s.match(/(\d{1,2})\s+([A-Za-z]{3})\w*\s+(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([+-]\d{4}|[A-Z]{2,4})?/);
+    if (m) {
+      var months = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+      var mo = months[m[2].toLowerCase()];
+      if (mo != null) {
+        var tz = m[7] || '+0000';
+        var off = 0;
+        var tzm = tz.match(/^([+-])(\d{2})(\d{2})$/);
+        if (tzm) off = (tzm[1] === '-' ? -1 : 1) * (parseInt(tzm[2], 10) * 60 + parseInt(tzm[3], 10));
+        else off = { UT: 0, UTC: 0, GMT: 0, EST: -300, EDT: -240, CST: -360, CDT: -300, MST: -420, MDT: -360, PST: -480, PDT: -420, AST: -240, ADT: -180 }[tz] || 0;
+        t = Date.UTC(+m[3], mo, +m[1], +m[4], +m[5], +(m[6] || 0)) - off * 60000;
+      }
+    }
+  }
+  return isNaN(t) ? null : new Date(t);
+};
+
+/* ---- IP helpers ---- */
+DL.isIPv4 = function (s) {
+  var m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
+  if (!m) return false;
+  for (var i = 1; i <= 4; i++) if (+m[i] > 255) return false;
+  return true;
+};
+DL.isIPv6 = function (s) {
+  return /^[0-9a-f:]+$/i.test(s) && s.indexOf(':') >= 0 && /:[0-9a-f]*:/i.test(s + ':') && s.length <= 45;
+};
+DL.isPrivateIp = function (ip) {
+  if (!ip) return false;
+  ip = ip.replace(/^\[|\]$/g, '').replace(/^ipv6:/i, '');
+  if (DL.isIPv4(ip)) {
+    var p = ip.split('.').map(Number);
+    if (p[0] === 10 || p[0] === 127 || p[0] === 0) return true;
+    if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true;
+    if (p[0] === 192 && p[1] === 168) return true;
+    if (p[0] === 169 && p[1] === 254) return true;
+    if (p[0] === 100 && p[1] >= 64 && p[1] <= 127) return true;
+    if (p[0] >= 224) return true;
+    return false;
+  }
+  var l = ip.toLowerCase();
+  if (l === '::1' || l === '::') return true;
+  if (/^fe[89ab]/.test(l)) return true;
+  if (/^f[cd]/.test(l)) return true;
+  if (/^::ffff:/.test(l)) return DL.isPrivateIp(l.replace(/^::ffff:/, ''));
+  return false;
+};
+
+/* ---- domain helpers ---- */
+DL.TWO_LEVEL = ('co.uk org.uk ac.uk gov.uk me.uk ltd.uk plc.uk net.uk com.au net.au org.au edu.au gov.au co.nz org.nz govt.nz ' +
+  'co.jp ne.jp or.jp ac.jp go.jp co.in net.in org.in gov.in co.za org.za gov.za com.br org.br gov.br com.mx com.ar com.co co.kr ' +
+  'com.cn net.cn org.cn gov.cn com.tw com.hk com.sg com.tr co.il org.il com.my com.ph com.pk com.eg com.sa com.ng co.id gc.ca ' +
+  'com.vn com.ua com.pe com.ve com.pl edu.cn com.ru').split(' ');
+DL.orgDomain = function (d) {
+  if (!d) return '';
+  d = String(d).toLowerCase().replace(/\.$/, '');
+  var parts = d.split('.');
+  if (parts.length <= 2) return d;
+  var last2 = parts.slice(-2).join('.');
+  if (DL.TWO_LEVEL.indexOf(last2) >= 0 && parts.length >= 3) return parts.slice(-3).join('.');
+  return last2;
+};
+DL.domainOfAddr = function (addr) {
+  if (!addr) return '';
+  var i = addr.lastIndexOf('@');
+  return i >= 0 ? addr.slice(i + 1).toLowerCase().replace(/[>\s]/g, '') : '';
+};
+DL.FREEMAIL = ('gmail.com googlemail.com outlook.com hotmail.com live.com msn.com yahoo.com yahoo.ca yahoo.co.uk ymail.com aol.com ' +
+  'icloud.com me.com mac.com proton.me protonmail.com pm.me mail.com gmx.com gmx.net zoho.com yandex.com yandex.ru mail.ru ' +
+  'tutanota.com tuta.io fastmail.com hushmail.com qq.com 163.com 126.com rediffmail.com').split(' ');
+DL.SHORTENERS = 'bit.ly tinyurl.com t.co goo.gl ow.ly is.gd buff.ly cutt.ly rebrand.ly tiny.cc shorturl.at rb.gy t.ly lnkd.in s.id bl.ink'.split(' ');
+
+/* ---- punycode (RFC 3492) decode ---- */
+DL.punyDecode = function (input) {
+  var base = 36, tMin = 1, tMax = 26, skew = 38, damp = 700, initialBias = 72, initialN = 128;
+  var output = [], i = 0, n = initialN, bias = initialBias;
+  var basic = input.lastIndexOf('-');
+  if (basic < 0) basic = 0;
+  for (var j = 0; j < basic; j++) {
+    if (input.charCodeAt(j) >= 0x80) throw new Error('bad');
+    output.push(input.charCodeAt(j));
+  }
+  function digit(cp) {
+    if (cp - 48 < 10) return cp - 22;
+    if (cp - 65 < 26) return cp - 65;
+    if (cp - 97 < 26) return cp - 97;
+    return base;
+  }
+  function adapt(delta, numPoints, firstTime) {
+    var k = 0;
+    delta = firstTime ? Math.floor(delta / damp) : delta >> 1;
+    delta += Math.floor(delta / numPoints);
+    for (; delta > ((base - tMin) * tMax) >> 1; k += base) delta = Math.floor(delta / (base - tMin));
+    return Math.floor(k + (base - tMin + 1) * delta / (delta + skew));
+  }
+  for (var index = basic > 0 ? basic + 1 : 0; index < input.length;) {
+    var oldi = i, w = 1;
+    for (var k = base; ; k += base) {
+      if (index >= input.length) throw new Error('bad');
+      var d = digit(input.charCodeAt(index++));
+      if (d >= base) throw new Error('bad');
+      i += d * w;
+      var t = k <= bias ? tMin : (k >= bias + tMax ? tMax : k - bias);
+      if (d < t) break;
+      w *= base - t;
+    }
+    var out = output.length + 1;
+    bias = adapt(i - oldi, out, oldi === 0);
+    n += Math.floor(i / out);
+    i %= out;
+    output.splice(i++, 0, n);
+  }
+  return String.fromCodePoint.apply(null, output);
+};
+DL.idnDecode = function (host) {
+  if (!host || host.indexOf('xn--') < 0) return host;
+  return host.split('.').map(function (l) {
+    if (/^xn--/i.test(l)) { try { return DL.punyDecode(l.slice(4)); } catch (e) { return l; } }
+    return l;
+  }).join('.');
+};
+
+/* ---- hashing ---- */
+DL.sha = async function (algo, bytes) {
+  if (globalThis.crypto && crypto.subtle) {
+    var h = await crypto.subtle.digest(algo, bytes);
+    return DL.hex(new Uint8Array(h));
+  }
+  return '';
+};
+
+DL.md5 = function (bytes) {
+  // compact MD5 (RFC 1321) over Uint8Array
+  var K = [], S = [7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21];
+  for (var i = 0; i < 64; i++) K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296) >>> 0;
+  var len = bytes.length;
+  var padLen = ((len + 8) >> 6 << 6) + 64;
+  var buf = new Uint8Array(padLen);
+  buf.set(bytes); buf[len] = 0x80;
+  var bitLen = len * 8;
+  buf[padLen - 8] = bitLen & 0xff; buf[padLen - 7] = (bitLen >>> 8) & 0xff; buf[padLen - 6] = (bitLen >>> 16) & 0xff; buf[padLen - 5] = (bitLen >>> 24) & 0xff;
+  var hi = Math.floor(bitLen / 4294967296);
+  buf[padLen - 4] = hi & 0xff; buf[padLen - 3] = (hi >>> 8) & 0xff; buf[padLen - 2] = (hi >>> 16) & 0xff; buf[padLen - 1] = (hi >>> 24) & 0xff;
+  var a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
+  var M = new Uint32Array(16);
+  var dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  for (var off = 0; off < padLen; off += 64) {
+    for (var j = 0; j < 16; j++) M[j] = dv.getUint32(off + j * 4, true);
+    var A = a0, B = b0, C = c0, D = d0;
+    for (var t = 0; t < 64; t++) {
+      var F, g;
+      if (t < 16) { F = (B & C) | (~B & D); g = t; }
+      else if (t < 32) { F = (D & B) | (~D & C); g = (5 * t + 1) & 15; }
+      else if (t < 48) { F = B ^ C ^ D; g = (3 * t + 5) & 15; }
+      else { F = C ^ (B | ~D); g = (7 * t) & 15; }
+      var tmp = D; D = C; C = B;
+      var x = (A + F + K[t] + M[g]) >>> 0;
+      B = (B + ((x << S[t]) | (x >>> (32 - S[t])))) >>> 0;
+      A = tmp;
+    }
+    a0 = (a0 + A) >>> 0; b0 = (b0 + B) >>> 0; c0 = (c0 + C) >>> 0; d0 = (d0 + D) >>> 0;
+  }
+  var out = new Uint8Array(16);
+  var ov = new DataView(out.buffer);
+  ov.setUint32(0, a0, true); ov.setUint32(4, b0, true); ov.setUint32(8, c0, true); ov.setUint32(12, d0, true);
+  return DL.hex(out);
+};
+
+/* ---- URL helpers ---- */
+DL.parseUrl = function (u) {
+  try {
+    var x = new URL(u);
+    return { ok: true, url: x, host: x.hostname, scheme: x.protocol.replace(':', ''), port: x.port, user: x.username };
+  } catch (e) { return { ok: false }; }
+};
+
+DL.unwrapUrl = function (u) {
+  // returns {url, wrapper} for known link-rewriting gateways
+  var res = { url: u, wrapper: null };
+  try {
+    var x = new URL(u);
+    var h = x.hostname.toLowerCase();
+    if (/safelinks\.protection\.outlook\.com$/.test(h)) {
+      var t = x.searchParams.get('url'); if (t) { res.url = t; res.wrapper = 'Microsoft Safe Links'; }
+    } else if (h === 'urldefense.proofpoint.com' && /^\/v2\/url/.test(x.pathname)) {
+      var uu = x.searchParams.get('u');
+      if (uu) { res.url = decodeURIComponent(uu.replace(/_/g, '/').replace(/-/g, '%')); res.wrapper = 'Proofpoint URL Defense v2'; }
+    } else if ((h === 'urldefense.com' || h === 'urldefense.proofpoint.com') && /^\/v3\/__/.test(x.pathname)) {
+      var m = /^\/v3\/__(.*?)__;/.exec(x.pathname + x.search);
+      if (m) { res.url = decodeURIComponent(m[1]); res.wrapper = 'Proofpoint URL Defense v3' + (res.url.indexOf('*') >= 0 ? ' (partially decoded)' : ''); }
+    } else if (h === 'urldefense.proofpoint.com' && /^\/v1\/url/.test(x.pathname)) {
+      var u1 = x.searchParams.get('u'); if (u1) { res.url = u1; res.wrapper = 'Proofpoint URL Defense v1'; }
+    } else if (/^www\.google\.[a-z.]+$/.test(h) && x.pathname === '/url') {
+      var q = x.searchParams.get('q') || x.searchParams.get('url'); if (q) { res.url = q; res.wrapper = 'Google redirect'; }
+    } else if (/\.mimecast\.com$/.test(h) && /^\/s\//.test(x.pathname)) {
+      res.wrapper = 'Mimecast (opaque, cannot decode offline)';
+    } else if (h === 'linkprotect.cudasvc.com') {
+      var a = x.searchParams.get('a'); if (a) { res.url = a; res.wrapper = 'Barracuda Link Protect'; }
+    } else if (/secure-web\.cisco\.com$/.test(h)) {
+      var cm = /^\/[^/]+\/(https?:\/\/.*)$/.exec(x.pathname + x.search);
+      if (cm) { res.url = cm[1]; res.wrapper = 'Cisco Secure Web'; } else res.wrapper = 'Cisco Secure Web (opaque)';
+    } else if (/\.protection\.sophos\.com$/.test(h) || /^protect-[a-z0-9-]+\.mimecast\.com$/.test(h) || /\.email\.protect\.trendmicro\.com$/.test(h)) {
+      res.wrapper = 'Vendor link wrapper (opaque)';
+    }
+  } catch (e) { }
+  return res;
+};
+
+
+/* ---------- mime / eml ---------- */
+
+DL.Message = function () {
+  this.kind = 'eml';
+  this.name = '';
+  this.headers = [];
+  this.parts = null;
+  this.html = null;
+  this.text = null;
+  this.attachments = [];
+  this.raw = null;
+  this.notes = [];
+  this.headerSource = 'transport';
+};
+DL.Message.prototype.get = function (name) {
+  var n = name.toLowerCase();
+  for (var i = 0; i < this.headers.length; i++) if (this.headers[i].name.toLowerCase() === n) return this.headers[i].value;
+  return null;
+};
+DL.Message.prototype.getAll = function (name) {
+  var n = name.toLowerCase(), out = [];
+  for (var i = 0; i < this.headers.length; i++) if (this.headers[i].name.toLowerCase() === n) out.push(this.headers[i].value);
+  return out;
+};
+
+DL.decodeRfc2047 = function (s) {
+  if (!s || s.indexOf('=?') < 0) return s;
+  // drop whitespace between adjacent encoded-words
+  s = s.replace(/(=\?[^?\s]+\?[bBqQ]\?[^?\s]*\?=)\s+(?==\?[^?\s]+\?[bBqQ]\?)/g, '$1');
+  return s.replace(/=\?([^?\s]+)\?([bBqQ])\?([^?\s]*)\?=/g, function (m, cs, enc, txt) {
+    cs = cs.split('*')[0];
+    try {
+      var bytes = (enc === 'b' || enc === 'B') ? DL.b64decode(txt) : DL.qpDecode(txt, true);
+      return DL.decodeText(bytes, cs);
+    } catch (e) { return m; }
+  });
+};
+
+DL.parseHeaderBlock = function (text) {
+  var lines = text.split(/\r\n|\n|\r/);
+  var out = [], cur = null;
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (line === '' ) { if (cur) { out.push(cur); cur = null; } continue; }
+    if (/^[ \t]/.test(line) && cur) { cur.raw += '\r\n' + line; cur.value += ' ' + line.trim(); continue; }
+    var m = /^([^:\s]+):\s*(.*)$/.exec(line);
+    if (m) { if (cur) out.push(cur); cur = { name: m[1], value: m[2].trim(), raw: line }; }
+    else if (cur) { cur.raw += '\r\n' + line; cur.value += ' ' + line.trim(); }
+    else { out.push({ name: '(malformed)', value: line, raw: line }); }
+  }
+  if (cur) out.push(cur);
+  for (var j = 0; j < out.length; j++) out[j].value = DL.decodeRfc2047(out[j].value);
+  return out;
+};
+
+// Content-Type / Content-Disposition parameter parsing with RFC 2231
+DL.parseParams = function (value) {
+  var res = { type: '', params: {} };
+  if (!value) return res;
+  var i = 0, s = value;
+  // main value up to ';'
+  var semi = s.indexOf(';');
+  res.type = (semi < 0 ? s : s.slice(0, semi)).trim().toLowerCase();
+  if (semi < 0) return res;
+  s = s.slice(semi + 1);
+  var pieces = {}; // name -> [{n, enc, val}]
+  var re = /\s*([^=;\s]+)\s*=\s*("(?:[^"\\]|\\.)*"|[^;]*)\s*(?:;|$)/g, m;
+  while ((m = re.exec(s)) !== null) {
+    if (m[0].trim() === '') { if (re.lastIndex >= s.length) break; re.lastIndex++; continue; }
+    var name = m[1].toLowerCase(), val = m[2].trim();
+    if (/^".*"$/.test(val)) val = val.slice(1, -1).replace(/\\(.)/g, '$1');
+    var enc = false, idx = null;
+    var pm = /^([^*]+)\*(?:(\d+)(\*)?)?$/.exec(name);
+    if (pm) { name = pm[1]; if (pm[2] == null) { enc = true; idx = 0; } else { idx = parseInt(pm[2], 10); enc = !!pm[3]; } }
+    if (idx == null) { res.params[name] = DL.decodeRfc2047(val); continue; }
+    (pieces[name] = pieces[name] || []).push({ n: idx == null ? 0 : idx, enc: enc, val: val });
+  }
+  Object.keys(pieces).forEach(function (name) {
+    var arr = pieces[name].sort(function (a, b) { return a.n - b.n; });
+    var charset = 'utf-8', out = '';
+    var bytes = [];
+    arr.forEach(function (p, k) {
+      var v = p.val;
+      if (p.enc) {
+        if (k === 0 || (arr[0].enc && k === 0)) {
+          var cm = /^([^']*)'([^']*)'(.*)$/.exec(v);
+          if (cm) { charset = cm[1] || 'utf-8'; v = cm[3]; }
+        }
+        v = v.replace(/%([0-9A-Fa-f]{2})/g, function (mm, h) { return String.fromCharCode(parseInt(h, 16)); });
+        for (var q = 0; q < v.length; q++) bytes.push(v.charCodeAt(q) & 0xff);
+      } else {
+        // flush bytes as text of charset then append plain
+        if (bytes.length) { out += DL.decodeText(new Uint8Array(bytes), charset); bytes = []; }
+        out += v;
+      }
+    });
+    if (bytes.length) out += DL.decodeText(new Uint8Array(bytes), charset);
+    res.params[name] = out;
+  });
+  return res;
+};
+
+DL.parseAddressList = function (s) {
+  var out = [];
+  if (!s) return out;
+  // tokenize respecting quotes, comments, angle brackets
+  var items = [], cur = '', depthP = 0, inQ = false, inA = false;
+  for (var i = 0; i < s.length; i++) {
+    var c = s[i];
+    if (inQ) { cur += c; if (c === '\\' && i + 1 < s.length) { cur += s[++i]; } else if (c === '"') inQ = false; continue; }
+    if (depthP) { if (c === '(') depthP++; else if (c === ')') depthP--; cur += c; continue; }
+    if (c === '"') { inQ = true; cur += c; continue; }
+    if (c === '(') { depthP = 1; cur += c; continue; }
+    if (c === '<') inA = true; else if (c === '>') inA = false;
+    if ((c === ',' || c === ';') && !inA) { if (cur.trim()) items.push(cur.trim()); cur = ''; continue; }
+    cur += c;
+  }
+  if (cur.trim()) items.push(cur.trim());
+  items.forEach(function (it) {
+    // group syntax "name: addr1, addr2;" -> strip group name
+    var g = /^([^"<>@:]*):\s*(.*)$/.exec(it);
+    if (g && /@/.test(g[2])) it = g[2];
+    var m = /^(.*?)\s*<([^<>]*)>\s*(\(.*\))?$/.exec(it);
+    var name = '', addr = '';
+    if (m) { name = m[1].trim(); addr = m[2].trim(); if (!name && m[3]) name = m[3].replace(/^\(|\)$/g, ''); }
+    else {
+      var cm = /^([^\s(]+@[^\s(]+)\s*(?:\((.*)\))?$/.exec(it);
+      if (cm) { addr = cm[1]; name = (cm[2] || '').trim(); }
+      else { var am = /([^\s<>"(),;:]+@[^\s<>"(),;:]+)/.exec(it); addr = am ? am[1] : ''; name = it.replace(am ? am[1] : '', '').trim(); }
+    }
+    name = name.replace(/^"(.*)"$/, '$1').replace(/\\(.)/g, '$1').replace(/^\((.*)\)$/, '$1').trim();
+    addr = addr.replace(/^mailto:/i, '').replace(/^"(.*)"$/, '$1').trim();
+    if (addr || name) out.push({ name: name, addr: addr });
+  });
+  return out;
+};
+DL.fmtAddr = function (a) { if (!a) return ''; return a.name ? a.name + ' <' + a.addr + '>' : a.addr; };
+
+DL.EXT_BY_TYPE = { 'text/plain': 'txt', 'text/html': 'html', 'text/calendar': 'ics', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'application/pdf': 'pdf', 'application/zip': 'zip', 'message/rfc822': 'eml', 'application/msword': 'doc', 'application/vnd.ms-excel': 'xls', 'application/rtf': 'rtf', 'application/octet-stream': 'bin' };
+
+DL._splitHeaderBody = function (str) {
+  var m = /\r?\n\r?\n/.exec(str);
+  if (!m) return { head: str, body: '' };
+  return { head: str.slice(0, m.index), body: str.slice(m.index + m[0].length) };
+};
+
+DL._decodeCTE = function (bodyStr, cte) {
+  cte = (cte || '7bit').toLowerCase().trim();
+  if (cte === 'base64') return DL.b64decode(bodyStr);
+  if (cte === 'quoted-printable') return DL.qpDecode(bodyStr, false);
+  if (cte === 'uuencode' || cte === 'x-uuencode' || cte === 'x-uue') {
+    try {
+      var lines = bodyStr.split(/\r?\n/), out = [], started = false;
+      for (var i = 0; i < lines.length; i++) {
+        var l = lines[i];
+        if (!started) { if (/^begin\s+\d+/.test(l)) started = true; continue; }
+        if (/^end\s*$/.test(l) || l === '`') break;
+        var n = (l.charCodeAt(0) - 32) & 63; var pos = 1;
+        for (var k = 0; k < n; k += 3) {
+          var a = ((l.charCodeAt(pos++) - 32) & 63), b = ((l.charCodeAt(pos++) - 32) & 63), c = ((l.charCodeAt(pos++) - 32) & 63), d = ((l.charCodeAt(pos++) - 32) & 63);
+          out.push((a << 2) | (b >> 4)); if (k + 1 < n) out.push(((b & 15) << 4) | (c >> 2)); if (k + 2 < n) out.push(((c & 3) << 6) | d);
+        }
+      }
+      return new Uint8Array(out);
+    } catch (e) { return DL.bytesFromLatin1(bodyStr); }
+  }
+  return DL.bytesFromLatin1(bodyStr);
+};
+
+DL.parseEntity = function (str, depth, ctx) {
+  depth = depth || 0;
+  var sp = DL._splitHeaderBody(str);
+  var headers = DL.parseHeaderBlock(sp.head);
+  var part = { headers: headers, children: [], size: sp.body.length, depth: depth };
+  function h(n) { var l = n.toLowerCase(); for (var i = 0; i < headers.length; i++) if (headers[i].name.toLowerCase() === l) return headers[i].value; return null; }
+  var ct = DL.parseParams(h('Content-Type') || 'text/plain; charset=us-ascii');
+  var cd = DL.parseParams(h('Content-Disposition') || '');
+  part.contentType = ct.type || 'text/plain';
+  part.params = ct.params;
+  part.disposition = cd.type;
+  part.dispParams = cd.params;
+  part.cte = (h('Content-Transfer-Encoding') || '7bit').toLowerCase().trim();
+  part.contentId = (h('Content-ID') || '').replace(/^<|>$/g, '').trim();
+  part.filename = cd.params.filename || ct.params.name || h('Content-Description') || '';
+  part.isAttachment = part.disposition === 'attachment' || (!!part.filename && part.disposition !== 'inline' && !/^text\/(plain|html)$/.test(part.contentType) && part.contentType.indexOf('multipart/') !== 0);
+  ctx.count++;
+  if (ctx.count > 500 || depth > 30) { part.note = 'part limit reached'; return part; }
+
+  if (part.contentType.indexOf('multipart/') === 0) {
+    var b = ct.params.boundary;
+    if (!b) { part.note = 'multipart without boundary; treated as text'; part.contentType = 'text/plain'; }
+    else {
+      var lines = sp.body.split(/\r?\n/);
+      var segs = [], cur = null, inPart = false;
+      for (var i = 0; i < lines.length; i++) {
+        var l = lines[i];
+        if (l.indexOf('--' + b) === 0 && (l.slice(2 + b.length).trim() === '' || l.slice(2 + b.length).trim() === '--')) {
+          if (cur) segs.push(cur.join('\r\n'));
+          if (l.slice(2 + b.length).trim() === '--') { cur = null; inPart = false; break; }
+          cur = []; inPart = true; continue;
+        }
+        if (inPart) cur.push(l);
+      }
+      if (cur) segs.push(cur.join('\r\n'));
+      if (!segs.length) part.note = 'boundary not found in body';
+      segs.forEach(function (sg) { part.children.push(DL.parseEntity(sg, depth + 1, ctx)); });
+      return part;
+    }
+  }
+  var bytes = DL._decodeCTE(sp.body, part.cte);
+  part.bytes = bytes;
+  part.size = bytes.length;
+  if (part.contentType === 'message/rfc822' || part.contentType === 'message/global') {
+    try {
+      var nested = DL.parseEml(bytes, part.filename || 'embedded.eml');
+      part.nested = nested;
+    } catch (e) { part.note = 'nested message parse failed: ' + e.message; }
+    part.isAttachment = true;
+    return part;
+  }
+  if (/^text\//.test(part.contentType) || part.contentType === 'application/xhtml+xml') {
+    part.text = DL.decodeText(bytes, ct.params.charset || (depth === 0 && ctx.topCharset) || 'utf-8');
+  }
+  return part;
+};
+
+DL._collect = function (msg, part, seen) {
+  if (part.children.length) {
+    var isAlt = part.contentType === 'multipart/alternative';
+    part.children.forEach(function (c) { DL._collect(msg, c, seen); });
+    return;
+  }
+  if (part.nested) {
+    msg.attachments.push({ name: part.filename || ((part.nested.get('Subject') || 'message') + '.eml'), contentType: part.contentType, contentId: part.contentId, disposition: part.disposition || 'attachment', size: part.size, bytes: part.bytes, nested: part.nested, inline: false, part: part });
+    return;
+  }
+  if (!part.isAttachment && part.text != null) {
+    if (part.contentType === 'text/html' || part.contentType === 'application/xhtml+xml') { if (msg.html == null) { msg.html = part.text; msg.htmlCharset = part.params.charset || ''; return; } }
+    else if (part.contentType === 'text/plain') { if (msg.text == null) { msg.text = part.text; return; } else { msg.text += '\n\n' + part.text; return; } }
+    else if (part.contentType === 'text/calendar') { msg.text = (msg.text || '') + '\n\n[calendar part]\n' + part.text; return; }
+  }
+  // everything else is an attachment (including inline images)
+  var name = part.filename;
+  if (!name) { var ext = DL.EXT_BY_TYPE[part.contentType] || part.contentType.split('/')[1] || 'bin'; name = 'unnamed-' + (msg.attachments.length + 1) + '.' + ext.replace(/[^a-z0-9.]/gi, ''); }
+  msg.attachments.push({ name: name, contentType: part.contentType, contentId: part.contentId, disposition: part.disposition || (part.contentId ? 'inline' : 'attachment'), size: part.size, bytes: part.bytes, nested: null, inline: !!part.contentId && part.disposition !== 'attachment', part: part, text: part.text != null ? part.text : null });
+};
+
+DL.looksLikeHeaders = function (str) {
+  var head = str.replace(/^\ufeff/, '').replace(/^\s+/, '').split(/\r?\n/).slice(0, 5);
+  var hits = 0;
+  for (var i = 0; i < head.length; i++) if (/^[A-Za-z][A-Za-z0-9-]*:\s?/.test(head[i])) hits++;
+  return hits >= 1 && /^[A-Za-z][A-Za-z0-9-]*:/.test(head[0] || '');
+};
+
+DL.parseEml = function (bytes, name) {
+  var msg = new DL.Message();
+  msg.name = name || '';
+  msg.raw = bytes;
+  var str = DL.latin1(bytes);
+  // strip UTF-8 BOM
+  if (str.charCodeAt(0) === 0xef && str.charCodeAt(1) === 0xbb && str.charCodeAt(2) === 0xbf) str = str.slice(3);
+  // mbox "From " line
+  str = str.replace(/^From [^\r\n]*\r?\n/, '');
+  var trimmed = str.replace(/^\s+/, '');
+  if (!DL.looksLikeHeaders(str)) {
+    // raw HTML or text saved with an .eml extension; refuse obvious binaries
+    var sample = bytes.subarray(0, Math.min(bytes.length, 4096)), bad = 0;
+    for (var bi = 0; bi < sample.length; bi++) { var bc = sample[bi]; if (bc === 0 || (bc < 7) || (bc > 13 && bc < 32 && bc !== 27)) bad++; }
+    if (sample.length && bad / sample.length > 0.05 && !(bytes[0] === 0xff && bytes[1] === 0xfe) && !(bytes[0] === 0xfe && bytes[1] === 0xff)) throw new Error('not an email or text file (binary content, and not an Outlook .msg either)');
+    var decoded = DL.guessDecode(bytes);
+    if (/^\s*(<!doctype|<html|<head|<body|<div|<table|<meta|<p\b|<span|<!-[-])/i.test(decoded)) { msg.kind = 'html'; msg.html = decoded; }
+    else { msg.kind = 'text'; msg.text = decoded; }
+    msg.notes.push('No RFC 5322 header block found. File treated as a bare ' + (msg.kind === 'html' ? 'HTML' : 'text') + ' body; no envelope or transport analysis is possible.');
+    msg.headerSource = 'none';
+    return msg;
+  }
+  // decode header block properly (utf-8 if valid, else keep bytes as latin1)
+  var sp = DL._splitHeaderBody(str);
+  var headBytes = DL.bytesFromLatin1(sp.head);
+  var headText;
+  try { headText = new TextDecoder('utf-8', { fatal: true }).decode(headBytes); } catch (e) { headText = sp.head; }
+  var ctx = { count: 0 };
+  var top = DL.parseEntity(headText + '\r\n\r\n' + sp.body, 0, ctx);
+  msg.headers = top.headers;
+  msg.parts = top;
+  if (top.contentType.indexOf('multipart/') !== 0 && !top.nested) {
+    // single-part message body
+    if (top.text != null && !top.isAttachment) {
+      if (top.contentType === 'text/html') msg.html = top.text; else msg.text = top.text;
+    } else DL._collect(msg, top, {});
+  } else if (top.nested) {
+    msg.attachments.push({ name: top.filename || 'embedded.eml', contentType: top.contentType, size: top.size, bytes: top.bytes, nested: top.nested, disposition: 'attachment', inline: false, part: top });
+  } else DL._collect(msg, top, {});
+  if (sp.body.length === 0) { msg.kind = 'headers'; msg.notes.push('Headers only, no body.'); }
+  return msg;
+};
+
+DL.parseHeadersOnly = function (text) {
+  var msg = new DL.Message();
+  msg.kind = 'headers';
+  msg.headers = DL.parseHeaderBlock(text.replace(/^\s+/, ''));
+  msg.notes.push('Pasted headers only; no body or attachments.');
+  return msg;
+};
+
+
+/* ---------- .msg (CFB + MAPI) ---------- */
+
+DL.isCfb = function (bytes) {
+  return bytes.length > 512 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0 && bytes[4] === 0xa1 && bytes[5] === 0xb1 && bytes[6] === 0x1a && bytes[7] === 0xe1;
+};
+
+DL.Cfb = function (bytes) {
+  if (!DL.isCfb(bytes)) throw new Error('Not a compound file');
+  this.bytes = bytes;
+  this.dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  var dv = this.dv;
+  this.version = dv.getUint16(26, true);
+  this.sectorShift = dv.getUint16(30, true);
+  this.sectorSize = 1 << this.sectorShift;
+  this.miniShift = dv.getUint16(32, true);
+  this.miniSize = 1 << this.miniShift;
+  this.numFat = dv.getUint32(44, true);
+  this.firstDir = dv.getUint32(48, true);
+  this.miniCutoff = dv.getUint32(56, true);
+  this.firstMiniFat = dv.getUint32(60, true);
+  this.numMiniFat = dv.getUint32(64, true);
+  this.firstDifat = dv.getUint32(68, true);
+  this.numDifat = dv.getUint32(72, true);
+  if (this.sectorSize !== 512 && this.sectorSize !== 4096) throw new Error('Unsupported sector size');
+  this.maxSector = Math.floor((bytes.length - this.sectorSize) / this.sectorSize);
+  this._loadFat();
+  this._loadDir();
+  this._loadMiniFat();
+};
+DL.Cfb.ENDOFCHAIN = 0xfffffffe; DL.Cfb.FREESECT = 0xffffffff;
+DL.Cfb.prototype.sectorOffset = function (i) { return (i + 1) * this.sectorSize; };
+DL.Cfb.prototype._u32At = function (off) { return off + 4 <= this.bytes.length ? this.dv.getUint32(off, true) : DL.Cfb.FREESECT; };
+DL.Cfb.prototype._loadFat = function () {
+  var difat = [], i;
+  for (i = 0; i < 109; i++) { var e = this.dv.getUint32(76 + i * 4, true); if (e !== DL.Cfb.FREESECT && e !== DL.Cfb.ENDOFCHAIN) difat.push(e); }
+  var per = this.sectorSize / 4;
+  var ds = this.firstDifat, guard = 0;
+  while (ds !== DL.Cfb.ENDOFCHAIN && ds !== DL.Cfb.FREESECT && ds <= this.maxSector && guard++ < 10000) {
+    var off = this.sectorOffset(ds);
+    for (i = 0; i < per - 1; i++) { var e2 = this._u32At(off + i * 4); if (e2 !== DL.Cfb.FREESECT && e2 !== DL.Cfb.ENDOFCHAIN) difat.push(e2); }
+    ds = this._u32At(off + (per - 1) * 4);
+  }
+  this.fat = new Uint32Array(difat.length * per);
+  var n = 0;
+  for (i = 0; i < difat.length; i++) {
+    if (difat[i] > this.maxSector) { n += per; continue; }
+    var o = this.sectorOffset(difat[i]);
+    for (var j = 0; j < per; j++) this.fat[n++] = this._u32At(o + j * 4);
+  }
+};
+DL.Cfb.prototype.chain = function (start, isMini) {
+  var out = [], s = start, guard = 0, fat = isMini ? this.miniFat : this.fat;
+  var limit = isMini ? fat.length : this.maxSector + 1;
+  while (s !== DL.Cfb.ENDOFCHAIN && s !== DL.Cfb.FREESECT && s < limit && guard++ < 4000000) {
+    out.push(s);
+    s = s < fat.length ? fat[s] : DL.Cfb.ENDOFCHAIN;
+  }
+  return out;
+};
+DL.Cfb.prototype._loadDir = function () {
+  var sectors = this.chain(this.firstDir, false);
+  var entries = [];
+  var perSector = this.sectorSize / 128;
+  for (var i = 0; i < sectors.length; i++) {
+    var base = this.sectorOffset(sectors[i]);
+    for (var j = 0; j < perSector; j++) {
+      var o = base + j * 128;
+      if (o + 128 > this.bytes.length) break;
+      var nameLen = this.dv.getUint16(o + 64, true);
+      var type = this.bytes[o + 66];
+      var name = '';
+      if (nameLen >= 2 && nameLen <= 64) name = new TextDecoder('utf-16le').decode(this.bytes.subarray(o, o + nameLen - 2));
+      var sizeLo = this.dv.getUint32(o + 120, true), sizeHi = this.dv.getUint32(o + 124, true);
+      var size = this.version === 3 ? sizeLo : sizeLo + sizeHi * 4294967296;
+      entries.push({ id: entries.length, name: name, type: type, left: this.dv.getUint32(o + 68, true), right: this.dv.getUint32(o + 72, true), child: this.dv.getUint32(o + 76, true), start: this.dv.getUint32(o + 116, true), size: size });
+    }
+  }
+  this.entries = entries;
+  this.root = entries[0];
+};
+DL.Cfb.prototype._loadMiniFat = function () {
+  var sectors = this.chain(this.firstMiniFat, false);
+  var per = this.sectorSize / 4;
+  this.miniFat = new Uint32Array(sectors.length * per);
+  var n = 0;
+  for (var i = 0; i < sectors.length; i++) { var o = this.sectorOffset(sectors[i]); for (var j = 0; j < per; j++) this.miniFat[n++] = this._u32At(o + j * 4); }
+  // mini stream = root entry's regular chain
+  this.miniStreamSectors = this.root ? this.chain(this.root.start, false) : [];
+};
+DL.Cfb.prototype.readStream = function (entry) {
+  var size = entry.size, out = new Uint8Array(size), pos = 0;
+  if (size === 0) return out;
+  if (size < this.miniCutoff && entry !== this.root) {
+    var ms = this.chain(entry.start, true);
+    var perBig = this.sectorSize / this.miniSize;
+    for (var i = 0; i < ms.length && pos < size; i++) {
+      var big = this.miniStreamSectors[Math.floor(ms[i] / perBig)];
+      if (big == null) break;
+      var off = this.sectorOffset(big) + (ms[i] % perBig) * this.miniSize;
+      var n = Math.min(this.miniSize, size - pos);
+      out.set(this.bytes.subarray(off, off + n), pos); pos += n;
+    }
+  } else {
+    var ss = this.chain(entry.start, false);
+    for (var k = 0; k < ss.length && pos < size; k++) {
+      var o2 = this.sectorOffset(ss[k]);
+      var n2 = Math.min(this.sectorSize, size - pos);
+      out.set(this.bytes.subarray(o2, o2 + n2), pos); pos += n2;
+    }
+  }
+  return pos < size ? out.subarray(0, pos) : out;
+};
+DL.Cfb.prototype.children = function (storage) {
+  // in-order traversal of the sibling tree rooted at storage.child
+  var out = [], stack = [], cur = storage.child, guard = 0, seen = {};
+  while ((cur !== DL.Cfb.FREESECT && cur < this.entries.length) || stack.length) {
+    while (cur !== DL.Cfb.FREESECT && cur < this.entries.length && !seen[cur]) { seen[cur] = 1; stack.push(cur); cur = this.entries[cur].left; }
+    if (!stack.length) break;
+    var id = stack.pop();
+    out.push(this.entries[id]);
+    cur = this.entries[id].right;
+    if (guard++ > 100000) break;
+  }
+  return out;
+};
+
+/* ---- MAPI property layer ---- */
+DL.CODEPAGES = { 1200: 'utf-16le', 1201: 'utf-16be', 65001: 'utf-8', 65000: 'utf-8', 20127: 'utf-8', 1250: 'windows-1250', 1251: 'windows-1251', 1252: 'windows-1252', 1253: 'windows-1253', 1254: 'windows-1254', 1255: 'windows-1255', 1256: 'windows-1256', 1257: 'windows-1257', 1258: 'windows-1258', 874: 'windows-874', 932: 'shift_jis', 936: 'gbk', 949: 'euc-kr', 950: 'big5', 20866: 'koi8-r', 21866: 'koi8-u', 28591: 'iso-8859-1', 28592: 'iso-8859-2', 28595: 'iso-8859-5', 28597: 'iso-8859-7', 28599: 'iso-8859-9', 28605: 'iso-8859-15', 51932: 'euc-jp', 50220: 'iso-2022-jp', 50221: 'iso-2022-jp', 50222: 'iso-2022-jp', 54936: 'gb18030' };
+
+DL.MsgStorage = function (cfb, entry, kind) {
+  this.cfb = cfb; this.entry = entry; this.kind = kind; // 'message' | 'embedded' | 'attach' | 'recip'
+  this.map = {};
+  var kids = cfb.children(entry);
+  for (var i = 0; i < kids.length; i++) this.map[kids[i].name] = kids[i];
+  this.props = this._readPropsStream();
+};
+DL.MsgStorage.prototype._readPropsStream = function () {
+  var props = {};
+  var e = this.map['__properties_version1.0'];
+  if (!e) return props;
+  var b = this.cfb.readStream(e);
+  var dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  var hdr = this.kind === 'message' ? 32 : (this.kind === 'embedded' ? 24 : 8);
+  if (this.kind === 'message' || this.kind === 'embedded') {
+    if (b.length >= 24) { this.recipCount = dv.getUint32(16, true); this.attachCount = dv.getUint32(20, true); }
+  }
+  for (var o = hdr; o + 16 <= b.length; o += 16) {
+    var tag = dv.getUint32(o, true);
+    var type = tag & 0xffff, id = tag >>> 16;
+    var v = null;
+    switch (type) {
+      case 0x0002: v = dv.getInt16(o + 8, true); break;
+      case 0x0003: v = dv.getInt32(o + 8, true); break;
+      case 0x0004: v = dv.getFloat32(o + 8, true); break;
+      case 0x0005: v = dv.getFloat64(o + 8, true); break;
+      case 0x000b: v = dv.getUint16(o + 8, true) !== 0; break;
+      case 0x0014: v = dv.getUint32(o + 8, true) + dv.getUint32(o + 12, true) * 4294967296; break;
+      case 0x0040: { var lo = dv.getUint32(o + 8, true), hi = dv.getUint32(o + 12, true); var ms = (hi * 4294967296 + lo) / 10000 - 11644473600000; v = (lo === 0 && hi === 0) ? null : new Date(ms); break; }
+      case 0x001e: case 0x001f: case 0x0102: case 0x000d: v = { len: dv.getUint32(o + 8, true), type: type }; break;
+      default: v = { raw: b.subarray(o + 8, o + 16), type: type };
+    }
+    props[id] = { type: type, value: v };
+  }
+  return props;
+};
+DL.MsgStorage.prototype.streamName = function (id, type) { return '__substg1.0_' + ('0000' + id.toString(16).toUpperCase()).slice(-4) + ('0000' + type.toString(16).toUpperCase()).slice(-4); };
+DL.MsgStorage.prototype.findStream = function (id) {
+  var pre = '__substg1.0_' + ('0000' + id.toString(16).toUpperCase()).slice(-4);
+  var names = Object.keys(this.map);
+  for (var i = 0; i < names.length; i++) if (names[i].toUpperCase().indexOf(pre.toUpperCase()) === 0) return this.map[names[i]];
+  return null;
+};
+DL.MsgStorage.prototype.getBytes = function (id) {
+  var e = this.findStream(id);
+  if (!e || e.type !== 2) return null;
+  return this.cfb.readStream(e);
+};
+DL.MsgStorage.prototype.codepage = function () {
+  var cp = this.getInt(0x3fde) || this.getInt(0x3ffd) || (this.parentCp) || 1252;
+  return DL.CODEPAGES[cp] || 'windows-1252';
+};
+DL.MsgStorage.prototype.getString = function (id) {
+  var e = this.findStream(id);
+  if (!e || e.type !== 2) return null;
+  var t = parseInt(e.name.slice(-4), 16);
+  var b = this.cfb.readStream(e);
+  if (t === 0x001f) return new TextDecoder('utf-16le').decode(b).replace(/\0+$/, '');
+  if (t === 0x001e) return DL.decodeText(b, this.codepage()).replace(/\0+$/, '');
+  if (t === 0x0102) return DL.decodeText(b, this.codepage());
+  return null;
+};
+DL.MsgStorage.prototype.getInt = function (id) { var p = this.props[id]; return p && typeof p.value === 'number' ? p.value : null; };
+DL.MsgStorage.prototype.getBool = function (id) { var p = this.props[id]; return p && typeof p.value === 'boolean' ? p.value : null; };
+DL.MsgStorage.prototype.getDate = function (id) { var p = this.props[id]; return p && p.value instanceof Date && !isNaN(p.value) ? p.value : null; };
+DL.MsgStorage.prototype.subStorages = function (prefix) {
+  var out = [];
+  var names = Object.keys(this.map).filter(function (n) { return n.indexOf(prefix) === 0; }).sort();
+  for (var i = 0; i < names.length; i++) if (this.map[names[i]].type === 1) out.push(this.map[names[i]]);
+  return out;
+};
+
+DL.parseMsg = function (bytes, name) {
+  var cfb = new DL.Cfb(bytes);
+  var root = new DL.MsgStorage(cfb, cfb.root, 'message');
+  var msg = DL._msgFromStorage(root, 0);
+  msg.name = name || '';
+  msg.raw = bytes;
+  return msg;
+};
+
+DL._msgFromStorage = function (st, depth) {
+  var msg = new DL.Message();
+  msg.kind = 'msg';
+  msg.parts = null;
+  var cp = st.getInt(0x3fde) || st.getInt(0x3ffd);
+  // transport headers
+  var th = st.getString(0x007d);
+  var subject = st.getString(0x0037) || st.getString(0x0e1d) || '';
+  var senderName = st.getString(0x0c1a) || '', senderAddr = st.getString(0x5d01) || st.getString(0x0c1f) || '';
+  var reprName = st.getString(0x0042) || '', reprAddr = st.getString(0x5d02) || st.getString(0x0065) || '';
+  if (/^EX$/i.test(st.getString(0x0c1e) || '') && senderAddr.indexOf('@') < 0) senderAddr = st.getString(0x5d01) || senderAddr;
+  var displayTo = st.getString(0x0e04) || '', displayCc = st.getString(0x0e03) || '', displayBcc = st.getString(0x0e02) || '';
+  var submit = st.getDate(0x0039), delivered = st.getDate(0x0e06);
+  var msgId = st.getString(0x1035) || '';
+  var conv = st.getString(0x0070) || '';
+  // recipients
+  var recips = st.subStorages('__recip_version1.0_').map(function (e) {
+    var r = new DL.MsgStorage(st.cfb, e, 'recip'); r.parentCp = cp;
+    return { name: r.getString(0x3001) || '', addr: r.getString(0x39fe) || r.getString(0x3003) || '', type: r.getInt(0x0c15) };
+  });
+  var toList = recips.filter(function (r) { return r.type === 1; }), ccList = recips.filter(function (r) { return r.type === 2; }), bccList = recips.filter(function (r) { return r.type === 3; });
+
+  if (th && /^[A-Za-z][A-Za-z0-9-]*:/.test(th.replace(/^\s+/, ''))) {
+    msg.headers = DL.parseHeaderBlock(th.replace(/^\s+/, ''));
+    msg.headerSource = 'transport';
+    var synth = [];
+    if (!msg.get('Subject') && subject) synth.push({ name: 'Subject', value: subject, raw: 'Subject: ' + subject, synthesized: true });
+    if (!msg.get('From')) { var fa = { name: reprName || senderName, addr: reprAddr || senderAddr }; if (fa.addr || fa.name) synth.push({ name: 'From', value: DL.fmtAddr(fa), raw: '', synthesized: true }); }
+    if (!msg.get('To') && (toList.length || displayTo)) synth.push({ name: 'To', value: toList.length ? toList.map(DL.fmtAddr).join(', ') : displayTo, raw: '', synthesized: true });
+    if (!msg.get('Date') && submit) synth.push({ name: 'Date', value: submit.toUTCString(), raw: '', synthesized: true });
+    msg.headers = msg.headers.concat(synth);
+    if (synth.length) msg.notes.push('Some envelope fields were missing from the transport headers and were filled from MAPI properties: ' + synth.map(function (h) { return h.name; }).join(', ') + '.');
+  } else {
+    msg.headerSource = 'mapi';
+    var hs = [];
+    var from = { name: reprName || senderName, addr: reprAddr || senderAddr };
+    if (from.addr || from.name) hs.push({ name: 'From', value: DL.fmtAddr(from) });
+    if ((senderAddr || senderName) && (senderAddr !== reprAddr)) hs.push({ name: 'Sender', value: DL.fmtAddr({ name: senderName, addr: senderAddr }) });
+    if (toList.length || displayTo) hs.push({ name: 'To', value: toList.length ? toList.map(DL.fmtAddr).join(', ') : displayTo });
+    if (ccList.length || displayCc) hs.push({ name: 'Cc', value: ccList.length ? ccList.map(DL.fmtAddr).join(', ') : displayCc });
+    if (bccList.length || displayBcc) hs.push({ name: 'Bcc', value: bccList.length ? bccList.map(DL.fmtAddr).join(', ') : displayBcc });
+    hs.push({ name: 'Subject', value: subject });
+    if (submit) hs.push({ name: 'Date', value: submit.toUTCString() });
+    if (msgId) hs.push({ name: 'Message-ID', value: msgId });
+    if (delivered) hs.push({ name: 'X-MS-Delivery-Time', value: delivered.toUTCString() });
+    hs.forEach(function (h) { h.raw = h.name + ': ' + h.value; h.synthesized = true; });
+    msg.headers = hs;
+    msg.notes.push('This .msg carries no transport headers (PR_TRANSPORT_MESSAGE_HEADERS is empty). Envelope fields were reconstructed from MAPI properties; hop and authentication analysis is not possible. That is normal for mail composed or sent from Outlook, and suspicious for mail that was supposedly received from outside.');
+  }
+  msg.mapi = { subject: subject, senderName: senderName, senderAddr: senderAddr, reprName: reprName, reprAddr: reprAddr, displayTo: displayTo, displayCc: displayCc, displayBcc: displayBcc, submit: submit, delivered: delivered, messageId: msgId, conversationTopic: conv, recipients: recips, codepage: cp, messageClass: st.getString(0x001a) || '' };
+  // bodies
+  var htmlBytes = null, hEntry = st.findStream(0x1013);
+  if (hEntry) {
+    var ht = parseInt(hEntry.name.slice(-4), 16);
+    var hb = st.cfb.readStream(hEntry);
+    if (ht === 0x001f) msg.html = new TextDecoder('utf-16le').decode(hb).replace(/\0+$/, '');
+    else if (ht === 0x001e) msg.html = DL.decodeText(hb, st.codepage()).replace(/\0+$/, '');
+    else msg.html = (cp && DL.CODEPAGES[cp]) ? DL.decodeText(hb, DL.CODEPAGES[cp]) : DL.guessDecode(hb);
+    if (msg.html && !msg.html.trim()) msg.html = null;
+  }
+  msg.text = st.getString(0x1000);
+  if (msg.text != null && !msg.text.trim()) msg.text = null;
+  var rtfBytes = st.getBytes(0x1009);
+  if (rtfBytes && rtfBytes.length > 16) {
+    try {
+      var rtf = DL.rtfDecompress(rtfBytes);
+      msg.rtf = rtf;
+      if (!msg.html) {
+        var de = DL.rtfToHtml(rtf, st.codepage());
+        if (de.html) { msg.html = de.html; msg.htmlFromRtf = true; msg.notes.push('HTML body was recovered from the RTF-encapsulated body (Outlook stores HTML mail this way); rendering may differ slightly from the original.'); }
+        else if (de.text && !msg.text) { msg.text = de.text; msg.notes.push('Body text was recovered from the RTF body.'); }
+      }
+    } catch (e) { msg.notes.push('RTF body could not be decompressed: ' + e.message); }
+  }
+  // attachments
+  var atts = st.subStorages('__attach_version1.0_');
+  atts.forEach(function (e, idx) {
+    var a = new DL.MsgStorage(st.cfb, e, 'attach'); a.parentCp = cp;
+    var method = a.getInt(0x3705);
+    var longName = a.getString(0x3707), shortName = a.getString(0x3704), dispName = a.getString(0x3001);
+    var nm = longName || dispName || shortName || '';
+    var mime = a.getString(0x370e) || '';
+    var cid = a.getString(0x3712) || '';
+    var hidden = a.getBool(0x7ffe) === true;
+    var ext = a.getString(0x3703) || '';
+    var att = { name: nm, contentType: mime, contentId: cid, disposition: hidden || cid ? 'inline' : 'attachment', inline: !!cid || hidden, hidden: hidden, method: method, size: 0, bytes: null, nested: null };
+    if (method === 5) {
+      var embEntry = a.map['__substg1.0_3701000D'];
+      if (embEntry) {
+        try {
+          var es = new DL.MsgStorage(st.cfb, embEntry, 'embedded'); es.parentCp = cp;
+          att.nested = DL._msgFromStorage(es, depth + 1);
+          att.nested.kind = 'msg';
+          att.nested.name = nm || ((att.nested.get('Subject') || 'embedded') + '.msg');
+          att.name = att.name || att.nested.name;
+          att.contentType = 'application/vnd.ms-outlook';
+          att.bytes = new Uint8Array(0);
+          att.note = 'Embedded Outlook message (cannot be exported as a standalone .msg from here; open it instead).';
+        } catch (err) { att.note = 'Embedded message parse failed: ' + err.message; }
+      }
+    } else {
+      var data = a.getBytes(0x3701);
+      if (data) { att.bytes = data; att.size = data.length; }
+      else { att.bytes = new Uint8Array(0); att.note = method === 6 ? 'OLE object attachment without raw data.' : (method === 2 || method === 3 || method === 4 ? 'Attachment by reference (link only, no data in file).' : 'No attachment data stream.'); }
+      if (!att.name) att.name = 'attachment-' + (idx + 1) + (ext || '');
+    }
+    att.contentType = att.contentType || DL.guessMimeFromName(att.name);
+    msg.attachments.push(att);
+  });
+  return msg;
+};
+
+DL.guessMimeFromName = function (name) {
+  var m = /\.([a-z0-9]+)$/i.exec(name || '');
+  var ext = m ? m[1].toLowerCase() : '';
+  var t = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', pdf: 'application/pdf', zip: 'application/zip', txt: 'text/plain', html: 'text/html', htm: 'text/html', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', eml: 'message/rfc822', msg: 'application/vnd.ms-outlook' };
+  return t[ext] || 'application/octet-stream';
+};
+
+
+/* ---------- rtf ---------- */
+
+DL.RTF_PREFIX = '{\\rtf1\\ansi\\mac\\deff0\\deftab720{\\fonttbl;}{\\f0\\fnil \\froman \\fswiss \\fmodern \\fscript \\fdecor MS Sans SerifSymbolArialTimes New RomanCourier{\\colortbl\\red0\\green0\\blue0\r\n\\par \\pard\\plain\\f0\\fs20 b\\i\\u\\tab\\tx';
+
+DL.rtfDecompress = function (bytes) {
+  var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  var compSize = dv.getUint32(0, true), rawSize = dv.getUint32(4, true);
+  var magic = DL.latin1(bytes.subarray(8, 12));
+  var end = Math.min(bytes.length, compSize + 4);
+  if (magic === 'MELA') return bytes.subarray(16, Math.min(bytes.length, 16 + rawSize));
+  if (magic !== 'LZFu') throw new Error('unknown RTF compression header ' + magic);
+  var dict = new Uint8Array(4096);
+  for (var i = 0; i < DL.RTF_PREFIX.length; i++) dict[i] = DL.RTF_PREFIX.charCodeAt(i);
+  var wp = DL.RTF_PREFIX.length;
+  var out = new Uint8Array(rawSize + 16), op = 0;
+  var pos = 16;
+  outer:
+  while (pos < end) {
+    var control = bytes[pos++];
+    for (var bit = 0; bit < 8; bit++) {
+      if ((control >> bit) & 1) {
+        if (pos + 1 >= end + 1) break outer;
+        var b1 = bytes[pos], b2 = bytes[pos + 1]; pos += 2;
+        var offset = (b1 << 4) | (b2 >> 4), len = (b2 & 0x0f) + 2;
+        if (offset === wp) break outer;
+        for (var k = 0; k < len; k++) {
+          var c = dict[(offset + k) & 0xfff];
+          if (op < out.length) out[op++] = c;
+          dict[wp] = c; wp = (wp + 1) & 0xfff;
+        }
+      } else {
+        if (pos >= end) break outer;
+        var ch = bytes[pos++];
+        if (op < out.length) out[op++] = ch;
+        dict[wp] = ch; wp = (wp + 1) & 0xfff;
+      }
+    }
+  }
+  return out.subarray(0, op);
+};
+
+// Tokenize RTF and either de-encapsulate HTML (\fromhtml1) or extract plain text.
+DL.rtfToHtml = function (rtfBytes, codepage) {
+  var s = DL.latin1(rtfBytes);
+  var cpm = /\\ansicpg(\d+)/.exec(s.slice(0, 400));
+  var cs = cpm && DL.CODEPAGES[+cpm[1]] ? DL.CODEPAGES[+cpm[1]] : (codepage || 'windows-1252');
+  var fromHtml = /\\fromhtml1/.test(s.slice(0, 600));
+  var out = [], pend = [];
+  function flush() { if (pend.length) { out.push(DL.decodeText(new Uint8Array(pend), cs)); pend = []; } }
+  function emit(str) { flush(); out.push(str); }
+  var DEST_SKIP = { fonttbl: 1, colortbl: 1, stylesheet: 1, info: 1, pict: 1, object: 1, header: 1, footer: 1, footnote: 1, pntext: 1, listtable: 1, listoverridetable: 1, rsidtbl: 1, generator: 1, themedata: 1, colorschememapping: 1, latentstyles: 1, datastore: 1, xmlnstbl: 1, mmathPr: 1, fldinst: 1, headerl: 1, headerr: 1, footerl: 1, footerr: 1, ftnsep: 1, annotation: 1, atnid: 1, atnauthor: 1, revtbl: 1, protusertbl: 1, filetbl: 1, background: 1, docvar: 1, blipuid: 1 };
+  var st = { skip: false, htmlrtf: false, htmltag: false, uc: 1, first: true, starPending: false };
+  var stack = [];
+  var ucSkip = 0;
+  var i = 0, n = s.length;
+  function textChar(code) {
+    if (ucSkip > 0) { ucSkip--; return; }
+    if (st.skip) return;
+    if (fromHtml && st.htmlrtf && !st.htmltag) return;
+    pend.push(code);
+  }
+  while (i < n) {
+    var c = s[i];
+    if (c === '{') { flush(); stack.push(st); st = { skip: st.skip, htmlrtf: st.htmlrtf, htmltag: false, uc: st.uc, first: true, starPending: false }; i++; continue; }
+    if (c === '}') { flush(); if (stack.length) st = stack.pop(); i++; continue; }
+    if (c === '\\') {
+      var m = /^\\([a-zA-Z]+)(-?\d+)? ?/.exec(s.substr(i, 40));
+      if (m) {
+        i += m[0].length;
+        var w = m[1], p = m[2] != null ? parseInt(m[2], 10) : null;
+        var wasFirst = st.first; st.first = false;
+        if (st.starPending) { st.starPending = false; if (w === 'htmltag') { st.htmltag = true; st.skip = false; continue; } st.skip = true; continue; }
+        if (wasFirst && DEST_SKIP[w]) { st.skip = true; continue; }
+        if (w === 'htmlrtf') { st.htmlrtf = p !== 0; continue; }
+        if (w === 'uc') { st.uc = p == null ? 1 : p; continue; }
+        if (w === 'u' && p != null) { if (p < 0) p += 65536; if (!(st.skip) && !(fromHtml && st.htmlrtf && !st.htmltag)) emit(String.fromCodePoint(p)); ucSkip = st.uc; continue; }
+        if (st.skip) continue;
+        if (fromHtml && st.htmlrtf && !st.htmltag) continue;
+        if (w === 'par' || w === 'line') { emit(fromHtml ? '\r\n' : '\n'); continue; }
+        if (w === 'tab') { emit('\t'); continue; }
+        if (w === 'lquote') emit('\u2018'); else if (w === 'rquote') emit('\u2019'); else if (w === 'ldblquote') emit('\u201c'); else if (w === 'rdblquote') emit('\u201d'); else if (w === 'bullet') emit('\u2022'); else if (w === 'endash') emit('\u2013'); else if (w === 'emdash') emit('\u2014'); else if (w === 'emspace' || w === 'enspace' || w === 'qmspace') emit(' ');
+        continue;
+      }
+      var c2 = s[i + 1];
+      if (c2 === "'") { var hx = s.substr(i + 2, 2); i += 4; if (/^[0-9a-fA-F]{2}$/.test(hx)) textChar(parseInt(hx, 16)); continue; }
+      if (c2 === '*') { st.starPending = true; st.first = false; i += 2; continue; }
+      if (c2 === '{' || c2 === '}' || c2 === '\\') { i += 2; if (!(st.skip) && !(fromHtml && st.htmlrtf && !st.htmltag)) { if (ucSkip > 0) ucSkip--; else pend.push(c2.charCodeAt(0)); } continue; }
+      if (c2 === '~') { i += 2; if (!st.skip && !(fromHtml && st.htmlrtf && !st.htmltag)) emit(fromHtml ? '&nbsp;' : '\u00a0'); continue; }
+      if (c2 === '-') { i += 2; continue; }
+      if (c2 === '_') { i += 2; if (!st.skip) emit('-'); continue; }
+      if (c2 === '\r' || c2 === '\n') { i += 2; if (!st.skip && !(fromHtml && st.htmlrtf && !st.htmltag)) emit(fromHtml ? '\r\n' : '\n'); continue; }
+      i += 2; continue;
+    }
+    if (c === '\r' || c === '\n') { i++; continue; }
+    textChar(c.charCodeAt(0)); i++;
+  }
+  flush();
+  var text = out.join('');
+  if (fromHtml) return { html: text.replace(/^\s+/, ''), text: null };
+  return { html: null, text: text.replace(/\r?\n{3,}/g, '\n\n').trim() };
+};
+
+
+/* ---------- analysis ---------- */
+
+DL.finding = function (list, sev, title, detail, ref) { list.push({ sev: sev, title: title, detail: detail || '', ref: ref || '' }); };
+DL.SEV_ORDER = { high: 0, medium: 1, info: 2 };
+
+/* ---- Received ---- */
+DL.parseReceived = function (value) {
+  var hop = { raw: value, from: '', by: '', with: '', id: '', for: '', via: '', date: null, dateRaw: '', fromIp: '', fromHost: '', tls: false };
+  var s = value.replace(/\s+/g, ' ').trim();
+  var semi = s.lastIndexOf(';');
+  if (semi >= 0) { hop.dateRaw = s.slice(semi + 1).trim(); hop.date = DL.parseMailDate(hop.dateRaw); s = s.slice(0, semi); }
+  // split into clauses on keywords (outside parentheses)
+  var clauses = [], cur = '', key = '', depth = 0, i = 0;
+  var words = ['from', 'by', 'with', 'id', 'for', 'via'];
+  while (i < s.length) {
+    var c = s[i];
+    if (c === '(') depth++; else if (c === ')') depth = Math.max(0, depth - 1);
+    if (depth === 0 && (i === 0 || s[i - 1] === ' ')) {
+      var matched = null;
+      for (var w = 0; w < words.length; w++) { var kw = words[w]; if (s.substr(i, kw.length + 1).toLowerCase() === kw + ' ') { matched = kw; break; } }
+      if (matched) { if (key || cur.trim()) clauses.push({ key: key, val: cur.trim() }); key = matched; cur = ''; i += matched.length + 1; continue; }
+    }
+    cur += c; i++;
+  }
+  if (key || cur.trim()) clauses.push({ key: key, val: cur.trim() });
+  clauses.forEach(function (cl) { if (cl.key && !hop[cl.key]) hop[cl.key] = cl.val; else if (cl.key) hop[cl.key] += ' ' + cl.val; });
+  hop.tls = /TLS|ESMTPS|SMTPS|SSL|HTTPS/i.test(hop.with);
+  // ip extraction from "from" clause: prefer bracketed
+  var f = hop.from;
+  // the MTA-verified connecting IP is normally the bracketed one inside parentheses: from HELO (rdns [ip]); fall back to any bracketed/bare IP
+  var ipm = null, pm;
+  var pre = /\(([^()]*)\)/g;
+  while ((pm = pre.exec(f)) !== null) { var inner = /\[(?:IPv6:)?([0-9a-f.:]+)\]/i.exec(pm[1]) || /^\s*([0-9]{1,3}(?:\.[0-9]{1,3}){3})\s*$/.exec(pm[1]) || /^\s*(?:IPv6:)?([0-9a-f:]+:[0-9a-f:]+)\s*$/i.exec(pm[1]); if (inner && (DL.isIPv4(inner[1]) || DL.isIPv6(inner[1]))) { ipm = inner; break; } }
+  if (!ipm) ipm = /\[(?:IPv6:)?([0-9a-f.:]+)\]/i.exec(f) || /\b([0-9]{1,3}(?:\.[0-9]{1,3}){3})\b/.exec(f);
+  if (ipm && (DL.isIPv4(ipm[1]) || DL.isIPv6(ipm[1]))) hop.fromIp = ipm[1];
+  var hm = /^([^\s(\[]+)/.exec(f);
+  hop.fromHost = hm ? hm[1] : '';
+  if (hop.fromHost && (DL.isIPv4(hop.fromHost.replace(/^\[|\]$/g, '')))) { hop.fromHost = ''; }
+  hop.fromRdns = (function () { var m = /\(([^()\s]+\.[a-z]{2,})\s*\[/i.exec(f) || /\(([^()\s]+)\s+\[/.exec(f); return m ? m[1] : ''; })();
+  return hop;
+};
+
+DL.analyzeHops = function (msg, findings) {
+  var recv = msg.getAll('Received');
+  var hops = recv.map(DL.parseReceived).reverse(); // chronological: first hop = origin
+  hops.forEach(function (h, i) { h.n = i + 1; h.delay = null; h.flags = []; });
+  for (var i = 1; i < hops.length; i++) {
+    if (hops[i].date && hops[i - 1].date) hops[i].delay = hops[i].date - hops[i - 1].date;
+  }
+  var origin = null;
+  for (var k = 0; k < hops.length; k++) {
+    var h = hops[k];
+    if (h.fromIp && !DL.isPrivateIp(h.fromIp)) { origin = h; h.flags.push('origin'); break; }
+  }
+  if (!origin) for (var q = 0; q < hops.length; q++) { if (hops[q].from) { origin = hops[q]; hops[q].flags.push('origin'); hops[q].flags.push('internal'); break; } }
+  hops.forEach(function (h) {
+    if (h.delay != null && h.delay < -60000) { h.flags.push('negative'); DL.finding(findings, 'medium', 'Hop ' + h.n + ' timestamp is earlier than the previous hop', 'Delay ' + DL.fmtDelta(h.delay) + '. Clock skew or a forged Received header.', 'hops'); }
+    if (h.delay != null && h.delay > 3600000) { h.flags.push('slow'); DL.finding(findings, 'info', 'Hop ' + h.n + ' took ' + DL.fmtDelta(h.delay), 'Long delay between servers; queued mail, greylisting, or a relay that sat on it.', 'hops'); }
+    if (h.from && !h.date) h.flags.push('nodate');
+    if (h.fromIp && !h.tls && h.with && !/^local|lmtp|hmtp/i.test(h.with) && !DL.isPrivateIp(h.fromIp)) h.flags.push('cleartext');
+  });
+  if (!hops.length && msg.headerSource === 'transport') DL.finding(findings, 'info', 'No Received headers', 'No transport hops recorded; the message never traversed SMTP as captured, or headers were stripped.', 'hops');
+  if (origin && origin.fromIp && !DL.isPrivateIp(origin.fromIp)) DL.finding(findings, 'info', 'Originating IP ' + origin.fromIp, (origin.fromHost ? 'HELO ' + origin.fromHost + '. ' : '') + (origin.fromRdns ? 'rDNS ' + origin.fromRdns + '. ' : '') + 'First public hop of ' + hops.length + '.', 'hops');
+  return { hops: hops, origin: origin };
+};
+
+/* ---- Authentication-Results ---- */
+DL.parseAuthResults = function (value) {
+  var s = value.replace(/\s+/g, ' ').trim();
+  var parts = [], cur = '', depth = 0, inQ = false;
+  for (var i = 0; i < s.length; i++) {
+    var c = s[i];
+    if (inQ) { cur += c; if (c === '"') inQ = false; continue; }
+    if (c === '"') { inQ = true; cur += c; continue; }
+    if (c === '(') depth++; else if (c === ')') depth = Math.max(0, depth - 1);
+    if (c === ';' && depth === 0) { parts.push(cur.trim()); cur = ''; continue; }
+    cur += c;
+  }
+  if (cur.trim()) parts.push(cur.trim());
+  var res = { authserv: '', results: [], raw: value };
+  if (!parts.length) return res;
+  var first = parts.shift();
+  var fm = /^([^\s]+)/.exec(first);
+  if (fm && first.indexOf('=') < 0) { res.authserv = fm[1]; }
+  else if (fm && /^i=\d+$/.test(fm[1])) { res.authserv = ''; res.arcInstance = fm[1]; }
+  else parts.unshift(first);
+  parts.forEach(function (p) {
+    if (!p) return;
+    // Exchange Online repeats the authserv-id between clauses ("x.com; dkim=...;x.com; dmarc=..."); skip bare identifiers
+    if (p.indexOf('=') < 0) { if (!res.authserv) res.authserv = p.replace(/\s.*$/, ''); return; }
+    var comments = [];
+    var noc = p.replace(/\(([^)]*)\)/g, function (m, c) { comments.push(c); return ' '; }).replace(/\s+/g, ' ').trim();
+    var mm = /^([a-z0-9_-]+)\s*=\s*([a-z0-9_-]+)(.*)$/i.exec(noc);
+    if (!mm) { res.results.push({ method: noc, result: '', props: {}, comment: comments.join(' ') }); return; }
+    var r = { method: mm[1].toLowerCase(), result: mm[2].toLowerCase(), props: {}, comment: comments.join(' ') };
+    var rest = mm[3];
+    var re = /([a-z0-9_.-]+)\s*=\s*("[^"]*"|[^\s]+)/gi, pm;
+    while ((pm = re.exec(rest)) !== null) r.props[pm[1].toLowerCase()] = pm[2].replace(/^"|"$/g, '');
+    res.results.push(r);
+  });
+  return res;
+};
+
+DL.analyzeAuth = function (msg, findings, trustedAuthserv) {
+  var out = { ar: [], dkimSigs: [], receivedSpf: null, spf: null, dkim: null, dmarc: null, arc: null, compauth: null, trustedIndex: -1, alignment: null };
+  var raws = msg.getAll('Authentication-Results');
+  raws.forEach(function (v, i) { var p = DL.parseAuthResults(v); p.index = i; p.kind = 'AR'; out.ar.push(p); });
+  msg.getAll('ARC-Authentication-Results').forEach(function (v) { var p = DL.parseAuthResults(v); p.kind = 'ARC-AR'; out.ar.push(p); });
+  msg.getAll('DKIM-Signature').forEach(function (v) {
+    var sig = {};
+    v.split(';').forEach(function (kv) { var m = /^\s*([a-z]+)\s*=\s*([\s\S]*)$/i.exec(kv); if (m) sig[m[1].toLowerCase()] = m[2].replace(/\s+/g, ''); });
+    out.dkimSigs.push(sig);
+  });
+  var rs = msg.get('Received-SPF');
+  if (rs) { var rm = /^\s*([a-z]+)/i.exec(rs); out.receivedSpf = { result: rm ? rm[1].toLowerCase() : '', raw: rs }; }
+  // choose trusted AR: configured authserv-id, else first (topmost = last added by our own gateway)
+  var trusted = null;
+  if (trustedAuthserv) {
+    for (var i = 0; i < out.ar.length; i++) if (out.ar[i].kind === 'AR' && out.ar[i].authserv.toLowerCase() === trustedAuthserv.toLowerCase()) { trusted = out.ar[i]; break; }
+    if (!trusted) DL.finding(findings, 'medium', 'No Authentication-Results from your gateway (' + trustedAuthserv + ')', out.ar.length ? 'Only results stamped by other servers are present; they can be forged by the sender.' : 'No Authentication-Results header at all.', 'auth');
+  }
+  if (!trusted) for (var j = 0; j < out.ar.length; j++) if (out.ar[j].kind === 'AR') { trusted = out.ar[j]; break; }
+  if (trusted) { trusted.trusted = true; out.trustedIndex = out.ar.indexOf(trusted); }
+  function pick(method) { if (!trusted) return null; for (var k = 0; k < trusted.results.length; k++) if (trusted.results[k].method === method) return trusted.results[k]; return null; }
+  out.spf = pick('spf'); out.dkim = pick('dkim'); out.dmarc = pick('dmarc'); out.arc = pick('arc'); out.compauth = pick('compauth');
+  // alignment (computed locally from what the gateway reported)
+  var fromAddr = DL.parseAddressList(msg.get('From') || '')[0];
+  var fromDom = fromAddr ? DL.domainOfAddr(fromAddr.addr) : '';
+  var al = { fromDomain: fromDom, dkimDomain: '', spfDomain: '', dkimAligned: null, spfAligned: null, computed: null };
+  if (out.dkim) { al.dkimDomain = (out.dkim.props['header.d'] || out.dkim.props['header.i'] || '').replace(/^.*@/, ''); if (out.dkim.result === 'pass' && al.dkimDomain && fromDom) al.dkimAligned = DL.orgDomain(al.dkimDomain) === DL.orgDomain(fromDom); }
+  if (out.spf) { al.spfDomain = (out.spf.props['smtp.mailfrom'] || out.spf.props['smtp.helo'] || '').replace(/^.*@/, ''); if (out.spf.result === 'pass' && al.spfDomain && fromDom) al.spfAligned = DL.orgDomain(al.spfDomain) === DL.orgDomain(fromDom); }
+  if (out.dkim || out.spf) al.computed = (al.dkimAligned === true || al.spfAligned === true) ? 'pass' : 'fail';
+  out.alignment = al;
+  // findings
+  if (!out.ar.length) DL.finding(findings, msg.headerSource === 'transport' && msg.kind !== 'headers' ? 'medium' : 'info', 'No Authentication-Results header', 'SPF, DKIM and DMARC were not evaluated by any gateway in the captured headers (or the header was stripped). Treat sender identity as unverified.', 'auth');
+  if (trusted && trusted.results.length) {
+    var multi = out.ar.filter(function (a) { return a.kind === 'AR'; }).length;
+    if (multi > 1) DL.finding(findings, 'info', multi + ' Authentication-Results headers present', 'Using the one stamped by ' + (trusted.authserv || 'the first server') + '. Others may have been added upstream (forwarding) or forged by the sender. Set your gateway\'s authserv-id in settings to pin the right one.', 'auth');
+    if (out.spf) { if (out.spf.result === 'fail' || out.spf.result === 'softfail') DL.finding(findings, 'high', 'SPF ' + out.spf.result + ' for ' + (al.spfDomain || 'envelope domain'), out.spf.comment || 'Sending IP is not authorized by the envelope domain.', 'auth'); else if (out.spf.result !== 'pass') DL.finding(findings, 'medium', 'SPF ' + out.spf.result, out.spf.comment || 'SPF could not be verified.', 'auth'); }
+    if (out.dkim) { if (out.dkim.result === 'fail' || out.dkim.result === 'permerror') DL.finding(findings, 'high', 'DKIM ' + out.dkim.result + (al.dkimDomain ? ' (d=' + al.dkimDomain + ')' : ''), out.dkim.comment || 'Signature did not verify; message modified in transit or signature forged.', 'auth'); else if (out.dkim.result !== 'pass') DL.finding(findings, 'medium', 'DKIM ' + out.dkim.result, out.dkim.comment || 'No valid DKIM signature.', 'auth'); }
+    if (out.dmarc) { if (out.dmarc.result === 'fail') DL.finding(findings, 'high', 'DMARC fail for ' + (out.dmarc.props['header.from'] || fromDom), 'Policy action: ' + (out.dmarc.props['action'] || out.dmarc.props['policy'] || 'unknown') + '. The visible From domain is not authenticated.', 'auth'); else if (out.dmarc.result !== 'pass') DL.finding(findings, 'medium', 'DMARC ' + out.dmarc.result, out.dmarc.result === 'none' ? 'The From domain publishes no DMARC policy; spoofing it is easy.' : (out.dmarc.comment || ''), 'auth'); }
+    if (out.compauth && out.compauth.result === 'fail') DL.finding(findings, 'medium', 'Microsoft composite authentication failed', 'compauth=fail reason=' + (out.compauth.props['reason'] || '?') + '. Exchange Online could not attribute the sender.', 'auth');
+    if (al.computed === 'fail' && (!out.dmarc || out.dmarc.result === 'pass')) DL.finding(findings, 'high', 'Authenticated domain does not match the From domain', 'DKIM d=' + (al.dkimDomain || '-') + ', SPF mailfrom=' + (al.spfDomain || '-') + ', From=' + fromDom + '. Passing SPF/DKIM on a different domain proves nothing about the visible sender.', 'auth');
+    if (al.computed === 'pass' && out.spf && out.spf.result === 'pass' && al.spfAligned && !(out.dkim && out.dkim.result === 'pass')) DL.finding(findings, 'info', 'Sender authenticated by SPF alignment only', 'No aligned DKIM signature; forwarding will break this.', 'auth');
+  }
+  if (out.dkimSigs.length && !out.dkim) DL.finding(findings, 'info', 'DKIM-Signature present but not evaluated', 'Signatures cannot be verified offline (no DNS). Domains: ' + out.dkimSigs.map(function (s) { return s.d || '?'; }).join(', '), 'auth');
+  return out;
+};
+
+/* ---- Envelope ---- */
+DL.analyzeEnvelope = function (msg, findings, auth) {
+  var env = {};
+  env.from = DL.parseAddressList(msg.get('From') || '');
+  env.sender = DL.parseAddressList(msg.get('Sender') || '');
+  env.replyTo = DL.parseAddressList(msg.get('Reply-To') || '');
+  env.returnPath = DL.parseAddressList(msg.get('Return-Path') || '');
+  env.to = DL.parseAddressList(msg.get('To') || '');
+  env.cc = DL.parseAddressList(msg.get('Cc') || '');
+  env.bcc = DL.parseAddressList(msg.get('Bcc') || '');
+  env.subject = msg.get('Subject') || '';
+  env.dateRaw = msg.get('Date') || '';
+  env.date = DL.parseMailDate(env.dateRaw);
+  env.messageId = (msg.get('Message-ID') || '').trim();
+  env.mailer = msg.get('X-Mailer') || msg.get('User-Agent') || msg.get('X-Mimeole') || '';
+  env.originatingIp = (msg.get('X-Originating-IP') || '').replace(/^\[|\]$/g, '');
+  env.priority = msg.get('X-Priority') || msg.get('Importance') || msg.get('X-MSMail-Priority') || '';
+  env.listUnsub = !!msg.get('List-Unsubscribe');
+  env.inReplyTo = msg.get('In-Reply-To') || ''; env.references = msg.get('References') || '';
+  var f = env.from[0];
+  var fromDom = f ? DL.domainOfAddr(f.addr) : '';
+  env.fromDomain = fromDom;
+  if (env.from.length > 1) DL.finding(findings, 'medium', 'Multiple From addresses', env.from.map(DL.fmtAddr).join(', '), 'envelope');
+  if (f) {
+    // display-name tricks
+    var dn = f.name || '';
+    var dnAddr = /([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i.exec(dn);
+    if (dnAddr && DL.orgDomain(DL.domainOfAddr(dnAddr[1])) !== DL.orgDomain(fromDom)) DL.finding(findings, 'high', 'Display name contains a different email address', '"' + dn + '" is shown to the user, but the real sender is ' + f.addr + '.', 'envelope');
+    else {
+      var dnDom = /\b((?:[a-z0-9-]+\.)+(?:com|net|org|io|ca|co|gov|edu|uk|de|fr|au|us|info|biz|app|dev|me))\b/i.exec(dn);
+      if (dnDom && DL.orgDomain(dnDom[1]) !== DL.orgDomain(fromDom)) DL.finding(findings, 'medium', 'Display name mentions another domain', '"' + dn + '" vs sender domain ' + fromDom + '.', 'envelope');
+    }
+    if (/[\u202a-\u202e\u2066-\u2069]/.test(dn + f.addr)) DL.finding(findings, 'high', 'Bidirectional override characters in sender', 'Unicode RTL/LTR override characters are used to disguise the sender.', 'envelope');
+    if (DL.FREEMAIL.indexOf(fromDom) >= 0) DL.finding(findings, 'info', 'Sender uses a free webmail domain (' + fromDom + ')', 'Legitimate for individuals; suspicious if the display name claims to be a company, bank, or executive.', 'envelope');
+    if (fromDom.indexOf('xn--') >= 0) DL.finding(findings, 'high', 'Internationalized sender domain', fromDom + ' decodes to ' + DL.idnDecode(fromDom) + '. Possible homograph.', 'envelope');
+    if (!f.addr) DL.finding(findings, 'medium', 'From header has no address', 'Only a display name is present.', 'envelope');
+  } else if (msg.headerSource !== 'none') DL.finding(findings, 'medium', 'No From header', '', 'envelope');
+  if (env.replyTo.length && f) {
+    var rt = env.replyTo[0];
+    if (DL.orgDomain(DL.domainOfAddr(rt.addr)) !== DL.orgDomain(fromDom)) DL.finding(findings, DL.FREEMAIL.indexOf(DL.domainOfAddr(rt.addr)) >= 0 ? 'high' : 'medium', 'Reply-To goes to a different domain', 'Replies go to ' + DL.fmtAddr(rt) + ' instead of ' + f.addr + '. Classic BEC/advance-fee pattern when the Reply-To is webmail.', 'envelope');
+  }
+  if (env.returnPath.length && f) {
+    var rp = env.returnPath[0];
+    var rpd = DL.domainOfAddr(rp.addr);
+    if (rpd && DL.orgDomain(rpd) !== DL.orgDomain(fromDom)) DL.finding(findings, 'info', 'Return-Path domain differs from From', rp.addr + ' (envelope sender) vs ' + f.addr + '. Normal for mailing services and forwarders; a problem when combined with failed alignment.', 'envelope');
+  }
+  if (env.sender.length && f) {
+    var sd = DL.domainOfAddr(env.sender[0].addr);
+    if (sd && DL.orgDomain(sd) !== DL.orgDomain(fromDom)) DL.finding(findings, 'info', 'Sender header differs from From', DL.fmtAddr(env.sender[0]) + ' sent on behalf of ' + f.addr + '.', 'envelope');
+  }
+  if (env.messageId && f) {
+    var midDom = env.messageId.replace(/[<>]/g, '').split('@')[1] || '';
+    env.messageIdDomain = midDom;
+    if (midDom && fromDom && DL.orgDomain(midDom) !== DL.orgDomain(fromDom) && !/^[0-9a-f.:]+$/.test(midDom)) DL.finding(findings, 'info', 'Message-ID domain differs from From domain', midDom + ' generated the ID; the From domain is ' + fromDom + '. Common with third-party mailers; notable when combined with other findings.', 'envelope');
+  } else if (msg.headerSource === 'transport' && msg.kind !== 'headers' && !env.messageId) DL.finding(findings, 'medium', 'No Message-ID', 'Every MTA adds one; its absence suggests a hand-crafted message or heavy header stripping.', 'envelope');
+  if (/^\s*(re|fwd?|aw|tr|sv|vs)\s*:/i.test(env.subject) && !env.inReplyTo && !env.references) DL.finding(findings, 'medium', 'Subject claims a reply or forward but has no thread references', 'No In-Reply-To or References header. A fake "Re:" is a common trust trick.', 'envelope');
+  if (env.priority && /^(1|2|high|urgent)/i.test(env.priority)) DL.finding(findings, 'info', 'Marked high priority', env.priority, 'envelope');
+  if (env.mailer && /phpmailer|swiftmailer|python|sendinblue|mailchimp|powermta|nodemailer|go-mail|perl/i.test(env.mailer)) DL.finding(findings, 'info', 'Sent with ' + env.mailer, 'Bulk or scripted mailer.', 'envelope');
+  if (!env.to.length && !env.cc.length && msg.headerSource === 'transport' && msg.kind !== 'headers') DL.finding(findings, 'info', 'No visible recipients', 'Delivered via Bcc or an envelope recipient only; typical of bulk mail.', 'envelope');
+  if (env.from.length && env.to.length && f.addr && env.to[0].addr && f.addr.toLowerCase() === env.to[0].addr.toLowerCase() && msg.headerSource === 'transport') {
+    var authed = auth && auth.alignment && auth.alignment.computed === 'pass';
+    DL.finding(findings, authed ? 'info' : 'medium', 'From and To are the same address', authed ? 'Sender is authenticated for this domain, so this is most likely a genuine self-addressed message (note-to-self, Bcc distribution).' : 'Sextortion and "your account was hacked" scams spoof the recipient as sender; the sender is not authenticated for this domain.', 'envelope');
+  }
+  if (/[\u202a-\u202e\u2066-\u2069]/.test(env.subject)) DL.finding(findings, 'high', 'Bidirectional override characters in subject', '', 'envelope');
+  return env;
+};
+
+/* ---- links ---- */
+DL.analyzeLink = function (href, text, source) {
+  var L = { href: href, text: (text || '').replace(/\s+/g, ' ').trim().slice(0, 200), source: source || 'html', flags: [], sev: 'info', wrapper: null, unwrapped: href, host: '', decodedHost: '', scheme: '' };
+  var h = (href || '').trim();
+  L.href = h;
+  var sm = /^([a-z][a-z0-9+.-]*):/i.exec(h);
+  L.scheme = sm ? sm[1].toLowerCase() : '';
+  if (L.scheme === 'mailto') { L.kind = 'mailto'; L.host = h.replace(/^mailto:/i, '').split('?')[0]; return L; }
+  if (L.scheme === 'tel' || L.scheme === 'sms') { L.kind = 'tel'; return L; }
+  if (L.scheme === 'javascript' || L.scheme === 'vbscript') { L.kind = 'script'; L.flags.push('script-url'); L.sev = 'high'; return L; }
+  if (L.scheme === 'data') { L.kind = 'data'; L.flags.push('data-url'); L.sev = 'high'; return L; }
+  if (L.scheme === 'file' || L.scheme === 'smb') { L.kind = 'file'; L.flags.push('file-url'); L.sev = 'high'; return L; }
+  if (!L.scheme) { if (/^\/\//.test(h)) h = 'http:' + h; else if (/^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(h)) h = 'http://' + h; else { L.kind = 'relative'; return L; } }
+  L.kind = 'url';
+  var un = DL.unwrapUrl(h);
+  var chain = 0;
+  while (un.wrapper && un.url !== h && chain++ < 3) { L.wrapper = L.wrapper ? L.wrapper + ' > ' + un.wrapper : un.wrapper; h = un.url; un = DL.unwrapUrl(h); }
+  if (un.wrapper && !L.wrapper) L.wrapper = un.wrapper;
+  L.unwrapped = h;
+  var p = DL.parseUrl(h);
+  if (!p.ok) { L.flags.push('unparseable'); return L; }
+  L.host = p.host.toLowerCase();
+  L.decodedHost = DL.idnDecode(L.host);
+  if (p.scheme === 'http') L.flags.push('cleartext');
+  if (p.user || /^[a-z][a-z0-9+.-]*:\/\/[^\/?#]*@/i.test(h)) { L.flags.push('userinfo'); L.sev = 'high'; }
+  if (DL.isIPv4(L.host) || /^\[/.test(p.url.hostname)) { L.flags.push('ip-literal'); L.sev = 'high'; }
+  if (p.port && p.port !== '80' && p.port !== '443') { L.flags.push('port:' + p.port); if (L.sev !== 'high') L.sev = 'medium'; }
+  if (L.host.indexOf('xn--') >= 0) { L.flags.push('idn'); L.sev = 'high'; }
+  if (DL.SHORTENERS.indexOf(L.host) >= 0) { L.flags.push('shortener'); if (L.sev !== 'high') L.sev = 'medium'; }
+  if (/\.(exe|scr|zip|rar|7z|iso|img|msi|js|vbs|hta|lnk|bat|cmd|ps1|dll|jar|apk|dmg|one)(\?|$)/i.test(p.url.pathname)) { L.flags.push('file-download'); L.sev = 'high'; }
+  if (/(\.|^)(ngrok\.io|ngrok-free\.app|trycloudflare\.com|pages\.dev|web\.app|firebaseapp\.com|glitch\.me|repl\.co|000webhostapp\.com|weebly\.com|wixsite\.com|blogspot\.com|sharepoint\.com|onedrive\.live\.com|docs\.google\.com|forms\.office\.com|canva\.site|ipfs\.io|dweb\.link|r2\.dev|workers\.dev|azurewebsites\.net)$/i.test(L.host)) { L.flags.push('hosting-platform'); if (L.sev === 'info') L.sev = 'medium'; }
+  // display text vs destination
+  var tm = /(?:https?:\/\/)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?:[\/:?#]|$)/i.exec(L.text || '');
+  if (tm) {
+    var th = tm[1].toLowerCase();
+    L.textHost = th;
+    if (DL.orgDomain(th) !== DL.orgDomain(L.host) && !(L.wrapper && DL.orgDomain(th) === DL.orgDomain(DL.parseUrl(L.href).host || ''))) { L.flags.push('text-mismatch'); L.sev = 'high'; }
+  }
+  if (L.host && L.host.split('.').length >= 5) { L.flags.push('deep-subdomain'); if (L.sev === 'info') L.sev = 'medium'; }
+  if (L.unwrapped.length > 300) { L.flags.push('very-long'); }
+  return L;
+};
+
+DL.URL_RE = /\b(?:https?:\/\/|www\.)[^\s<>"'`{}|\\^\[\]]+/gi;
+
+/* ---- attachment typing ---- */
+DL.detectType = function (bytes, name) {
+  var b = bytes || new Uint8Array(0), n = b.length;
+  function at(i) { return i < n ? b[i] : -1; }
+  function str(i, len) { return DL.latin1(b.subarray(i, Math.min(n, i + len))); }
+  var r = { type: 'unknown', ext: '', cat: 'other', flags: [] };
+  var head = str(0, 512);
+  if (n >= 2 && at(0) === 0x4d && at(1) === 0x5a) { r.type = 'Windows executable (PE)'; r.ext = 'exe'; r.cat = 'executable'; }
+  else if (head.indexOf('\x7fELF') === 0) { r.type = 'ELF executable'; r.ext = 'elf'; r.cat = 'executable'; }
+  else if (/^(\xfe\xed\xfa\xce|\xfe\xed\xfa\xcf|\xce\xfa\xed\xfe|\xcf\xfa\xed\xfe|\xca\xfe\xba\xbe)/.test(head)) { r.type = 'Mach-O / Java class'; r.ext = 'macho'; r.cat = 'executable'; }
+  else if (head.indexOf('%PDF') === 0) { r.type = 'PDF'; r.ext = 'pdf'; r.cat = 'document'; if (/\/JavaScript|\/JS\b|\/OpenAction|\/Launch|\/AA\b/.test(DL.latin1(b.subarray(0, Math.min(n, 2000000))))) r.flags.push('pdf-active-content'); }
+  else if (head.indexOf('PK\x03\x04') === 0 || head.indexOf('PK\x05\x06') === 0 || head.indexOf('PK\x07\x08') === 0) {
+    r.type = 'ZIP archive'; r.ext = 'zip'; r.cat = 'archive';
+    var z = DL.listZip(b); r.zip = z;
+    var names = z.entries.map(function (e) { return e.name; });
+    if (names.some(function (x) { return x === '[Content_Types].xml'; })) {
+      if (names.some(function (x) { return x.indexOf('word/') === 0; })) { r.type = 'Word document (OOXML)'; r.ext = 'docx'; r.cat = 'office'; }
+      else if (names.some(function (x) { return x.indexOf('xl/') === 0; })) { r.type = 'Excel workbook (OOXML)'; r.ext = 'xlsx'; r.cat = 'office'; }
+      else if (names.some(function (x) { return x.indexOf('ppt/') === 0; })) { r.type = 'PowerPoint (OOXML)'; r.ext = 'pptx'; r.cat = 'office'; }
+      else { r.type = 'Office Open XML package'; r.ext = 'docx'; r.cat = 'office'; }
+      if (names.some(function (x) { return /vbaProject\.bin$/i.test(x); })) r.flags.push('macros');
+      if (names.some(function (x) { return /oleObject\d*\.bin$/i.test(x); })) r.flags.push('embedded-ole');
+      if (names.some(function (x) { return /externalLink/i.test(x); })) r.flags.push('external-links');
+    } else if (names.some(function (x) { return x === 'META-INF/MANIFEST.MF'; })) { r.type = 'Java archive (JAR)'; r.ext = 'jar'; r.cat = 'executable'; }
+    else if (names.some(function (x) { return x === 'AndroidManifest.xml'; })) { r.type = 'Android package (APK)'; r.ext = 'apk'; r.cat = 'executable'; }
+    else if (names.some(function (x) { return x === 'mimetype'; }) && names.some(function (x) { return x.indexOf('content.xml') >= 0; })) { r.type = 'OpenDocument'; r.ext = 'odt'; r.cat = 'office'; }
+    if (z.encrypted) r.flags.push('encrypted');
+  }
+  else if (n >= 8 && at(0) === 0xd0 && at(1) === 0xcf && at(2) === 0x11 && at(3) === 0xe0) {
+    r.type = 'OLE compound file (legacy Office / MSI / .msg)'; r.ext = 'doc'; r.cat = 'office';
+    var big = DL.latin1(b.subarray(0, Math.min(n, 4000000)));
+    if (/__substg1\.0_/.test(big)) { r.type = 'Outlook message (.msg)'; r.ext = 'msg'; r.cat = 'container'; }
+    else if (/W\x00o\x00r\x00d\x00D\x00o\x00c\x00u\x00m\x00e\x00n\x00t/.test(big)) { r.type = 'Word 97-2003 document'; r.ext = 'doc'; }
+    else if (/W\x00o\x00r\x00k\x00b\x00o\x00o\x00k|B\x00o\x00o\x00k\x00\x00/.test(big)) { r.type = 'Excel 97-2003 workbook'; r.ext = 'xls'; }
+    else if (/P\x00o\x00w\x00e\x00r\x00P\x00o\x00i\x00n\x00t/.test(big)) { r.type = 'PowerPoint 97-2003'; r.ext = 'ppt'; }
+    else if (/\x00S\x00u\x00m\x00m\x00a\x00r\x00y\x00I\x00n\x00f\x00o/.test(big) && /\x00\x05\x00\x00\x00/.test(big) && /MSI|Installer/i.test(big)) { r.type = 'Windows Installer (MSI)'; r.ext = 'msi'; r.cat = 'executable'; }
+    if (/_\x00V\x00B\x00A\x00_\x00P\x00R\x00O\x00J\x00E\x00C\x00T|M\x00a\x00c\x00r\x00o\x00s\x00/.test(big)) r.flags.push('macros');
+  }
+  else if (head.indexOf('{\\rtf') === 0) { r.type = 'RTF document'; r.ext = 'rtf'; r.cat = 'document'; if (/\\objdata|\\objupdate|\\objemb/.test(DL.latin1(b.subarray(0, Math.min(n, 2000000))))) r.flags.push('embedded-ole'); }
+  else if (head.indexOf('\x89PNG') === 0) { r.type = 'PNG image'; r.ext = 'png'; r.cat = 'image'; }
+  else if (n > 3 && at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff) { r.type = 'JPEG image'; r.ext = 'jpg'; r.cat = 'image'; }
+  else if (head.indexOf('GIF8') === 0) { r.type = 'GIF image'; r.ext = 'gif'; r.cat = 'image'; }
+  else if (head.indexOf('BM') === 0 && n > 14) { r.type = 'BMP image'; r.ext = 'bmp'; r.cat = 'image'; }
+  else if (head.indexOf('RIFF') === 0 && str(8, 4) === 'WEBP') { r.type = 'WebP image'; r.ext = 'webp'; r.cat = 'image'; }
+  else if (/^(II\*\x00|MM\x00\*)/.test(head)) { r.type = 'TIFF image'; r.ext = 'tif'; r.cat = 'image'; }
+  else if (head.indexOf('7z\xbc\xaf\x27\x1c') === 0) { r.type = '7-Zip archive'; r.ext = '7z'; r.cat = 'archive'; }
+  else if (head.indexOf('Rar!\x1a\x07') === 0) { r.type = 'RAR archive'; r.ext = 'rar'; r.cat = 'archive'; }
+  else if (n > 2 && at(0) === 0x1f && at(1) === 0x8b) { r.type = 'gzip'; r.ext = 'gz'; r.cat = 'archive'; }
+  else if (head.indexOf('BZh') === 0) { r.type = 'bzip2'; r.ext = 'bz2'; r.cat = 'archive'; }
+  else if (head.indexOf('\xfd7zXZ\x00') === 0) { r.type = 'xz'; r.ext = 'xz'; r.cat = 'archive'; }
+  else if (head.indexOf('MSCF') === 0) { r.type = 'Cabinet archive'; r.ext = 'cab'; r.cat = 'archive'; }
+  else if (n > 262 && str(257, 5) === 'ustar') { r.type = 'tar archive'; r.ext = 'tar'; r.cat = 'archive'; }
+  else if (n > 0x8005 && str(0x8001, 5) === 'CD001') { r.type = 'ISO 9660 disc image'; r.ext = 'iso'; r.cat = 'container'; }
+  else if (head.indexOf('ITSF') === 0) { r.type = 'Compiled HTML help (CHM)'; r.ext = 'chm'; r.cat = 'executable'; }
+  else if (head.indexOf('L\x00\x00\x00\x01\x14\x02\x00') === 0) { r.type = 'Windows shortcut (LNK)'; r.ext = 'lnk'; r.cat = 'executable'; }
+  else if (head.indexOf('\xe4\x52\x5c\x7b\x8c\xd8\xa7\x4d') === 0) { r.type = 'OneNote section'; r.ext = 'one'; r.cat = 'document'; }
+  else if (head.indexOf('MSWIM') === 0) { r.type = 'Windows image (WIM)'; r.ext = 'wim'; r.cat = 'container'; }
+  else if (/^conectix|^vhdxfile/.test(head) || (n > 512 && /conectix$/.test(str(n - 512, 8)))) { r.type = 'Virtual hard disk (VHD/VHDX)'; r.ext = 'vhd'; r.cat = 'container'; }
+  else if (head.indexOf('SQLite format 3') === 0) { r.type = 'SQLite database'; r.ext = 'db'; r.cat = 'other'; }
+  else if (/^\s*(<!DOCTYPE\s+html|<html|<head|<body|<scr[i]pt|<!-[-])/i.test(head) || (/<html/i.test(head) && /<(body|head|div|table|a\s)/i.test(head))) { r.type = 'HTML'; r.ext = 'html'; r.cat = 'script'; }
+  else if (/^\s*<\?xml/.test(head)) { r.type = /<svg/i.test(str(0, 2000)) ? 'SVG image (XML)' : 'XML'; r.ext = /<svg/i.test(str(0, 2000)) ? 'svg' : 'xml'; r.cat = /<svg/i.test(str(0, 2000)) ? 'script' : 'text'; if (/<scr[i]pt/i.test(str(0, 20000))) r.flags.push('scripted-svg'); }
+  else if (/^\s*<svg/i.test(head)) { r.type = 'SVG image'; r.ext = 'svg'; r.cat = 'script'; if (/<scr[i]pt/i.test(str(0, 20000))) r.flags.push('scripted-svg'); }
+  else if (/^(From |Received:|Return-Path:|Delivered-To:|MIME-Version:|Message-ID:|X-|Subject:|From:|Date:|To:)/i.test(head)) { r.type = 'Email message (RFC 822)'; r.ext = 'eml'; r.cat = 'container'; }
+  else if (head.indexOf('BEGIN:VCALENDAR') === 0) { r.type = 'iCalendar'; r.ext = 'ics'; r.cat = 'text'; }
+  else if (head.indexOf('[InternetShortcut]') === 0 || /^\[InternetShortcut\]/i.test(head.replace(/^\xef\xbb\xbf/, ''))) { r.type = 'Internet shortcut (.url)'; r.ext = 'url'; r.cat = 'executable'; }
+  else if (/^(#!|@echo|rem\b|set\b|powershell|\$)/i.test(head) && /^[\x09\x0a\x0d\x20-\x7e]*$/.test(head.slice(0, 200))) { r.type = 'Script (text)'; r.ext = 'script'; r.cat = 'script'; }
+  else {
+    var sample = b.subarray(0, Math.min(n, 4096)), nonText = 0;
+    for (var i = 0; i < sample.length; i++) { var c = sample[i]; if (c === 0 || (c < 7) || (c > 13 && c < 32 && c !== 27)) nonText++; }
+    if (sample.length && nonText / sample.length < 0.02) { r.type = 'Plain text'; r.ext = 'txt'; r.cat = 'text'; if (/(function\s*\(|var\s+\w+\s*=|eval\(|document\.|WScript|CreateObject|Invoke-|IEX\b)/.test(str(0, 4000))) { r.type = 'Script (text)'; r.ext = 'script'; r.cat = 'script'; } }
+    else if (n === 0) { r.type = 'empty'; r.cat = 'other'; }
+    else { r.type = 'Binary data'; r.ext = 'bin'; }
+  }
+  return r;
+};
+
+DL.listZip = function (b) {
+  var res = { entries: [], encrypted: false, truncated: false, note: '' };
+  var n = b.length;
+  var dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  // find EOCD
+  var eocd = -1;
+  for (var i = n - 22; i >= Math.max(0, n - 65557); i--) { if (b[i] === 0x50 && b[i + 1] === 0x4b && b[i + 2] === 0x05 && b[i + 3] === 0x06) { eocd = i; break; } }
+  function readName(off, len) { var nb = b.subarray(off, off + len); try { return new TextDecoder('utf-8', { fatal: true }).decode(nb); } catch (e) { return new TextDecoder('windows-1252').decode(nb); } }
+  try {
+    if (eocd >= 0) {
+      var count = dv.getUint16(eocd + 10, true), cdOff = dv.getUint32(eocd + 16, true);
+      var p = cdOff, k = 0;
+      while (k < count && p + 46 <= n && dv.getUint32(p, true) === 0x02014b50) {
+        var flags = dv.getUint16(p + 8, true), method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true), usize = dv.getUint32(p + 24, true), nl = dv.getUint16(p + 28, true), el = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true);
+        var e = { name: readName(p + 46, nl), csize: csize, size: usize, method: method, encrypted: !!(flags & 1) };
+        if (e.encrypted) res.encrypted = true;
+        res.entries.push(e);
+        p += 46 + nl + el + cl; k++;
+        if (res.entries.length >= 2000) { res.truncated = true; break; }
+      }
+      if (!res.entries.length) res.note = 'central directory unreadable';
+      if (n > 8 && dv.getUint32(0, true) === 0x04034b50 && (dv.getUint16(6, true) & 1)) res.encrypted = true;
+    }
+    if (!res.entries.length) {
+      // walk local headers
+      var q = 0;
+      while (q + 30 <= n && dv.getUint32(q, true) === 0x04034b50) {
+        var fl = dv.getUint16(q + 6, true), me = dv.getUint16(q + 8, true), cs = dv.getUint32(q + 18, true), us = dv.getUint32(q + 22, true), fn = dv.getUint16(q + 26, true), ex = dv.getUint16(q + 28, true);
+        var en = { name: readName(q + 30, fn), csize: cs, size: us, method: me, encrypted: !!(fl & 1) };
+        if (en.encrypted) res.encrypted = true;
+        res.entries.push(en);
+        if (fl & 8 || cs === 0xffffffff) { res.note = 'streamed zip; listing may be partial'; break; }
+        q += 30 + fn + ex + cs;
+        if (res.entries.length >= 2000) { res.truncated = true; break; }
+      }
+    }
+  } catch (err) { res.note = 'zip listing failed: ' + err.message; }
+  return res;
+};
+
+DL.DANGEROUS_EXT = 'exe scr pif com bat cmd vbs vbe js jse wsf wsh ps1 psm1 psd1 hta msi msp cpl dll jar lnk iso img vhd vhdx one url reg chm inf sct wsc application ade adp appx appxbundle msix msixbundle gadget ws xll xlam ppam docm dotm xlsm xltm xlsb pptm potm ppsm sldm vb vbscript py pyw pl rb sh elf apk dmg pkg deb rpm html htm shtml xhtml mht mhtml svg webloc desktop cab diagcab settingcontent-ms library-ms search-ms'.split(' ');
+DL.MACRO_EXT = 'docm dotm xlsm xltm xlsb xlam pptm potm ppsm ppam sldm'.split(' ');
+DL.EXT_EXPECT = { pdf: ['pdf'], zip: ['zip'], docx: ['docx', 'zip'], xlsx: ['xlsx', 'zip'], pptx: ['pptx', 'zip'], docm: ['docx', 'zip'], xlsm: ['xlsx', 'zip'], pptm: ['pptx', 'zip'], doc: ['doc', 'rtf', 'docx'], xls: ['xls', 'doc'], ppt: ['ppt', 'doc'], rtf: ['rtf'], png: ['png'], jpg: ['jpg'], jpeg: ['jpg'], gif: ['gif'], bmp: ['bmp'], webp: ['webp'], tif: ['tif'], tiff: ['tif'], exe: ['exe'], dll: ['exe'], scr: ['exe'], msi: ['msi', 'doc'], iso: ['iso'], img: ['iso', 'bin'], lnk: ['lnk'], '7z': ['7z'], rar: ['rar'], gz: ['gz'], tgz: ['gz'], txt: ['txt'], csv: ['txt'], html: ['html', 'txt'], htm: ['html', 'txt'], eml: ['eml', 'txt'], msg: ['msg'], ics: ['ics', 'txt'], xml: ['xml', 'txt'], svg: ['svg', 'xml'], jar: ['jar', 'zip'], apk: ['apk', 'zip'], one: ['one'], chm: ['chm'], cab: ['cab'], js: ['txt', 'script'], vbs: ['txt', 'script'], ps1: ['txt', 'script'], bat: ['txt', 'script'], cmd: ['txt', 'script'], odt: ['odt', 'zip'], vhd: ['vhd'], vhdx: ['vhd'] };
+
+DL.analyzeAttachments = function (msg, findings) {
+  msg.attachments.forEach(function (a, idx) {
+    var name = a.name || '';
+    a.detected = DL.detectType(a.bytes || new Uint8Array(0), name);
+    var exts = name.toLowerCase().split('.').slice(1);
+    var ext = exts.length ? exts[exts.length - 1] : '';
+    a.ext = ext;
+    a.flags = [];
+    var label = '"' + name + '"';
+    if (/[\u202a-\u202e\u2066-\u2069]/.test(name)) { a.flags.push('rtlo'); DL.finding(findings, 'high', 'Attachment name uses Unicode direction overrides', label + ' — the real extension is disguised.', 'attachments'); }
+    if (exts.length >= 2 && DL.DANGEROUS_EXT.indexOf(ext) >= 0 && !DL.DANGEROUS_EXT.some(function (d) { return d === exts[exts.length - 2]; })) { a.flags.push('double-ext'); DL.finding(findings, 'high', 'Double extension on attachment', label + ' looks like a ' + exts[exts.length - 2] + ' but is a .' + ext + '.', 'attachments'); }
+    if (a.nested) {
+      a.flags.push('nested-message');
+      DL.finding(findings, 'info', 'Attached message ' + label, 'Open it to analyze the inner message separately.', 'attachments');
+      return;
+    }
+    if (!a.bytes || !a.bytes.length) { if (a.note) DL.finding(findings, 'info', 'Attachment ' + label + ' has no data', a.note, 'attachments'); return; }
+    var d = a.detected;
+    // mismatch
+    if (ext && DL.EXT_EXPECT[ext] && d.ext && d.type !== 'unknown' && DL.EXT_EXPECT[ext].indexOf(d.ext) < 0) {
+      a.flags.push('type-mismatch');
+      DL.finding(findings, (d.cat === 'executable' || d.cat === 'script' || d.cat === 'archive' || d.cat === 'container') ? 'high' : 'medium', 'Attachment content does not match its extension', label + ' is actually: ' + d.type + '.', 'attachments');
+    }
+    if (d.cat === 'executable') DL.finding(findings, 'high', 'Executable attachment', label + ' — ' + d.type + '.', 'attachments');
+    else if (DL.DANGEROUS_EXT.indexOf(ext) >= 0 && DL.MACRO_EXT.indexOf(ext) < 0 && !/^(html?|svg|pdf)$/.test(ext)) DL.finding(findings, 'high', 'Dangerous attachment type .' + ext, label + ' — ' + d.type + '. This extension executes or mounts on open.', 'attachments');
+    if (d.flags.indexOf('macros') >= 0) DL.finding(findings, 'high', 'Attachment contains VBA macros', label + '.', 'attachments');
+    else if (DL.MACRO_EXT.indexOf(ext) >= 0) DL.finding(findings, 'high', 'Macro-enabled Office attachment', label + '.', 'attachments');
+    if (d.flags.indexOf('embedded-ole') >= 0) DL.finding(findings, 'medium', 'Attachment contains embedded OLE objects', label + '. Often used to hide executables or exploit CVE-2017-11882-style bugs.', 'attachments');
+    if (d.flags.indexOf('external-links') >= 0) DL.finding(findings, 'medium', 'Office attachment references external content', label + ' — external links or templates can fetch remote payloads.', 'attachments');
+    if (d.flags.indexOf('pdf-active-content') >= 0) DL.finding(findings, 'medium', 'PDF contains active content', label + ' has JavaScript, OpenAction, Launch, or automatic actions.', 'attachments');
+    if (d.flags.indexOf('scripted-svg') >= 0) DL.finding(findings, 'high', 'SVG attachment contains script', label + '.', 'attachments');
+    if (d.ext === 'html' || /^(html?|shtml|xhtml|mht|mhtml)$/.test(ext)) DL.finding(findings, 'high', 'HTML attachment', label + ' — HTML smuggling: the page can decode and drop a payload or show a fake login form when opened locally.', 'attachments');
+    if (d.zip) {
+      if (d.zip.encrypted) DL.finding(findings, 'high', 'Password-protected archive', label + ' — encryption defeats gateway scanning; the password is usually in the mail body.', 'attachments');
+      var bad = d.zip.entries.filter(function (e) { var ee = e.name.toLowerCase().split('.').pop(); return DL.DANGEROUS_EXT.indexOf(ee) >= 0 && !/^(html?|svg)$/.test(ee); });
+      if (bad.length) DL.finding(findings, 'high', 'Archive contains executable or script files', label + ': ' + bad.slice(0, 5).map(function (e) { return e.name; }).join(', ') + (bad.length > 5 ? ' …' : ''), 'attachments');
+      var htmlIn = d.zip.entries.filter(function (e) { return /\.(html?|svg)$/i.test(e.name); });
+      if (htmlIn.length && d.cat === 'archive') DL.finding(findings, 'medium', 'Archive contains HTML files', label + ': ' + htmlIn.slice(0, 3).map(function (e) { return e.name; }).join(', '), 'attachments');
+      var nested = d.zip.entries.filter(function (e) { return /\.(zip|rar|7z|iso|img)$/i.test(e.name); });
+      if (nested.length) DL.finding(findings, 'medium', 'Nested archive inside archive', label + ': ' + nested.slice(0, 3).map(function (e) { return e.name; }).join(', '), 'attachments');
+    }
+    if (d.cat === 'container' && d.ext === 'iso') DL.finding(findings, 'high', 'Disc image attachment', label + ' mounts as a drive on Windows and bypasses Mark-of-the-Web.', 'attachments');
+    if (d.ext === 'pdf' && d.cat === 'document' && !d.flags.length) DL.finding(findings, 'info', 'PDF attachment ' + label, 'Static PDF (no active content detected). Still check embedded links.', 'attachments');
+    if (d.cat === 'office' && d.flags.indexOf('macros') < 0 && !a.flags.length) DL.finding(findings, 'info', 'Office attachment ' + label, d.type + ', no macros detected.', 'attachments');
+  });
+};
+
+DL.hashAttachments = async function (msg) {
+  for (var i = 0; i < msg.attachments.length; i++) {
+    var a = msg.attachments[i];
+    if (!a.bytes || !a.bytes.length || a.hashes) continue;
+    var sha256 = await DL.sha('SHA-256', a.bytes), sha1 = await DL.sha('SHA-1', a.bytes);
+    var md5 = a.bytes.length < 60000000 ? DL.md5(a.bytes) : '';
+    a.hashes = { sha256: sha256, sha1: sha1, md5: md5 };
+  }
+};
+
+/* ---- body (needs a DOMParser) ---- */
+DL.analyzeBody = function (msg, findings, DOMParserImpl) {
+  var body = { links: [], images: { remote: 0, blocked: [], cid: 0, data: 0, pixels: 0 }, forms: [], hidden: [], removed: {}, meta: [], safeHtml: null, textLinks: [] };
+  var links = [];
+  function addLink(href, text, src) { if (!href) return; var L = DL.analyzeLink(href, text, src); links.push(L); return L; }
+  if (msg.html && DOMParserImpl) {
+    var doc;
+    try { doc = new DOMParserImpl().parseFromString(msg.html, 'text/html'); } catch (e) { doc = null; }
+    if (doc) {
+      var cidMap = {};
+      msg.attachments.forEach(function (a) { if (a.contentId && a.bytes && a.bytes.length && /^image\//i.test(a.contentType || DL.guessMimeFromName(a.name))) cidMap[a.contentId.toLowerCase()] = a; });
+      var REMOVE = ['script', 'iframe', 'frame', 'frameset', 'object', 'embed', 'applet', 'link', 'base', 'video', 'audio', 'source', 'track', 'picture', 'template', 'noscript', 'math', 'portal', 'fencedframe'];
+      REMOVE.forEach(function (tag) {
+        var els = Array.prototype.slice.call(doc.getElementsByTagName(tag));
+        if (els.length) body.removed[tag] = els.length;
+        els.forEach(function (el) {
+          if (tag === 'iframe' || tag === 'frame' || tag === 'object' || tag === 'embed') { var srcv = el.getAttribute('src') || el.getAttribute('data') || ''; if (srcv) addLink(srcv, '(' + tag + ')', tag); }
+          if (tag === 'picture') { var img = el.querySelector('img'); if (img && el.parentNode) { el.parentNode.replaceChild(img, el); return; } }
+          if (el.parentNode) el.parentNode.removeChild(el);
+        });
+      });
+      Array.prototype.slice.call(doc.getElementsByTagName('meta')).forEach(function (m) {
+        var he = (m.getAttribute('http-equiv') || '').toLowerCase();
+        if (he === 'refresh') { var content = m.getAttribute('content') || ''; var um = /url\s*=\s*['"]?([^'"]+)/i.exec(content); body.meta.push('refresh: ' + content); DL.finding(findings, 'high', 'Meta refresh redirect in body', content, 'body'); if (um) addLink(um[1], '(meta refresh)', 'meta'); }
+        if (he !== 'content-type' && (m.getAttribute('name') || '').toLowerCase() !== 'viewport') m.parentNode && m.parentNode.removeChild(m);
+      });
+      // style scrubbing
+      Array.prototype.slice.call(doc.getElementsByTagName('style')).forEach(function (s) {
+        var css = s.textContent || '';
+        var urls = css.match(/url\(\s*['"]?\s*(https?:)?\/\/[^)'"\s]+/gi) || [];
+        if (urls.length) body.images.remote += urls.length;
+        if (/@import/i.test(css)) { body.removed['css @import'] = (body.removed['css @import'] || 0) + 1; }
+        s.textContent = css.replace(/@import[^;]*;?/gi, '/* import blocked */').replace(/url\(\s*(['"]?)\s*(?!data:)[^)]*\1\s*\)/gi, 'url("")').replace(/expression\s*\(/gi, 'blocked(');
+      });
+      var all = doc.getElementsByTagName('*');
+      var hiddenSeen = 0;
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i];
+        var tag = el.tagName.toLowerCase();
+        // attributes
+        var attrs = Array.prototype.slice.call(el.attributes);
+        for (var j = 0; j < attrs.length; j++) {
+          var an = attrs[j].name.toLowerCase(), av = attrs[j].value;
+          if (/^on/.test(an)) { el.removeAttribute(attrs[j].name); body.removed['event handler'] = (body.removed['event handler'] || 0) + 1; continue; }
+          if (an === 'style') {
+            if (/url\s*\(|expression\s*\(|@import|behavior\s*:/i.test(av)) {
+              var us = av.match(/url\(\s*['"]?\s*(https?:)?\/\/[^)'"\s]+/gi) || []; body.images.remote += us.length;
+              el.setAttribute('style', av.replace(/url\(\s*(['"]?)\s*(?!data:)[^)]*\1\s*\)/gi, 'url("")').replace(/expression\s*\(/gi, 'blocked(').replace(/behavior\s*:[^;]*/gi, ''));
+            }
+            continue;
+          }
+          if (an === 'srcset' || an === 'background' || an === 'poster' || an === 'ping' || an === 'formaction' || an === 'dynsrc' || an === 'lowsrc' || an === 'xlink:href' || an === 'action' || an === 'longdesc' || an === 'manifest' || an === 'codebase' || an === 'data' || an === 'archive' || an === 'usemap') {
+            if (an === 'action' || an === 'formaction') { addLink(av, '(form action)', 'form'); }
+            if (an === 'xlink:href' || an === 'background' || an === 'poster' || an === 'srcset') { if (/^https?:|^\/\//i.test(av.trim())) body.images.remote++; }
+            el.removeAttribute(attrs[j].name); continue;
+          }
+          if (an === 'href' && (tag === 'a' || tag === 'area')) {
+            var L = addLink(av, tag === 'a' ? el.textContent : (el.getAttribute('alt') || '(image map)'), 'html');
+            el.setAttribute('data-dl-href', av);
+            el.setAttribute('href', '#');
+            el.setAttribute('title', DL.defang(L && L.unwrapped || av));
+            el.setAttribute('rel', 'noreferrer noopener');
+            el.removeAttribute('target');
+            continue;
+          }
+          if (an === 'href' && tag !== 'a' && tag !== 'area') { el.removeAttribute(attrs[j].name); continue; }
+          if (an === 'src') {
+            var v = av.trim();
+            if (/^cid:/i.test(v)) {
+              var cid = v.replace(/^cid:/i, '').replace(/^<|>$/g, '').toLowerCase();
+              var att = cidMap[cid];
+              if (att) { el.setAttribute('src', 'data:' + (att.contentType || DL.guessMimeFromName(att.name)) + ';base64,' + DL.b64encode(att.bytes)); body.images.cid++; att.usedInline = true; }
+              else { el.removeAttribute('src'); el.setAttribute('alt', '[missing inline image ' + cid + ']'); }
+            } else if (/^data:/i.test(v)) { body.images.data++; if (!/^data:image\//i.test(v)) { el.removeAttribute('src'); } }
+            else if (/^https?:|^\/\/|^ftp:/i.test(v) || tag === 'img') {
+              body.images.remote++;
+              var w = parseInt(el.getAttribute('width') || '', 10), hgt = parseInt(el.getAttribute('height') || '', 10);
+              var st = (el.getAttribute('style') || '').toLowerCase();
+              var tiny = (!isNaN(w) && w <= 2) || (!isNaN(hgt) && hgt <= 2) || /width\s*:\s*[01]px|height\s*:\s*[01]px|display\s*:\s*none/.test(st);
+              var hostm = /^(?:https?:)?\/\/([^\/:?#]+)/i.exec(v);
+              var hostv = hostm ? hostm[1].toLowerCase() : '';
+              if (tiny) { body.images.pixels++; body.images.blocked.push({ url: v, host: hostv, pixel: true }); }
+              else body.images.blocked.push({ url: v, host: hostv, pixel: false });
+              el.removeAttribute('src');
+              el.setAttribute('data-dl-src', v);
+              el.setAttribute('alt', tiny ? '' : '[remote image blocked: ' + DL.defang(hostv) + ']');
+              el.setAttribute('class', ((el.getAttribute('class') || '') + ' dl-blocked').trim());
+              if (tiny) { el.setAttribute('style', 'display:none'); }
+            } else { el.removeAttribute('src'); }
+            continue;
+          }
+        }
+        if (tag === 'form') { body.forms.push({ action: el.getAttribute('data-dl-action') || '', inputs: el.querySelectorAll('input').length }); }
+        if (tag === 'input' && (el.getAttribute('type') || '').toLowerCase() === 'password') { body.passwordField = true; }
+        // hidden text
+        var style = (el.getAttribute('style') || '').toLowerCase().replace(/\s+/g, '');
+        if (style && hiddenSeen < 25 && /display:none|visibility:hidden|font-size:0|font-size:[01]px|opacity:0(?![.\d])|max-height:0|height:0px|width:0px|mso-hide:all|text-indent:-\d{3,}/.test(style)) {
+          var txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
+          if (txt.length > 3 && tag !== 'style' && tag !== 'title') { hiddenSeen++; body.hidden.push({ tag: tag, style: style.slice(0, 80), text: txt.slice(0, 160) }); }
+        }
+      }
+      // forms: record & neutralise
+      var formsRaw = Array.prototype.slice.call(doc.getElementsByTagName('form'));
+      formsRaw.forEach(function (f) { f.setAttribute('onsubmit', ''); f.removeAttribute('onsubmit'); });
+      // text URLs not in anchors
+      var bodyText = doc.body ? doc.body.textContent || '' : '';
+      var seen = {};
+      links.forEach(function (l) { seen[l.href] = 1; seen[l.href.replace(/\/$/, '')] = 1; (l.text.match(DL.URL_RE) || []).forEach(function (t) { seen[t.replace(/[.,;:!?)\]]+$/, '')] = 1; }); });
+      (bodyText.match(DL.URL_RE) || []).forEach(function (u) { u = u.replace(/[.,;:!?)\]]+$/, ''); if (!seen[u]) { seen[u] = 1; addLink(u, '(plain text in HTML)', 'text'); } });
+      // hidden text findings
+      if (body.hidden.length) DL.finding(findings, 'medium', 'Hidden text in HTML body (' + body.hidden.length + ' element' + (body.hidden.length > 1 ? 's' : '') + ')', body.hidden.slice(0, 3).map(function (h) { return '<' + h.tag + '> "' + h.text.slice(0, 60) + (h.text.length > 60 ? '…' : '') + '"'; }).join(' | ') + '. Invisible text is used to poison filters or hide instructions.', 'body');
+      if (body.forms.length) DL.finding(findings, body.passwordField ? 'high' : 'medium', 'HTML form in body' + (body.passwordField ? ' with a password field' : ''), 'Credential harvesting form embedded in the email itself. Forms are disabled in the viewer.', 'body');
+      if (body.images.pixels) DL.finding(findings, 'info', body.images.pixels + ' tracking pixel' + (body.images.pixels > 1 ? 's' : ''), 'Hosts: ' + body.images.blocked.filter(function (b) { return b.pixel; }).map(function (b) { return DL.defang(b.host); }).slice(0, 4).join(', ') + '. Loading the image confirms the mailbox is live.', 'body');
+      var bigRemote = body.images.blocked.filter(function (b) { return !b.pixel; }).length;
+      if (bigRemote) DL.finding(findings, 'info', bigRemote + ' remote image' + (bigRemote > 1 ? 's' : '') + ' blocked', 'Hosts: ' + Array.from(new Set(body.images.blocked.filter(function (b) { return !b.pixel; }).map(function (b) { return DL.defang(b.host); }))).slice(0, 5).join(', ') + '. Images are never fetched by this viewer.', 'body');
+      Object.keys(body.removed).forEach(function (k) {
+        if (k === 'event handler') DL.finding(findings, 'medium', 'Inline event handlers stripped (' + body.removed[k] + ')', 'onclick/onmouseover-style attributes were present. Mail clients ignore them; their presence means the HTML was written for a browser.', 'body');
+        else if (k === 'script' || k === 'iframe' || k === 'object' || k === 'embed') DL.finding(findings, 'high', 'Active content removed: ' + body.removed[k] + ' <' + k + '>' + (body.removed[k] > 1 ? ' elements' : ' element'), 'Email clients do not run scripts, but the presence of <' + k + '> in an email means it was built for a browser, i.e. HTML smuggling or a copied phishing kit.', 'body');
+      });
+      // whole-body image (single big remote or inline image, little text)
+      var textLen = (bodyText || '').replace(/\s+/g, '').length;
+      var imgCount = doc.getElementsByTagName('img').length;
+      if (imgCount >= 1 && textLen < 40 && (body.images.cid + body.images.remote) >= 1) DL.finding(findings, 'medium', 'Body is essentially an image', 'Text-based filters see nothing; the content is inside the picture.', 'body');
+      // serialize
+      var head = doc.getElementsByTagName('head')[0];
+      if (!head) { head = doc.createElement('head'); doc.documentElement.insertBefore(head, doc.documentElement.firstChild); }
+      var cspMeta = doc.createElement('meta'); cspMeta.setAttribute('http-equiv', 'Content-Security-Policy'); cspMeta.setAttribute('content', "default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'");
+      var cs = doc.createElement('meta'); cs.setAttribute('charset', 'utf-8');
+      head.insertBefore(cspMeta, head.firstChild); head.insertBefore(cs, head.firstChild);
+      var st2 = doc.createElement('style'); st2.textContent = 'a{cursor:not-allowed!important} img.dl-blocked{display:inline-block;min-width:24px;min-height:12px;border:1px dashed #b9552f;color:#b9552f;font:12px/1.4 system-ui,sans-serif;padding:2px 4px;box-sizing:border-box} img.dl-blocked[alt=""]{display:none}';
+      head.appendChild(st2);
+      var vp = doc.createElement('style'); vp.textContent = 'html,body{max-width:100%;overflow-x:auto}';
+      head.appendChild(vp);
+      body.safeHtml = '<!DOCTYPE html>' + doc.documentElement.outerHTML;
+    }
+  }
+  if (msg.text) {
+    var seenT = {}; links.forEach(function (l) { seenT[l.href] = 1; });
+    (msg.text.match(DL.URL_RE) || []).forEach(function (u) { u = u.replace(/[.,;:!?)\]]+$/, ''); if (!seenT[u]) { seenT[u] = 1; addLink(u, '(plain text body)', 'text'); } });
+  }
+  // dedupe links by href+text
+  var uniq = [], key = {};
+  links.forEach(function (l) { var k = l.href + '|' + l.text; if (!key[k]) { key[k] = 1; uniq.push(l); } });
+  body.links = uniq;
+  var mism = uniq.filter(function (l) { return l.flags.indexOf('text-mismatch') >= 0; });
+  if (mism.length) DL.finding(findings, 'high', 'Link text points to a different site than its destination', mism.slice(0, 3).map(function (l) { return '"' + l.text.slice(0, 40) + '" → ' + DL.defang(l.host); }).join('; '), 'links');
+  var wrapped = uniq.filter(function (l) { return l.wrapper; });
+  if (wrapped.length) DL.finding(findings, 'info', wrapped.length + ' link' + (wrapped.length > 1 ? 's' : '') + ' rewritten by a security gateway', Array.from(new Set(wrapped.map(function (l) { return l.wrapper; }))).join(', ') + '. Real destinations are shown unwrapped in the Links tab.', 'links');
+  uniq.forEach(function (l) {
+    if (l.kind !== 'url') { if (l.kind === 'script' || l.kind === 'data' || l.kind === 'file') DL.finding(findings, 'high', (l.kind === 'script' ? 'Script URL' : l.kind === 'data' ? 'data: URL' : 'File/UNC link') + ' in body', l.href.slice(0, 120), 'links'); return; }
+    if (l.flags.indexOf('idn') >= 0) DL.finding(findings, 'high', 'Internationalized (punycode) domain in link', DL.defang(l.host) + ' displays as ' + l.decodedHost, 'links');
+    if (l.flags.indexOf('ip-literal') >= 0) DL.finding(findings, 'high', 'Link to a bare IP address', DL.defang(l.unwrapped.slice(0, 120)), 'links');
+    if (l.flags.indexOf('userinfo') >= 0) DL.finding(findings, 'high', 'Credentials or @ trick in URL', DL.defang(l.unwrapped.slice(0, 120)) + ' — the part before @ is a decoy; the browser goes to ' + DL.defang(l.host) + '.', 'links');
+    if (l.flags.indexOf('file-download') >= 0) DL.finding(findings, 'high', 'Link points directly at a downloadable payload', DL.defang(l.unwrapped.slice(0, 120)), 'links');
+    if (l.flags.indexOf('shortener') >= 0) DL.finding(findings, 'medium', 'URL shortener', DL.defang(l.unwrapped.slice(0, 120)) + ' — destination unknown without following it.', 'links');
+    if (l.flags.indexOf('hosting-platform') >= 0) DL.finding(findings, 'medium', 'Link to a free hosting / cloud platform', DL.defang(l.host) + ' — commonly abused for lookalike login pages.', 'links');
+    if (l.flags.some(function (f) { return /^port:/.test(f); })) DL.finding(findings, 'medium', 'Link uses a non-standard port', DL.defang(l.unwrapped.slice(0, 120)), 'links');
+  });
+  var hosts = {};
+  uniq.forEach(function (l) { if (l.kind === 'url' && l.host) hosts[l.host] = (hosts[l.host] || 0) + 1; });
+  body.hosts = Object.keys(hosts).sort();
+  return body;
+};
+
+/* ---- orchestrate ---- */
+DL.analyzeMessage = function (msg, opts) {
+  opts = opts || {};
+  var findings = [];
+  msg.notes.forEach(function (n) { DL.finding(findings, 'info', 'Parser note', n, 'parse'); });
+  var an = { findings: findings };
+  an.auth = DL.analyzeAuth(msg, findings, opts.authserv);
+  an.env = DL.analyzeEnvelope(msg, findings, an.auth);
+  an.hopInfo = DL.analyzeHops(msg, findings);
+  // date sanity
+  var hops = an.hopInfo.hops;
+  if (an.env.date && hops.length && hops[0].date) {
+    var dd = hops[0].date - an.env.date;
+    if (Math.abs(dd) > 3600000) DL.finding(findings, dd < 0 ? 'medium' : 'info', 'Date header is ' + DL.fmtDelta(Math.abs(dd)) + (dd > 0 ? ' before' : ' after') + ' the first hop', 'Date: ' + an.env.dateRaw + '. Large gaps mean a queued/replayed message, a wrong clock, or a forged Date.', 'envelope');
+  }
+  if (!an.env.date && an.env.dateRaw) DL.finding(findings, 'info', 'Date header could not be parsed', an.env.dateRaw, 'envelope');
+  if (an.env.originatingIp && !DL.isPrivateIp(an.env.originatingIp)) DL.finding(findings, 'info', 'X-Originating-IP ' + an.env.originatingIp, 'Client IP recorded by the submission server (webmail or authenticated SMTP).', 'envelope');
+  DL.analyzeAttachments(msg, findings);
+  an.body = DL.analyzeBody(msg, findings, opts.DOMParser);
+  if (msg.kind === 'msg' && msg.headerSource === 'mapi') DL.finding(findings, 'medium', 'Envelope reconstructed from Outlook properties', 'No transport headers exist in this .msg, so nothing about the sending path can be verified.', 'parse');
+  // subject-based social engineering cues
+  var subj = an.env.subject || '';
+  if (/\b(urgent|immediately|action required|final notice|suspended|verify|confirm your|password|invoice|payment|overdue|wire|gift card|w-9|w9|docusign|shared a (file|document)|voicemail|fax|delivery failed|mfa|2fa)\b/i.test(subj)) DL.finding(findings, 'info', 'Subject uses common lure wording', '"' + subj.slice(0, 100) + '"', 'envelope');
+  findings.sort(function (a, b) { return DL.SEV_ORDER[a.sev] - DL.SEV_ORDER[b.sev]; });
+  an.counts = { high: findings.filter(function (f) { return f.sev === 'high'; }).length, medium: findings.filter(function (f) { return f.sev === 'medium'; }).length, info: findings.filter(function (f) { return f.sev === 'info'; }).length };
+  msg.analysis = an;
+  return an;
+};
+
+/* ---- report ---- */
+DL.buildReport = function (msg) {
+  var an = msg.analysis, env = an.env, L = [];
+  var subj = env.subject || '(no subject)';
+  L.push('## Mail analysis: ' + subj);
+  L.push('');
+  L.push('Source file: ' + (msg.name || '(pasted)') + ' (' + msg.kind + ')');
+  L.push('From: ' + (env.from.map(DL.fmtAddr).join(', ') || '-'));
+  if (env.sender.length) L.push('Sender: ' + env.sender.map(DL.fmtAddr).join(', '));
+  if (env.replyTo.length) L.push('Reply-To: ' + env.replyTo.map(DL.fmtAddr).join(', '));
+  if (env.returnPath.length) L.push('Return-Path: ' + env.returnPath.map(DL.fmtAddr).join(', '));
+  L.push('To: ' + (env.to.map(DL.fmtAddr).join(', ') || '-') + (env.cc.length ? ' | Cc: ' + env.cc.map(DL.fmtAddr).join(', ') : ''));
+  L.push('Date: ' + (env.dateRaw || '-') + (env.date ? ' (' + DL.fmtUtc(env.date) + ')' : ''));
+  L.push('Message-ID: ' + (env.messageId || '-'));
+  var o = an.hopInfo.origin;
+  if (o) L.push('Originating IP: ' + (o.fromIp || '-') + (o.fromHost ? ' (' + o.fromHost + ')' : '') + (o.fromRdns ? ' rDNS ' + o.fromRdns : ''));
+  var au = an.auth;
+  if (au.ar.length) {
+    var t = au.ar[au.trustedIndex >= 0 ? au.trustedIndex : 0];
+    L.push('Authentication (' + (t.authserv || 'unnamed authserv') + '): ' + t.results.map(function (r) { return r.method + '=' + r.result + (r.props['header.d'] ? ' d=' + r.props['header.d'] : '') + (r.props['smtp.mailfrom'] ? ' mailfrom=' + r.props['smtp.mailfrom'] : '') + (r.props['header.from'] ? ' from=' + r.props['header.from'] : ''); }).join('; '));
+    if (au.alignment && au.alignment.computed) L.push('Alignment with From domain (' + au.alignment.fromDomain + '): ' + au.alignment.computed + ' (DKIM ' + (au.alignment.dkimAligned === null ? 'n/a' : au.alignment.dkimAligned ? 'aligned' : 'not aligned') + ', SPF ' + (au.alignment.spfAligned === null ? 'n/a' : au.alignment.spfAligned ? 'aligned' : 'not aligned') + ')');
+  } else L.push('Authentication: no Authentication-Results header');
+  L.push('');
+  L.push('### Findings (' + an.counts.high + ' high, ' + an.counts.medium + ' medium, ' + an.counts.info + ' info)');
+  an.findings.forEach(function (f) { L.push('- [' + f.sev.toUpperCase() + '] ' + f.title + (f.detail ? ' — ' + f.detail : '')); });
+  if (an.hopInfo.hops.length) {
+    L.push(''); L.push('### Hops (origin first)');
+    L.push('| # | from | IP | by | time (UTC) | delay |'); L.push('|---|---|---|---|---|---|');
+    an.hopInfo.hops.forEach(function (h) { L.push('| ' + h.n + ' | ' + (h.fromHost || h.from.slice(0, 40) || '-') + ' | ' + (h.fromIp ? DL.defang(h.fromIp) : '-') + ' | ' + (h.by.split(' ')[0] || '-') + ' | ' + (DL.fmtUtc(h.date) || h.dateRaw || '-') + ' | ' + (h.delay == null ? '-' : DL.fmtDelta(h.delay)) + ' |'); });
+  }
+  var urls = an.body.links.filter(function (l) { return l.kind === 'url'; });
+  if (urls.length) { L.push(''); L.push('### URLs (defanged, unwrapped)'); urls.forEach(function (l) { L.push('- ' + DL.defang(l.unwrapped) + (l.flags.length ? '  [' + l.flags.join(', ') + ']' : '') + (l.text && !/^\(/.test(l.text) ? '  text: "' + l.text.slice(0, 60) + '"' : '')); }); }
+  if (msg.attachments.length) {
+    L.push(''); L.push('### Attachments');
+    L.push('| name | declared | detected | size | sha256 |'); L.push('|---|---|---|---|---|');
+    msg.attachments.forEach(function (a) { L.push('| ' + a.name + ' | ' + (a.contentType || '-') + ' | ' + (a.detected ? a.detected.type : '-') + ' | ' + DL.formatBytes(a.size) + ' | ' + (a.hashes ? a.hashes.sha256 : (a.nested ? 'embedded message' : '-')) + ' |'); });
+  }
+  L.push(''); L.push('Generated offline by Dead Letter; nothing was fetched or submitted.');
+  return L.join('\n');
+};
+
+DL.buildIocs = function (msg) {
+  var an = msg.analysis, out = [], seen = {};
+  function add(s) { if (s && !seen[s]) { seen[s] = 1; out.push(s); } }
+  var o = an.hopInfo.origin; if (o && o.fromIp && !DL.isPrivateIp(o.fromIp)) add(DL.defang(o.fromIp));
+  if (an.env.originatingIp && !DL.isPrivateIp(an.env.originatingIp)) add(DL.defang(an.env.originatingIp));
+  an.env.from.forEach(function (a) { if (a.addr) add(DL.defang(a.addr)); });
+  an.env.replyTo.forEach(function (a) { if (a.addr) add(DL.defang(a.addr)); });
+  an.env.returnPath.forEach(function (a) { if (a.addr) add(DL.defang(a.addr)); });
+  an.body.links.forEach(function (l) { if (l.kind === 'url') { add(DL.defang(l.unwrapped)); if (l.host) add(DL.defang(l.host)); } });
+  msg.attachments.forEach(function (a) { if (a.hashes) { add(a.hashes.sha256); add(a.hashes.md5); } });
+  return out.join('\n');
+};
+
+
+/* ---------- ui ---------- */
+
+DL.ui = (function () {
+  var esc = DL.escapeHtml;
+  var state = { msgs: [], active: null, tab: 'findings', bodyView: 'rendered', settings: { authserv: '', binSuffix: false }, nextId: 1, blobUrl: null, hdrFilter: '' };
+  var $ = function (sel, root) { return (root || document).querySelector(sel); };
+  var els = {};
+
+  function loadSettings() {
+    try { var s = JSON.parse(localStorage.getItem('deadletter.settings') || '{}'); if (s && typeof s === 'object') { state.settings.authserv = s.authserv || ''; state.settings.binSuffix = !!s.binSuffix; } } catch (e) { }
+  }
+  function saveSettings() { try { localStorage.setItem('deadletter.settings', JSON.stringify(state.settings)); } catch (e) { } }
+
+  function toast(msg) {
+    var t = els.toast; t.textContent = msg; t.classList.add('dl-show');
+    clearTimeout(toast._t); toast._t = setTimeout(function () { t.classList.remove('dl-show'); }, 1400);
+  }
+
+  function copyText(text, label) {
+    function fallback() {
+      var ta = document.createElement('textarea'); ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.left = '-9999px';
+      document.body.appendChild(ta); ta.select();
+      var ok = false; try { ok = document.execCommand('copy'); } catch (e) { }
+      document.body.removeChild(ta);
+      toast(ok ? (label || 'Copied') : 'Copy failed; select the text manually');
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { toast(label || 'Copied'); }, fallback);
+    else fallback();
+  }
+
+  function downloadBytes(bytes, name, mime) {
+    var blob = new Blob([bytes], { type: mime || 'application/octet-stream' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a'); a.href = url; a.download = name; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+
+  function safeName(n) { return (n || 'attachment').replace(/[\\\/:*?"<>|\u0000-\u001f\u202a-\u202e\u2066-\u2069]/g, '_').slice(0, 200); }
+
+  /* ---- intake ---- */
+  async function addBytes(bytes, name, parentId) {
+    var msg;
+    try {
+      if (DL.isCfb(bytes)) msg = DL.parseMsg(bytes, name);
+      else msg = DL.parseEml(bytes, name);
+    } catch (e) {
+      msg = new DL.Message(); msg.name = name; msg.kind = 'error'; msg.error = e && e.message ? e.message : String(e);
+    }
+    await finishAdd(msg, parentId);
+    return msg;
+  }
+  async function finishAdd(msg, parentId) {
+    msg.id = state.nextId++;
+    msg.parentId = parentId || null;
+    if (msg.kind !== 'error') {
+      try { await DL.hashAttachments(msg); } catch (e) { }
+      try { DL.analyzeMessage(msg, { DOMParser: window.DOMParser, authserv: state.settings.authserv }); }
+      catch (e) { msg.kind = 'error'; msg.error = 'Analysis failed: ' + (e && e.message ? e.message : e); }
+    }
+    state.msgs.push(msg);
+    state.active = msg.id;
+    state.tab = 'findings';
+    state.bodyView = 'rendered';
+    render();
+  }
+  async function addFiles(files) {
+    var list = Array.prototype.slice.call(files || []);
+    for (var i = 0; i < list.length; i++) {
+      var f = list[i];
+      try { var buf = await f.arrayBuffer(); await addBytes(new Uint8Array(buf), f.name); }
+      catch (e) { toast('Could not read ' + f.name); }
+    }
+  }
+  async function addPasted(text) {
+    text = text || '';
+    if (!text.trim()) { toast('Nothing to analyze'); return; }
+    var bytes = new TextEncoder().encode(text.replace(/^\s+/, ''));
+    var hasBody = /\r?\n\r?\n/.test(text.replace(/^\s+/, ''));
+    var msg;
+    try {
+      if (!hasBody && DL.looksLikeHeaders(text)) msg = DL.parseHeadersOnly(text);
+      else msg = DL.parseEml(bytes, 'pasted-' + new Date().toISOString().slice(11, 19).replace(/:/g, '') + '.eml');
+      if (!msg.name) msg.name = 'pasted headers';
+    } catch (e) { msg = new DL.Message(); msg.name = 'pasted'; msg.kind = 'error'; msg.error = e.message; }
+    await finishAdd(msg, null);
+  }
+  function reanalyzeAll() {
+    state.msgs.forEach(function (m) { if (m.kind !== 'error') { try { DL.analyzeMessage(m, { DOMParser: window.DOMParser, authserv: state.settings.authserv }); } catch (e) { } } });
+    render();
+  }
+
+  /* ---- rendering ---- */
+  function active() { for (var i = 0; i < state.msgs.length; i++) if (state.msgs[i].id === state.active) return state.msgs[i]; return null; }
+  function chip(label, result) {
+    var cls = 'dl-chip';
+    if (result === 'pass') cls += ' dl-pass'; else if (result === 'fail' || result === 'permerror' || result === 'softfail') cls += ' dl-fail'; else if (result) cls += ' dl-warn';
+    return '<span class="' + cls + '">' + esc(label) + (result ? '=' + esc(result) : '') + '</span>';
+  }
+  function render() {
+    renderList();
+    var m = active();
+    if (!m) { els.main.innerHTML = emptyHtml(); bindEmpty(); return; }
+    if (m.kind === 'error') { els.main.innerHTML = '<div class="dl-card"><h2 class="dl-subject">' + esc(m.name) + '</h2><p class="dl-error">Could not parse this file: ' + esc(m.error) + '</p><p class="dl-muted">Supported inputs: RFC 822 .eml (any MIME structure), Outlook .msg (compound file), bare HTML or text saved as .eml, pasted headers.</p></div>'; return; }
+    els.main.innerHTML = messageHtml(m);
+    mountBody(m);
+  }
+  function emptyHtml() {
+    return '<div class="dl-empty">' +
+      '<div class="dl-drop dl-drop-big" id="dl-drop-main" tabindex="0" role="button" aria-label="Open .eml or .msg files"><strong>Drop .eml or .msg files here</strong>or click to choose. Several at once is fine.</div>' +
+      '<h1>Read the mail without opening it</h1>' +
+      '<p>Dead Letter parses the file in this tab, renders the body in a sealed sandbox, unwraps and defangs every link, types attachments by their bytes, and reads the hop chain and authentication results. No request leaves the page; the network tab stays empty.</p>' +
+      '<div class="dl-paste"><label for="dl-paste-ta" class="dl-muted">Or paste raw message source or just the headers</label><textarea id="dl-paste-ta" spellcheck="false" placeholder="Received: from ...&#10;Authentication-Results: ...&#10;From: ..."></textarea>' +
+      '<div class="dl-paste-row"><button class="dl-primary" id="dl-paste-btn">Analyze pasted text</button><span class="dl-dim">Headers alone are enough for hop and authentication analysis.</span></div></div>' +
+      '<div class="dl-guarantee">What stays sealed<ul><li>Scripts, forms, iframes and event handlers are stripped before rendering; the body runs inside an iframe with an empty sandbox attribute and a no-network Content-Security-Policy.</li><li>Links are rewritten to be inert. Clicking one does nothing. Copy them from the Links tab, defanged or raw.</li><li>Remote images, tracking pixels, external CSS and fonts are never requested. Inline (cid:) images are shown from the attachment bytes.</li><li>Attachments are hashed and typed in memory. Download only when you mean to; nothing is written otherwise.</li></ul></div>' +
+      '</div>';
+  }
+  function bindEmpty() {
+    var d = $('#dl-drop-main'); if (d) { d.addEventListener('click', function () { els.file.click(); }); d.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); els.file.click(); } }); wireDrop(d); }
+    var b = $('#dl-paste-btn'); if (b) b.addEventListener('click', function () { addPasted($('#dl-paste-ta').value); });
+  }
+  function renderList() {
+    if (!state.msgs.length) { els.list.innerHTML = ''; els.sideHint.textContent = 'No messages loaded.'; return; }
+    els.sideHint.textContent = state.msgs.length + ' message' + (state.msgs.length > 1 ? 's' : '') + ' loaded';
+    els.list.innerHTML = state.msgs.map(function (m) {
+      var an = m.analysis, subj = m.kind === 'error' ? '(unreadable)' : ((m.get && m.get('Subject')) || (m.kind === 'html' ? '(bare HTML)' : m.kind === 'text' ? '(bare text)' : '(no subject)'));
+      var meta = m.kind === 'error' ? '<span class="dl-h">error</span>' : (an ? '<span class="dl-h">' + an.counts.high + ' high</span><span class="dl-m">' + an.counts.medium + ' med</span><span>' + an.counts.info + ' notes</span>' : '');
+      return '<li><div class="dl-item' + (m.id === state.active ? ' dl-active' : '') + (m.parentId ? ' dl-child' : '') + '" data-act="select" data-id="' + m.id + '" tabindex="0" role="button"><div class="dl-i-name">' + (m.parentId ? '↳ ' : '') + esc(m.name || 'message') + '</div><div class="dl-i-subj">' + esc(subj) + '</div><div class="dl-i-meta">' + meta + '</div><button class="dl-x" data-act="remove" data-id="' + m.id + '" title="Remove from list" aria-label="Remove">×</button></div></li>';
+    }).join('');
+  }
+
+  function messageHtml(m) {
+    var an = m.analysis, env = an.env, au = an.auth, o = an.hopInfo.origin;
+    var h = '<div class="dl-card dl-summary"><div>';
+    h += '<h2 class="dl-subject">' + esc(env.subject || (m.kind === 'html' ? '(bare HTML file, no headers)' : m.kind === 'text' ? '(bare text file, no headers)' : '(no subject)')) + '</h2>';
+    h += '<dl class="dl-env">';
+    function row(k, v) { if (v) h += '<dt>' + esc(k) + '</dt><dd>' + v + '</dd>'; }
+    row('From', env.from.length ? env.from.map(function (a) { return esc(a.name ? a.name + ' ' : '') + '<span class="dl-mono">' + esc(a.addr ? '<' + a.addr + '>' : '') + '</span>'; }).join(', ') : '');
+    row('Reply-To', env.replyTo.length ? '<span class="dl-mono">' + esc(env.replyTo.map(DL.fmtAddr).join(', ')) + '</span>' : '');
+    row('Return-Path', env.returnPath.length ? '<span class="dl-mono">' + esc(env.returnPath.map(DL.fmtAddr).join(', ')) + '</span>' : '');
+    row('To', env.to.length ? '<span class="dl-mono">' + esc(env.to.map(DL.fmtAddr).join(', ')) + '</span>' : '');
+    row('Cc', env.cc.length ? '<span class="dl-mono">' + esc(env.cc.map(DL.fmtAddr).join(', ')) + '</span>' : '');
+    row('Date', env.dateRaw ? esc(env.dateRaw) + (env.date ? ' <span class="dl-dim">' + esc(DL.fmtUtc(env.date)) + '</span>' : '') : '');
+    row('Origin', o && o.fromIp ? '<span class="dl-mono">' + esc(o.fromIp) + '</span>' + (o.fromRdns || o.fromHost ? ' <span class="dl-dim">' + esc(o.fromRdns || o.fromHost) + '</span>' : '') + (DL.isPrivateIp(o.fromIp) ? ' <span class="dl-dim">(internal)</span>' : '') : '');
+    var authHtml = '';
+    if (au.spf || au.dkim || au.dmarc) { authHtml = (au.spf ? chip('spf', au.spf.result) : '') + (au.dkim ? chip('dkim', au.dkim.result) : '') + (au.dmarc ? chip('dmarc', au.dmarc.result) : '') + (au.arc ? chip('arc', au.arc.result) : '') + (au.compauth ? chip('compauth', au.compauth.result) : ''); if (au.alignment && au.alignment.computed) authHtml += ' <span class="dl-dim">alignment ' + esc(au.alignment.computed) + '</span>'; }
+    else if (m.headerSource === 'transport' && m.kind !== 'html' && m.kind !== 'text') authHtml = '<span class="dl-dim">no Authentication-Results</span>';
+    row('Auth', authHtml);
+    row('Message-ID', env.messageId ? '<span class="dl-mono">' + esc(env.messageId) + '</span>' : '');
+    h += '</dl></div>';
+    h += '<div class="dl-counts"><div class="dl-count dl-high"><b>' + an.counts.high + '</b>high</div><div class="dl-count dl-medium"><b>' + an.counts.medium + '</b>medium</div><div class="dl-count dl-info"><b>' + an.counts.info + '</b>notes</div></div>';
+    h += '</div>';
+    // tabs
+    var tabs = [['findings', 'Findings', an.findings.length, an.counts.high], ['auth', 'Auth & hops', an.hopInfo.hops.length], ['headers', 'Headers', m.headers.length], ['body', 'Body'], ['links', 'Links', an.body.links.length], ['attachments', 'Attachments', m.attachments.length], ['report', 'Report']];
+    h += '<nav class="dl-tabs" role="tablist">' + tabs.map(function (t) { return '<button role="tab" data-act="tab" data-tab="' + t[0] + '" aria-selected="' + (state.tab === t[0]) + '">' + t[1] + (t[2] != null ? '<span class="dl-n' + (t[3] ? ' dl-h' : '') + '">' + t[2] + '</span>' : '') + '</button>'; }).join('') + '</nav>';
+    h += '<section class="dl-pane" data-pane="findings"' + (state.tab !== 'findings' ? ' hidden' : '') + '>' + findingsHtml(m) + '</section>';
+    h += '<section class="dl-pane" data-pane="auth"' + (state.tab !== 'auth' ? ' hidden' : '') + '>' + authHtmlPane(m) + '</section>';
+    h += '<section class="dl-pane" data-pane="headers"' + (state.tab !== 'headers' ? ' hidden' : '') + '>' + headersHtml(m) + '</section>';
+    h += '<section class="dl-pane" data-pane="body"' + (state.tab !== 'body' ? ' hidden' : '') + '>' + bodyPaneHtml(m) + '</section>';
+    h += '<section class="dl-pane" data-pane="links"' + (state.tab !== 'links' ? ' hidden' : '') + '>' + linksHtml(m) + '</section>';
+    h += '<section class="dl-pane" data-pane="attachments"' + (state.tab !== 'attachments' ? ' hidden' : '') + '>' + attachmentsHtml(m) + '</section>';
+    h += '<section class="dl-pane" data-pane="report"' + (state.tab !== 'report' ? ' hidden' : '') + '>' + reportHtml(m) + '</section>';
+    return h;
+  }
+
+  function findingsHtml(m) {
+    var an = m.analysis;
+    if (!an.findings.length) return '<div class="dl-none">Nothing notable. That is not a clean bill of health; it means none of the offline checks fired.</div>';
+    var refTab = { hops: 'auth', auth: 'auth', envelope: 'headers', attachments: 'attachments', body: 'body', links: 'links', parse: 'headers' };
+    return '<ul class="dl-findings">' + an.findings.map(function (f) {
+      return '<li class="dl-f dl-f-' + f.sev + '" data-act="tab" data-tab="' + (refTab[f.ref] || 'findings') + '" title="Open the ' + (refTab[f.ref] || 'findings') + ' tab"><span class="dl-stamp">' + (f.sev === 'info' ? 'note' : f.sev) + '</span><div><b>' + esc(f.title) + '</b>' + (f.detail ? '<p>' + esc(f.detail) + '</p>' : '') + '</div></li>';
+    }).join('') + '</ul>';
+  }
+
+  function authHtmlPane(m) {
+    var an = m.analysis, au = an.auth, h = '';
+    h += '<h3>Authentication results</h3>';
+    if (!au.ar.length) h += '<div class="dl-none">No Authentication-Results header.' + (m.headerSource === 'mapi' ? ' This .msg has no transport headers.' : '') + '</div>';
+    au.ar.forEach(function (a) {
+      h += '<div class="dl-toolbar"><span class="dl-mono">' + esc(a.kind) + (a.arcInstance ? ' ' + esc(a.arcInstance) : '') + '</span><span>' + esc(a.authserv || '(no authserv-id)') + '</span>' + (a.trusted ? '<span class="dl-chip dl-pass">used for verdicts</span>' : '<span class="dl-chip">not used</span>') + '</div>';
+      h += '<div class="dl-scroll"><table class="dl-table"><tr><th>method</th><th>result</th><th>properties</th><th>comment</th></tr>' + a.results.map(function (r) { return '<tr><td class="dl-mono">' + esc(r.method) + '</td><td>' + chip(r.result || '?', r.result) + '</td><td class="dl-mono">' + esc(Object.keys(r.props).map(function (k) { return k + '=' + r.props[k]; }).join(' ')) + '</td><td class="dl-muted">' + esc(r.comment) + '</td></tr>'; }).join('') + '</table></div>';
+    });
+    if (au.alignment && au.alignment.computed) {
+      var al = au.alignment;
+      h += '<h3>Alignment (computed here from the results above)</h3><dl class="dl-env"><dt>From domain</dt><dd class="dl-mono">' + esc(al.fromDomain || '-') + '</dd><dt>DKIM d=</dt><dd class="dl-mono">' + esc(al.dkimDomain || '-') + ' ' + (al.dkimAligned === null ? '<span class="dl-dim">n/a</span>' : chip(al.dkimAligned ? 'aligned' : 'not aligned', al.dkimAligned ? 'pass' : 'fail')) + '</dd><dt>SPF mailfrom</dt><dd class="dl-mono">' + esc(al.spfDomain || '-') + ' ' + (al.spfAligned === null ? '<span class="dl-dim">n/a</span>' : chip(al.spfAligned ? 'aligned' : 'not aligned', al.spfAligned ? 'pass' : 'fail')) + '</dd><dt>Result</dt><dd>' + chip('dmarc-style alignment', al.computed) + '</dd></dl>';
+    }
+    if (au.receivedSpf) h += '<h3>Received-SPF</h3><div class="dl-mono dl-wrap">' + esc(au.receivedSpf.raw) + '</div>';
+    if (au.dkimSigs.length) {
+      h += '<h3>DKIM signatures (present, not verified offline)</h3><div class="dl-scroll"><table class="dl-table"><tr><th>d=</th><th>s=</th><th>a=</th><th>c=</th><th>signed headers</th></tr>' + au.dkimSigs.map(function (s) { return '<tr><td class="dl-mono">' + esc(s.d || '') + '</td><td class="dl-mono">' + esc(s.s || '') + '</td><td class="dl-mono">' + esc(s.a || '') + '</td><td class="dl-mono">' + esc(s.c || '') + '</td><td class="dl-mono dl-wrap">' + esc(s.h || '') + '</td></tr>'; }).join('') + '</table></div>';
+    }
+    h += '<h3>Received chain, origin first</h3>';
+    var hops = an.hopInfo.hops;
+    if (!hops.length) h += '<div class="dl-none">No Received headers.</div>';
+    else {
+      h += '<div class="dl-scroll"><table class="dl-table"><tr><th>#</th><th>from</th><th>IP</th><th>by</th><th>with</th><th>time (UTC)</th><th>delay</th><th></th></tr>';
+      hops.forEach(function (hp) {
+        var flags = hp.flags.map(function (f) { return '<span class="dl-flag' + (f === 'negative' ? ' dl-medium' : f === 'origin' ? ' dl-medium' : '') + '">' + esc(f) + '</span>'; }).join('');
+        h += '<tr class="' + (hp.flags.indexOf('origin') >= 0 ? 'dl-origin' : '') + '"><td class="dl-num">' + hp.n + '</td><td>' + esc(hp.fromHost || (hp.from ? hp.from.slice(0, 60) : '-')) + (hp.fromRdns && hp.fromRdns !== hp.fromHost ? '<br><span class="dl-dim">rDNS ' + esc(hp.fromRdns) + '</span>' : '') + '</td><td class="dl-mono">' + (hp.fromIp ? esc(hp.fromIp) + (DL.isPrivateIp(hp.fromIp) ? ' <span class="dl-dim">private</span>' : '') + '<button class="dl-copy" data-act="copy" data-text="' + esc(hp.fromIp) + '">copy</button>' : '-') + '</td><td>' + esc((hp.by || '-').slice(0, 60)) + '</td><td class="dl-muted">' + esc((hp.with || '-').slice(0, 40)) + (hp.tls ? ' <span class="dl-chip dl-pass">tls</span>' : '') + '</td><td class="dl-mono">' + esc(DL.fmtUtc(hp.date) || hp.dateRaw || '-') + '</td><td class="dl-mono">' + (hp.delay == null ? '-' : esc(DL.fmtDelta(hp.delay))) + '</td><td>' + flags + '</td></tr>';
+        h += '<tr class="dl-sub"><td></td><td colspan="7" class="dl-mono dl-wrap dl-muted">' + esc(hp.raw) + '</td></tr>';
+      });
+      h += '</table></div>';
+      h += '<p class="dl-notice">Timestamps are what each server wrote; a sender controls everything below the first hop added by a server you trust. Delays are between consecutive hops.</p>';
+    }
+    return h;
+  }
+
+  function headersHtml(m) {
+    var h = '<div class="dl-toolbar"><input type="text" class="dl-search" id="dl-hdr-search" placeholder="filter headers" value="' + esc(state.hdrFilter) + '"><span class="dl-spacer"></span><button class="dl-small" data-act="copy-headers">Copy raw headers</button>' + (m.raw ? '<button class="dl-small" data-act="download-raw">Download source</button>' : '') + '</div>';
+    h += '<div class="dl-scroll"><table class="dl-table" id="dl-hdr-table">' + m.headers.map(function (hd) {
+      return '<tr data-h="' + esc((hd.name + ' ' + hd.value).toLowerCase()) + '"><td class="dl-hdr-name">' + esc(hd.name) + (hd.synthesized ? '<br><span class="dl-synth">from MAPI</span>' : '') + '</td><td class="dl-hdr-val dl-wrap">' + esc(hd.value) + '</td></tr>';
+    }).join('') + '</table></div>';
+    if (!m.headers.length) h += '<div class="dl-none">No headers.</div>';
+    if (m.parts) h += '<h3>MIME structure</h3><div class="dl-tree">' + treeHtml(m.parts, '') + '</div>';
+    if (m.mapi) {
+      var mp = m.mapi;
+      h += '<h3>Outlook (MAPI) properties</h3><dl class="dl-env"><dt>Message class</dt><dd class="dl-mono">' + esc(mp.messageClass || '-') + '</dd><dt>Sender</dt><dd class="dl-mono">' + esc(DL.fmtAddr({ name: mp.senderName, addr: mp.senderAddr }) || '-') + '</dd><dt>Sent representing</dt><dd class="dl-mono">' + esc(DL.fmtAddr({ name: mp.reprName, addr: mp.reprAddr }) || '-') + '</dd><dt>Submit time</dt><dd class="dl-mono">' + esc(mp.submit ? DL.fmtUtc(mp.submit) : '-') + '</dd><dt>Delivery time</dt><dd class="dl-mono">' + esc(mp.delivered ? DL.fmtUtc(mp.delivered) : '-') + '</dd><dt>Conversation topic</dt><dd>' + esc(mp.conversationTopic || '-') + '</dd><dt>Codepage</dt><dd class="dl-mono">' + esc(mp.codepage ? String(mp.codepage) : '-') + '</dd><dt>Recipients</dt><dd class="dl-mono">' + esc(mp.recipients.map(function (r) { return (r.type === 2 ? 'cc: ' : r.type === 3 ? 'bcc: ' : 'to: ') + DL.fmtAddr(r); }).join(' | ') || '-') + '</dd></dl>';
+    }
+    return h;
+  }
+  function treeHtml(p, indent) {
+    var line = indent + '<span class="' + (p.isAttachment ? 'dl-t-att' : '') + '">' + esc(p.contentType) + '</span>' + ' <span class="dl-t-dim">' + esc(p.cte) + (p.params && p.params.charset ? ' ' + p.params.charset : '') + (p.disposition ? ' ' + p.disposition : '') + '</span>' + (p.filename ? ' ' + esc(p.filename) : '') + ' <span class="dl-t-dim">' + esc(DL.formatBytes(p.size)) + '</span>' + (p.note ? ' <span class="dl-error">' + esc(p.note) + '</span>' : '') + '<br>';
+    if (p.nested && p.nested.parts) line += treeHtml(p.nested.parts, indent + '&nbsp;&nbsp;&nbsp;&nbsp;');
+    p.children.forEach(function (c) { line += treeHtml(c, indent + '&nbsp;&nbsp;&nbsp;&nbsp;'); });
+    return line;
+  }
+
+  function bodyPaneHtml(m) {
+    var b = m.analysis.body;
+    var hasHtml = !!m.html, hasText = !!m.text;
+    var views = [];
+    if (hasHtml) views.push(['rendered', 'Rendered']);
+    if (hasText || hasHtml) views.push(['text', 'Text']);
+    if (hasHtml) views.push(['source', 'HTML source']);
+    if (m.rtf) views.push(['rtf', 'RTF source']);
+    if (!views.length) return '<div class="dl-none">No body.' + (m.kind === 'headers' ? ' Only headers were provided.' : '') + '</div>';
+    if (!views.some(function (v) { return v[0] === state.bodyView; })) state.bodyView = views[0][0];
+    var h = '<div class="dl-bodybar"><div class="dl-seg">' + views.map(function (v) { return '<button data-act="bodyview" data-view="' + v[0] + '" aria-pressed="' + (state.bodyView === v[0]) + '">' + v[1] + '</button>'; }).join('') + '</div>';
+    if (hasHtml) {
+      var bits = [];
+      var rem = b.images.blocked.filter(function (x) { return !x.pixel; }).length;
+      if (rem) bits.push(rem + ' remote image' + (rem > 1 ? 's' : '') + ' blocked');
+      if (b.images.pixels) bits.push(b.images.pixels + ' tracking pixel' + (b.images.pixels > 1 ? 's' : '') + ' blocked');
+      if (b.images.cid) bits.push(b.images.cid + ' inline image' + (b.images.cid > 1 ? 's' : '') + ' shown from attachments');
+      Object.keys(b.removed).forEach(function (k) { bits.push(b.removed[k] + ' ' + k + (b.removed[k] > 1 && k !== 'css @import' ? 's' : '') + ' removed'); });
+      if (b.forms.length) bits.push(b.forms.length + ' form' + (b.forms.length > 1 ? 's' : '') + ' disabled');
+      h += '<span class="dl-notice">Sealed sandbox: links inert' + (bits.length ? '; ' + bits.join('; ') : '') + '.</span>';
+    }
+    h += '</div><div id="dl-body-host"></div>';
+    return h;
+  }
+  function mountBody(m) {
+    var host = $('#dl-body-host'); if (!host) return;
+    if (state.blobUrl) { try { URL.revokeObjectURL(state.blobUrl); } catch (e) { } state.blobUrl = null; }
+    var b = m.analysis.body, v = state.bodyView;
+    if (v === 'rendered' && b.safeHtml) {
+      var blob = new Blob([b.safeHtml], { type: 'text/html;charset=utf-8' });
+      state.blobUrl = URL.createObjectURL(blob);
+      var f = document.createElement('iframe');
+      f.className = 'dl-frame'; f.setAttribute('sandbox', ''); f.setAttribute('referrerpolicy', 'no-referrer'); f.setAttribute('title', 'Rendered email body (sandboxed)'); f.setAttribute('loading', 'eager');
+      f.src = state.blobUrl;
+      host.innerHTML = ''; host.appendChild(f);
+    } else if (v === 'rendered') {
+      host.innerHTML = '<div class="dl-none">Rendering unavailable (DOMParser failed); use the source view.</div>';
+    } else if (v === 'text') {
+      var txt = m.text;
+      if (!txt && m.html) { try { var d = new DOMParser().parseFromString(m.html, 'text/html'); txt = (d.body && d.body.textContent || '').replace(/\n{3,}/g, '\n\n').trim(); } catch (e) { txt = ''; } }
+      host.innerHTML = '<div class="dl-paper"><pre>' + esc(txt || '(empty)') + '</pre></div>';
+    } else if (v === 'source') {
+      host.innerHTML = '<div class="dl-paper"><pre>' + esc(m.html) + '</pre></div>';
+    } else if (v === 'rtf') {
+      host.innerHTML = '<div class="dl-paper"><pre>' + esc(DL.latin1(m.rtf.subarray(0, 400000))) + (m.rtf.length > 400000 ? '\n… truncated' : '') + '</pre></div>';
+    }
+  }
+
+  function linksHtml(m) {
+    var links = m.analysis.body.links;
+    if (!links.length) return '<div class="dl-none">No links found in the body.</div>';
+    var h = '<div class="dl-toolbar"><span class="dl-muted">' + links.length + ' link' + (links.length > 1 ? 's' : '') + ', destinations unwrapped and defanged. Nothing here navigates.</span><span class="dl-spacer"></span><button class="dl-small" data-act="copy-links" data-mode="defanged">Copy all defanged</button><button class="dl-small" data-act="copy-links" data-mode="raw">Copy all raw</button></div>';
+    h += '<div class="dl-scroll"><table class="dl-table"><tr><th>#</th><th>shown as</th><th>destination</th><th>host</th><th>flags</th><th></th></tr>';
+    links.forEach(function (l, i) {
+      var dest = l.kind === 'url' ? DL.defang(l.unwrapped) : l.href;
+      var flags = l.flags.map(function (f) { return '<span class="dl-flag' + (l.sev === 'high' ? ' dl-high' : l.sev === 'medium' ? ' dl-medium' : '') + '">' + esc(f) + '</span>'; }).join('');
+      if (l.wrapper) flags += '<span class="dl-flag">' + esc(l.wrapper) + '</span>';
+      h += '<tr><td class="dl-num">' + (i + 1) + '</td><td class="dl-wrap">' + esc(l.text || '') + '</td><td class="dl-mono dl-wrap">' + esc(dest.slice(0, 500)) + (l.wrapper && l.kind === 'url' ? '<br><span class="dl-dim">wrapped: ' + esc(DL.defang(l.href).slice(0, 160)) + (l.href.length > 160 ? '…' : '') + '</span>' : '') + '</td><td class="dl-mono">' + esc(l.host || '') + (l.decodedHost && l.decodedHost !== l.host ? '<br><span class="dl-dim">' + esc(l.decodedHost) + '</span>' : '') + '</td><td>' + flags + '</td><td class="dl-att-actions"><button class="dl-small" data-act="copy" data-text="' + esc(l.kind === 'url' ? l.unwrapped : l.href) + '">Copy raw</button><button class="dl-small" data-act="copy" data-text="' + esc(dest) + '">Copy defanged</button></td></tr>';
+    });
+    h += '</table></div>';
+    if (m.analysis.body.hosts && m.analysis.body.hosts.length) h += '<h3>Hosts</h3><div class="dl-mono dl-wrap">' + esc(m.analysis.body.hosts.map(DL.defang).join('  ')) + '</div>';
+    return h;
+  }
+
+  function attachmentsHtml(m) {
+    if (!m.attachments.length) return '<div class="dl-none">No attachments.</div>';
+    var h = '<div class="dl-toolbar"><span class="dl-muted">Typed by content, hashed in memory. Download saves the original bytes' + (state.settings.binSuffix ? ' with .bin appended' : '') + '.</span></div>';
+    h += '<div class="dl-scroll"><table class="dl-table"><tr><th>#</th><th>name</th><th>declared</th><th>detected</th><th>size</th><th>sha256</th><th></th></tr>';
+    m.attachments.forEach(function (a, i) {
+      var d = a.detected || { type: '-', flags: [] };
+      var flagsHtml = (a.flags || []).concat(d.flags || []).map(function (f) { return '<span class="dl-flag dl-high">' + esc(f) + '</span>'; }).join('');
+      var acts = '';
+      if (a.bytes && a.bytes.length) acts += '<button class="dl-small" data-act="download" data-i="' + i + '">Download</button>';
+      if (a.nested || (d.ext === 'eml' || d.ext === 'msg')) acts += '<button class="dl-small" data-act="open-nested" data-i="' + i + '">Open as message</button>';
+      else if (a.bytes && a.bytes.length && (d.ext === 'html' || /^(html?|shtml|xhtml|mht|mhtml)$/.test(a.ext || ''))) acts += '<button class="dl-small" data-act="open-nested" data-i="' + i + '" title="Analyze and render this HTML file in the same sealed sandbox">Open in sandbox</button>';
+      if (a.bytes && a.bytes.length && (d.cat === 'image' && d.ext !== 'tif' || d.cat === 'text' || d.ext === 'html' || d.ext === 'svg' || d.ext === 'script' || d.ext === 'xml' || d.ext === 'ics')) acts += '<button class="dl-small" data-act="preview" data-i="' + i + '">Preview</button>';
+      h += '<tr><td class="dl-num">' + (i + 1) + '</td><td class="dl-wrap">' + esc(a.name) + (a.inline ? ' <span class="dl-chip">inline</span>' : '') + (a.hidden ? ' <span class="dl-chip">hidden</span>' : '') + '</td><td class="dl-mono">' + esc(a.contentType || '-') + '</td><td>' + esc(d.type) + (flagsHtml ? '<br>' + flagsHtml : '') + '</td><td class="dl-mono">' + esc(DL.formatBytes(a.size)) + '</td><td class="dl-mono">' + (a.hashes ? esc(a.hashes.sha256.slice(0, 16)) + '…<button class="dl-copy" data-act="copy" data-text="' + esc(a.hashes.sha256) + '">copy</button>' : '-') + '</td><td class="dl-att-actions">' + acts + '</td></tr>';
+      var det = '<div class="dl-att-detail"><dl>';
+      if (a.hashes) det += '<dt>sha256</dt><dd>' + esc(a.hashes.sha256) + '</dd><dt>sha1</dt><dd>' + esc(a.hashes.sha1) + '</dd><dt>md5</dt><dd>' + esc(a.hashes.md5) + '</dd>';
+      if (a.contentId) det += '<dt>content-id</dt><dd>' + esc(a.contentId) + '</dd>';
+      if (a.disposition) det += '<dt>disposition</dt><dd>' + esc(a.disposition) + '</dd>';
+      if (a.note) det += '<dt>note</dt><dd>' + esc(a.note) + '</dd>';
+      if (a.nested) det += '<dt>embedded</dt><dd>' + esc(a.nested.get('Subject') || '(no subject)') + ' — from ' + esc(a.nested.get('From') || '?') + '</dd>';
+      det += '</dl>';
+      if (d.zip && d.zip.entries.length) det += '<div>Archive contents' + (d.zip.encrypted ? ' <span class="dl-error">(encrypted)</span>' : '') + (d.zip.note ? ' <span class="dl-dim">' + esc(d.zip.note) + '</span>' : '') + ':</div><ul class="dl-zip">' + d.zip.entries.slice(0, 200).map(function (e) { return '<li>' + esc(e.name) + ' <span class="dl-dim">' + esc(DL.formatBytes(e.size)) + '</span>' + (e.encrypted ? ' <span class="dl-enc">encrypted</span>' : '') + '</li>'; }).join('') + (d.zip.entries.length > 200 ? '<li>… ' + (d.zip.entries.length - 200) + ' more</li>' : '') + '</ul>';
+      det += '<div class="dl-preview" id="dl-prev-' + i + '"></div></div>';
+      h += '<tr class="dl-sub"><td></td><td colspan="6">' + det + '</td></tr>';
+    });
+    h += '</table></div>';
+    return h;
+  }
+
+  function reportHtml(m) {
+    var rep = DL.buildReport(m);
+    return '<div class="dl-toolbar"><button class="dl-primary" data-act="copy-report">Copy report (markdown)</button><button data-act="copy-iocs">Copy IOCs (defanged)</button><button data-act="download-md">Download .md</button><button data-act="download-json">Download analysis .json</button></div><textarea class="dl-report" readonly spellcheck="false" id="dl-report-ta">' + esc(rep) + '</textarea>';
+  }
+
+  /* ---- actions ---- */
+  function analysisJson(m) {
+    var an = m.analysis;
+    var out = { tool: 'Dead Letter', file: m.name, kind: m.kind, generated: new Date().toISOString(), envelope: an.env, findings: an.findings, hops: an.hopInfo.hops.map(function (h) { var c = {}; Object.keys(h).forEach(function (k) { c[k] = h[k]; }); c.date = h.date ? h.date.toISOString() : null; return c; }), auth: { results: an.auth.ar, alignment: an.auth.alignment, dkimSignatures: an.auth.dkimSigs, receivedSpf: an.auth.receivedSpf }, links: an.body.links, images: an.body.images, hiddenText: an.body.hidden, forms: an.body.forms, attachments: m.attachments.map(function (a) { return { name: a.name, declaredType: a.contentType, detected: a.detected ? { type: a.detected.type, ext: a.detected.ext, category: a.detected.cat, flags: a.detected.flags, zip: a.detected.zip ? a.detected.zip.entries : undefined } : null, size: a.size, hashes: a.hashes || null, contentId: a.contentId, flags: a.flags }; }), headers: m.headers.map(function (h) { return { name: h.name, value: h.value }; }) };
+    return JSON.stringify(out, null, 2);
+  }
+  function onAction(e) {
+    var t = e.target.closest('[data-act]'); if (!t) return;
+    var act = t.getAttribute('data-act'), m = active();
+    if (act === 'select') { state.active = +t.getAttribute('data-id'); state.tab = state.tab || 'findings'; render(); return; }
+    if (act === 'remove') { e.stopPropagation(); var id = +t.getAttribute('data-id'); state.msgs = state.msgs.filter(function (x) { return x.id !== id; }); if (state.active === id) state.active = state.msgs.length ? state.msgs[state.msgs.length - 1].id : null; render(); return; }
+    if (act === 'tab') { state.tab = t.getAttribute('data-tab'); Array.prototype.forEach.call(els.main.querySelectorAll('.dl-pane'), function (p) { p.hidden = p.getAttribute('data-pane') !== state.tab; }); Array.prototype.forEach.call(els.main.querySelectorAll('.dl-tabs button'), function (b) { b.setAttribute('aria-selected', b.getAttribute('data-tab') === state.tab); }); if (state.tab === 'body' && m) mountBody(m); return; }
+    if (act === 'bodyview') { state.bodyView = t.getAttribute('data-view'); Array.prototype.forEach.call(els.main.querySelectorAll('[data-act=bodyview]'), function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-view') === state.bodyView); }); if (m) mountBody(m); return; }
+    if (act === 'copy') { copyText(t.getAttribute('data-text') || '', 'Copied'); return; }
+    if (!m) return;
+    if (act === 'copy-headers') { copyText(m.headers.map(function (h) { return h.raw || (h.name + ': ' + h.value); }).join('\r\n'), 'Headers copied'); return; }
+    if (act === 'download-raw') { downloadBytes(m.raw, safeName(m.name || 'message') + (state.settings.binSuffix ? '.bin' : ''), 'application/octet-stream'); return; }
+    if (act === 'copy-report') { copyText(DL.buildReport(m), 'Report copied'); return; }
+    if (act === 'copy-iocs') { copyText(DL.buildIocs(m), 'IOCs copied'); return; }
+    if (act === 'download-md') { downloadBytes(new TextEncoder().encode(DL.buildReport(m)), safeName((m.name || 'message').replace(/\.[^.]+$/, '')) + '-analysis.md', 'text/markdown'); return; }
+    if (act === 'download-json') { downloadBytes(new TextEncoder().encode(analysisJson(m)), safeName((m.name || 'message').replace(/\.[^.]+$/, '')) + '-analysis.json', 'application/json'); return; }
+    if (act === 'copy-links') { var mode = t.getAttribute('data-mode'); copyText(m.analysis.body.links.map(function (l) { var u = l.kind === 'url' ? l.unwrapped : l.href; return mode === 'raw' ? u : DL.defang(u); }).join('\n'), 'Links copied'); return; }
+    var i = +t.getAttribute('data-i'), a = m.attachments[i];
+    if (!a) return;
+    if (act === 'download') { downloadBytes(a.bytes, safeName(a.name) + (state.settings.binSuffix ? '.bin' : ''), a.contentType || 'application/octet-stream'); toast('Saved ' + safeName(a.name)); return; }
+    if (act === 'open-nested') {
+      if (a.nested) { if (!a.nested.id) { a.nested.name = a.nested.name || a.name; finishAdd(a.nested, m.id); } else { state.active = a.nested.id; render(); } }
+      else addBytes(a.bytes, a.name, m.id);
+      return;
+    }
+    if (act === 'preview') {
+      var host = $('#dl-prev-' + i); if (!host) return;
+      if (host.innerHTML) { host.innerHTML = ''; return; }
+      var d = a.detected;
+      if (d.cat === 'image') host.innerHTML = '<img alt="' + esc(a.name) + '" src="data:' + esc(a.contentType && /^image\//.test(a.contentType) ? a.contentType : DL.guessMimeFromName('x.' + d.ext)) + ';base64,' + DL.b64encode(a.bytes) + '">';
+      else host.innerHTML = '<pre>' + esc(DL.guessDecode(a.bytes.subarray(0, 200000))) + (a.bytes.length > 200000 ? '\n… truncated' : '') + '</pre>';
+      return;
+    }
+  }
+
+  function wireDrop(el) {
+    ['dragenter', 'dragover'].forEach(function (ev) { el.addEventListener(ev, function (e) { e.preventDefault(); e.stopPropagation(); el.classList.add('dl-over'); }); });
+    ['dragleave', 'dragend'].forEach(function (ev) { el.addEventListener(ev, function (e) { e.preventDefault(); el.classList.remove('dl-over'); }); });
+    el.addEventListener('drop', function (e) { e.preventDefault(); e.stopPropagation(); el.classList.remove('dl-over'); if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) addFiles(e.dataTransfer.files); else if (e.dataTransfer) { var txt = e.dataTransfer.getData('text/plain'); if (txt) addPasted(txt); } });
+  }
+
+  function init() {
+    els.main = $('#dl-main'); els.list = $('#dl-list'); els.file = $('#dl-file'); els.toast = $('#dl-toast'); els.sideHint = $('#dl-side-hint');
+    loadSettings();
+    $('#dl-authserv').value = state.settings.authserv;
+    $('#dl-binsuffix').checked = state.settings.binSuffix;
+    $('#dl-authserv').addEventListener('change', function (e) { state.settings.authserv = e.target.value.trim(); saveSettings(); reanalyzeAll(); });
+    $('#dl-binsuffix').addEventListener('change', function (e) { state.settings.binSuffix = e.target.checked; saveSettings(); render(); });
+    $('#dl-settings-btn').addEventListener('click', function () { var s = $('#dl-settings'); s.hidden = !s.hidden; });
+    $('#dl-open').addEventListener('click', function () { els.file.click(); });
+    els.file.addEventListener('change', function () { addFiles(els.file.files); els.file.value = ''; });
+    var sideDrop = $('#dl-drop-side');
+    sideDrop.addEventListener('click', function () { els.file.click(); });
+    sideDrop.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); els.file.click(); } });
+    wireDrop(sideDrop);
+    // whole-window drop
+    window.addEventListener('dragover', function (e) { e.preventDefault(); });
+    window.addEventListener('drop', function (e) { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
+    document.addEventListener('click', onAction);
+    document.addEventListener('keydown', function (e) { if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('dl-item')) { e.preventDefault(); e.target.click(); } });
+    document.addEventListener('input', function (e) {
+      if (e.target && e.target.id === 'dl-hdr-search') {
+        state.hdrFilter = e.target.value.toLowerCase();
+        Array.prototype.forEach.call(document.querySelectorAll('#dl-hdr-table tr'), function (tr) { tr.style.display = !state.hdrFilter || (tr.getAttribute('data-h') || '').indexOf(state.hdrFilter) >= 0 ? '' : 'none'; });
+      }
+    });
+    render();
+  }
+
+  return { init: init, addBytes: addBytes, addPasted: addPasted, state: state };
+})();
+
+
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", DL.ui.init); else DL.ui.init();
+})();
+</script>
+</body>
+</html>

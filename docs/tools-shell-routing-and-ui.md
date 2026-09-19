@@ -61,11 +61,42 @@ Example:
 
 If you change route matching, keep these invariants so existing deep links do not silently break.
 
+## 2b) Static single-file tools
+
+A tool that must also run from the user's own disk (no server, no network) ships as one
+self-contained HTML file in `public/` instead of as a React view. `public/dead-letter.html` is
+the reference implementation.
+
+### How it is wired
+
+1. Put the single file in `public/<slug>.html`. Vite copies `public/` verbatim, so it deploys
+   to `<base>/<slug>.html` untouched.
+2. Add a small wrapper component that resolves the file against `import.meta.env.BASE_URL`,
+   embeds it in an `<iframe>`, and links to the same URL with a `download` attribute. See
+   `src/features/dead-letter/deadLetterAsset.ts` for the URL helper and its tests.
+3. Register the wrapper in `toolDefinitions` like any other tool.
+
+### Rules for the static file
+
+- Resolve the URL through `import.meta.env.BASE_URL`; a hard-coded `/tools/...` breaks any
+  deploy at a different base path.
+- Do not link the site stylesheet or any external font, script, or analytics into the file. The
+  file carries its own copy of the shell palette so the downloaded copy looks identical, and a
+  site-origin `<link>` would both need a CSP change and break under `file://`.
+- Prefix every selector (`dl-` for Dead Letter) so the file's styles cannot collide with the
+  shell's, and keep its `<meta http-equiv="Content-Security-Policy">` intact.
+- Do not put a `sandbox` attribute on the wrapper `<iframe>`. These files are first-party and
+  handle their own sandboxing internally; an outer sandbox blocks their `blob:` subframes,
+  file pickers, and downloads.
+- When the shell palette changes, update the static file's palette by hand. Nothing links the
+  two automatically, by design.
+
 ## 3) Per-tool base routes
 
 Each tool should have a unique, non-overlapping base route:
 
 - ✅ `/tools/momoro-reader`
+- ✅ `/tools/dead-letter`
 - ✅ `/tools/highlights`
 - ✅ `/tools/library`
 - ❌ `/tools/momoro-reader/v2` (if this is intended as a separate top-level tool, give it its own slug)
@@ -116,6 +147,8 @@ Use this checklist before merging a new tool:
 
 ### Asset safety
 
+- [ ] Static single-file tools resolve through `import.meta.env.BASE_URL`, and the deployed
+      `<base>/<slug>.html` returns the file itself rather than the SPA fallback.
 - [ ] Build with production base path (`VITE_BASE_PATH`) expected for target deploy.
 - [ ] Deployed asset URLs resolve under the intended subpath.
 - [ ] `npm run check:deployed-assets -- https://<host>/<base-path>/` passes.
