@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import MomoroReaderApp from './App';
 import BinauralBeatsApp from './features/binaural-beats/BinauralBeatsApp';
+import DeadLetterApp from './features/dead-letter/DeadLetterApp';
 
 type ToolDefinition = {
   path: string;
@@ -33,6 +34,13 @@ const toolDefinitions: ToolDefinition[] = [
     label: 'Binaural Beats',
     description: 'Binaural beats for sleep, focus, and calm.',
     render: () => <BinauralBeatsApp />,
+    available: true,
+  },
+  {
+    path: '/dead-letter',
+    label: 'Dead Letter',
+    description: 'Offline .eml/.msg viewer and header analysis.',
+    render: () => <DeadLetterApp />,
     available: true,
   },
   {
