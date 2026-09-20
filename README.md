@@ -1,4 +1,8 @@
-# tts-reader-mvp
+# Mo4n6 Tools
+
+A set of self-contained browser tools: [Momoro Reader](https://mo4n6.github.io/tools/#/momoro-reader) for reading and listening to documents, [Binaural Beats](https://mo4n6.github.io/tools/#/binaural-beats) for generated soundscapes, and [Dead Letter](https://mo4n6.github.io/tools/#/dead-letter) for offline `.eml` and `.msg` analysis. Everything runs in the browser; Dead Letter also downloads as a single file you can run from your own disk with no network.
+
+Source-available, not open source. Free for individuals and small organisations, commercially licensable above that. See [Licence](#licence).
 
 ## GitHub Pages deployment
 
@@ -78,6 +82,21 @@ links to it with a `download` attribute. The page carries its own Content-Securi
 its own copy of the shell palette; it deliberately links no site stylesheet, because that would
 break the `file://` copy. See [Tools shell routing and UI conventions](docs/tools-shell-routing-and-ui.md)
 for the full pattern.
+
+
+## Licence
+
+Licensed under [PolyForm Small Business 1.0.0](https://polyformproject.org/licenses/small-business/1.0.0) (`PolyForm-Small-Business-1.0.0`).
+
+**Free to use** if you are an individual, or if your organisation — together with its affiliates — has fewer than 100 total employees and independent contractors and under $1,000,000 USD (2019, adjusted for inflation) in prior-year revenue.
+
+**Above those thresholds?** A commercial licence is available. [Open a licensing issue](https://github.com/Mo4n6/tools/issues/new?template=licensing.yml) — it is a short conversation, and there is a licence waiting for you. If you would rather not discuss it in public, say so in the issue and the maintainer will follow up privately.
+
+You are free to read, modify, and redistribute the code within those limits. The full terms are in [`LICENSE`](LICENSE).
+
+Bundled third-party code keeps its own licence and is **not** covered by the above. One dependency is LGPL-3.0. See [`THIRD-PARTY.md`](THIRD-PARTY.md) for what that covers and what it asks of anyone redistributing a build.
+
+Contributions are welcome under the terms in [`CONTRIBUTING.md`](CONTRIBUTING.md). Project and tool names are trademarks — see [`TRADEMARK.md`](TRADEMARK.md).
 
 ## Additional docs
 

@@ -2,6 +2,12 @@
   "name": "tts-reader-mvp",
   "private": true,
   "version": "0.1.0",
+  "license": "PolyForm-Small-Business-1.0.0",
+  "author": "Mo4n6",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mo4n6/tools.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -1,0 +1,38 @@
+name: Licensing enquiry
+description: Commercial licence, trademark permission, or a question about the terms
+title: "Licensing: "
+labels: ["licensing"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Mo4n6 Tools is licensed under PolyForm Small Business 1.0.0. It is free for
+        individuals and for organisations under the size and revenue thresholds in
+        `LICENSE`. Above those, a commercial licence is available.
+
+        **This issue will be public.** If you would rather not discuss your
+        organisation here, say so in one line and the maintainer will follow up
+        through your GitHub profile instead.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What do you need?
+      options:
+        - Commercial licence (my organisation is over the thresholds)
+        - Permission to use a project or tool name
+        - A question about what the current licence allows
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: detail
+    attributes:
+      label: Details
+      description: Which tools you want to use, and roughly how. No confidential figures needed here.
+    validations:
+      required: true
+  - type: input
+    id: contact
+    attributes:
+      label: How should the maintainer reach you?
+      description: Optional. Leave blank to be answered in this thread.
