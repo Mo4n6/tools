@@ -469,7 +469,7 @@ DL.isPrivateIp = function (ip) {
 // bundling one would roughly double this file, which has to stay small enough to carry on a
 // disk. It covers the families that actually appear in mail (co/com/net/org/edu/gov/ac/...
 // under ccTLDs); DL.isRegistrySuffix below backstops the long tail.
-DL.TWO_LEVEL = ('co.uk org.uk ac.uk gov.uk me.uk ltd.uk plc.uk net.uk sch.uk nhs.uk police.uk ' +
+DL.TWO_LEVEL = ('co.uk org.uk ac.uk gov.uk me.uk ltd.uk plc.uk net.uk nhs.uk police.uk ' +
   'com.au net.au org.au edu.au gov.au asn.au id.au co.nz org.nz govt.nz net.nz ac.nz school.nz iwi.nz health.nz ' +
   'co.jp ne.jp or.jp ac.jp go.jp gr.jp lg.jp ad.jp ed.jp co.kr ne.kr or.kr re.kr pe.kr go.kr mil.kr ac.kr sc.kr hs.kr ms.kr ' +
   'co.in net.in org.in gov.in ac.in edu.in firm.in gen.in ind.in mil.in res.in ' +
@@ -506,25 +506,39 @@ DL.TWO_LEVEL = ('co.uk org.uk ac.uk gov.uk me.uk ltd.uk plc.uk net.uk sch.uk nhs
   'co.at or.at ac.at gv.at priv.at com.cy net.cy org.cy edu.cy gov.cy ac.cy com.gr net.gr org.gr edu.gr gov.gr ' +
   'com.pt edu.pt gov.pt org.pt net.pt int.pt publ.pt nome.pt com.es org.es gob.es edu.es nom.es gov.it edu.it ' +
   'gouv.fr asso.fr com.fr nom.fr tm.fr ac.be').split(' ');
+// Suffixes the Public Suffix List governs with a wildcard: every label directly under them
+// is itself a suffix, so a registrable name sits one level deeper again. Without this,
+// two unrelated schools under the same local authority compare as one organization.
+DL.WILDCARD_TWO_LEVEL = ('sch.uk').split(' ');
 // Backstop for suffixes the list above misses. Under a two-letter ccTLD these labels are
-// registry-administered essentially everywhere they exist, so "<marker>.<cc>" is a suffix.
-// When this guesses wrong it splits a domain too deep, which over-reports misalignment --
-// the safe direction here, unlike treating a real suffix as a registrable domain, which
-// makes two unrelated senders compare as aligned.
+// registry-administered nearly everywhere they exist, so "<marker>.<cc>" is usually a
+// suffix -- but not always, and a domain like co.de is registrable. So this is a guess,
+// and DL.suffixBoundaryUnknown below reports where a verdict rests on it rather than
+// stating a mismatch the tool cannot actually prove.
 DL.CC_SLD_MARKERS = ('co com net org edu gov gob gouv gub govt ac mil go ne or nom').split(' ');
-DL.isRegistrySuffix = function (last2) {
-  if (DL.TWO_LEVEL.indexOf(last2) >= 0) return true;
+DL.isMarkerSuffix = function (last2) {
   var p = last2.split('.');
   return p.length === 2 && p[1].length === 2 && DL.CC_SLD_MARKERS.indexOf(p[0]) >= 0;
 };
-DL.orgDomain = function (d) {
+DL.isRegistrySuffix = function (last2) { return DL.TWO_LEVEL.indexOf(last2) >= 0 || DL.isMarkerSuffix(last2); };
+// listedOnly limits the result to boundaries the bundled lists actually verify.
+DL.orgDomain = function (d, listedOnly) {
   if (!d) return '';
   d = String(d).toLowerCase().replace(/\.$/, '');
   var parts = d.split('.');
   if (parts.length <= 2) return d;
   var last2 = parts.slice(-2).join('.');
-  if (DL.isRegistrySuffix(last2)) return parts.slice(-3).join('.');
+  if (DL.WILDCARD_TWO_LEVEL.indexOf(last2) >= 0) return parts.length >= 4 ? parts.slice(-4).join('.') : d;
+  if (DL.TWO_LEVEL.indexOf(last2) >= 0) return parts.slice(-3).join('.');
+  if (!listedOnly && DL.isMarkerSuffix(last2)) return parts.slice(-3).join('.');
   return last2;
+};
+// True when two names differ as organizations only because the marker guess was applied.
+// The tool cannot tell a registry suffix from a registrable domain here, so a verdict
+// resting on this is reported as unproven rather than as a mismatch.
+DL.suffixBoundaryUnknown = function (a, b) {
+  if (!a || !b) return false;
+  return DL.orgDomain(a) !== DL.orgDomain(b) && DL.orgDomain(a, true) === DL.orgDomain(b, true);
 };
 DL.domainOfAddr = function (addr) {
   if (!addr) return '';
@@ -1576,9 +1590,21 @@ DL.analyzeAuth = function (msg, findings, trustedAuthserv) {
   out.spf = pickSpf(out.spfAll); out.dkim = pickDkim(out.dkimAll);
   out.dmarc = pick('dmarc'); out.arc = pick('arc'); out.compauth = pick('compauth');
   // alignment (computed locally from what the gateway reported)
-  var al = { fromDomain: fromDom, dkimDomain: '', spfDomain: '', dkimAligned: null, spfAligned: null, computed: null };
-  if (out.dkim) { al.dkimDomain = dkimDomainOf(out.dkim); if (out.dkim.result === 'pass' && al.dkimDomain && fromDom) al.dkimAligned = DL.orgDomain(al.dkimDomain) === DL.orgDomain(fromDom); }
-  if (out.spf) { al.spfDomain = spfDomainOf(out.spf); if (out.spf.result === 'pass' && al.spfDomain && fromDom) al.spfAligned = DL.orgDomain(al.spfDomain) === DL.orgDomain(fromDom); }
+  var al = { fromDomain: fromDom, dkimDomain: '', spfDomain: '', dkimAligned: null, spfAligned: null, computed: null, boundaryUnknown: false };
+  if (out.dkim) {
+    al.dkimDomain = dkimDomainOf(out.dkim);
+    if (out.dkim.result === 'pass' && al.dkimDomain && fromDom) {
+      al.dkimAligned = DL.orgDomain(al.dkimDomain) === DL.orgDomain(fromDom);
+      if (!al.dkimAligned && DL.suffixBoundaryUnknown(al.dkimDomain, fromDom)) al.boundaryUnknown = true;
+    }
+  }
+  if (out.spf) {
+    al.spfDomain = spfDomainOf(out.spf);
+    if (out.spf.result === 'pass' && al.spfDomain && fromDom) {
+      al.spfAligned = DL.orgDomain(al.spfDomain) === DL.orgDomain(fromDom);
+      if (!al.spfAligned && DL.suffixBoundaryUnknown(al.spfDomain, fromDom)) al.boundaryUnknown = true;
+    }
+  }
   if (out.dkim || out.spf) al.computed = (al.dkimAligned === true || al.spfAligned === true) ? 'pass' : 'fail';
   out.alignment = al;
   // findings
@@ -1598,7 +1624,10 @@ DL.analyzeAuth = function (msg, findings, trustedAuthserv) {
       DL.finding(findings, hiddenFail.length ? 'medium' : 'info', out.dkimAll.length + ' DKIM results in the trusted header', 'All: ' + out.dkimAll.map(function (r) { return 'dkim=' + r.result + ' d=' + (dkimDomainOf(r) || '?'); }).join(', ') + '. Verdicts use dkim=' + out.dkim.result + ' d=' + (dkimDomainOf(out.dkim) || '?') + ', the passing result aligned with the From domain where there is one. Mail sent through a platform is normally signed twice.', 'auth');
     }
     if (out.compauth && out.compauth.result === 'fail') DL.finding(findings, 'medium', 'Microsoft composite authentication failed', 'compauth=fail reason=' + (out.compauth.props['reason'] || '?') + '. Exchange Online could not attribute the sender.', 'auth');
-    if (al.computed === 'fail' && (!out.dmarc || out.dmarc.result === 'pass')) DL.finding(findings, 'high', 'Authenticated domain does not match the From domain', 'DKIM d=' + (al.dkimDomain || '-') + ', SPF mailfrom=' + (al.spfDomain || '-') + ', From=' + fromDom + '. Passing SPF/DKIM on a different domain proves nothing about the visible sender.', 'auth');
+    if (al.computed === 'fail' && (!out.dmarc || out.dmarc.result === 'pass')) {
+      if (al.boundaryUnknown) DL.finding(findings, 'medium', 'Could not confirm the authenticated domain matches the From domain', 'DKIM d=' + (al.dkimDomain || '-') + ', SPF mailfrom=' + (al.spfDomain || '-') + ', From=' + fromDom + '. These differ only below a suffix this tool cannot classify without a full Public Suffix List, so they may well be the same organization. Check the domain by hand.', 'auth');
+      else DL.finding(findings, 'high', 'Authenticated domain does not match the From domain', 'DKIM d=' + (al.dkimDomain || '-') + ', SPF mailfrom=' + (al.spfDomain || '-') + ', From=' + fromDom + '. Passing SPF/DKIM on a different domain proves nothing about the visible sender.', 'auth');
+    }
     if (al.computed === 'pass' && out.spf && out.spf.result === 'pass' && al.spfAligned && !(out.dkim && out.dkim.result === 'pass')) DL.finding(findings, 'info', 'Sender authenticated by SPF alignment only', 'No aligned DKIM signature; forwarding will break this.', 'auth');
   }
   if (out.dkimSigs.length && !out.dkim) DL.finding(findings, 'info', 'DKIM-Signature present but not evaluated', 'Signatures cannot be verified offline (no DNS). Domains: ' + out.dkimSigs.map(function (s) { return s.d || '?'; }).join(', '), 'auth');
