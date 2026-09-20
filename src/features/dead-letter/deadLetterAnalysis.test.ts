@@ -100,6 +100,17 @@ describe('DL.orgDomain', () => {
     // mail.web.de and web.de must still compare as the same organization.
     expect(DL.orgDomain('mail.web.de')).toBe('web.de');
   });
+
+  it('keeps single-organization domains whole while splitting real registry suffixes', () => {
+    // mod.uk is one organization's domain, so a subdomain signature is still aligned.
+    // nhs.uk and police.uk are registry suffixes that separate bodies register under,
+    // so two names below them are different organizations.
+    expect(DL.orgDomain('mail.mod.uk')).toBe('mod.uk');
+    expect(DL.orgDomain('mail.mod.uk')).toBe(DL.orgDomain('mod.uk'));
+    expect(DL.orgDomain('a.nhs.uk')).toBe('a.nhs.uk');
+    expect(DL.orgDomain('a.nhs.uk')).not.toBe(DL.orgDomain('b.nhs.uk'));
+    expect(DL.orgDomain('a.police.uk')).not.toBe(DL.orgDomain('b.police.uk'));
+  });
 });
 
 describe('pinned authserv-id', () => {
@@ -148,6 +159,15 @@ describe('organizational alignment', () => {
     expect(msg.analysis.auth.alignment.dkimAligned).toBe(false);
     expect(msg.analysis.auth.alignment.computed).toBe('fail');
     expect(titles(msg, 'high')).toContain('Authenticated domain does not match the From domain');
+  });
+});
+
+describe('single-organization domains', () => {
+  it('does not report a subdomain signature as misaligned', () => {
+    const msg = analyze('case6-single-org-suffix.eml', GATEWAY);
+    expect(msg.analysis.auth.alignment.dkimAligned).toBe(true);
+    expect(msg.analysis.auth.alignment.computed).toBe('pass');
+    expect(titles(msg, 'high')).not.toContain('Authenticated domain does not match the From domain');
   });
 });
 
