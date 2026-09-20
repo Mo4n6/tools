@@ -1,0 +1,11 @@
+Received: from mail.sender.example (mail.sender.example [203.0.113.55])
+ by mx.yourcompany.com with SMTP id E5; Tue, 16 Sep 2025 09:12:44 -0300
+Authentication-Results: mx.yourcompany.com; spf=pass smtp.helo=mail.sender.example
+From: "Bounce Handler" <postmaster@sender.example>
+To: mo@yourcompany.com
+Subject: Null reverse path, HELO is the only SPF identity
+Date: Tue, 16 Sep 2025 09:11:58 +0000
+Message-ID: <helo2@sender.example>
+Content-Type: text/plain
+
+Body.
