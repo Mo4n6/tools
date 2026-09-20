@@ -1,0 +1,11 @@
+Received: from mail.mailchimp.example (mail.mailchimp.example [198.51.100.20])
+ by mx.yourcompany.com with SMTP id C3; Tue, 16 Sep 2025 09:12:44 -0300
+Authentication-Results: mx.yourcompany.com; spf=pass smtp.mailfrom=bounce.mailchimp.example; dkim=pass header.d=mailchimp.example; dkim=pass header.d=realsender.com; dmarc=pass header.from=realsender.com
+From: "Real Sender Newsletter" <news@realsender.com>
+To: mo@yourcompany.com
+Subject: Two DKIM signatures, second one aligned
+Date: Tue, 16 Sep 2025 09:11:58 +0000
+Message-ID: <esp1@mailchimp.example>
+Content-Type: text/plain
+
+Body.

@@ -1,0 +1,174 @@
+/**
+ * Regression tests for the Dead Letter header analysis.
+ *
+ * The tool ships as one self-contained HTML file, so these drive the real published page:
+ * jsdom loads `public/dead-letter.html`, runs its inline script, and the tests call the
+ * same `DL` API the UI calls. That way a change to the shipped file cannot pass the suite
+ * while the downloaded copy misbehaves.
+ */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { JSDOM } from 'jsdom';
+import { beforeAll, describe, expect, it } from 'vitest';
+
+type AuthResult = { method: string; result: string; props: Record<string, string> };
+
+type Alignment = {
+  fromDomain: string;
+  dkimDomain: string;
+  spfDomain: string;
+  dkimAligned: boolean | null;
+  spfAligned: boolean | null;
+  computed: string | null;
+};
+
+type Auth = {
+  ar: Array<{ authserv: string; kind: string; trusted?: boolean }>;
+  trustedIndex: number;
+  pinnedMissing: boolean;
+  spf: AuthResult | null;
+  dkim: AuthResult | null;
+  dmarc: AuthResult | null;
+  dkimAll: AuthResult[];
+  alignment: Alignment;
+};
+
+type Finding = { sev: 'high' | 'medium' | 'info'; title: string; detail: string; ref: string };
+
+type Message = { analysis: { auth: Auth; findings: Finding[] } };
+
+type DeadLetter = {
+  orgDomain(domain: string): string;
+  parseEml(bytes: Uint8Array, name: string): Message;
+  analyzeMessage(msg: Message, opts: { DOMParser: unknown; authserv?: string }): void;
+  buildReport(msg: Message): string;
+};
+
+const repoFile = (relativePath: string): string => fileURLToPath(new URL(`../../../${relativePath}`, import.meta.url));
+const fixture = (name: string): string => readFileSync(repoFile(`src/features/dead-letter/__fixtures__/${name}`), 'utf8');
+
+const GATEWAY = 'mx.yourcompany.com';
+
+let DL: DeadLetter;
+let domParser: unknown;
+let toBytes: (text: string) => Uint8Array;
+
+beforeAll(() => {
+  const dom = new JSDOM(readFileSync(repoFile('public/dead-letter.html'), 'utf8'), {
+    runScripts: 'dangerously',
+    url: 'http://localhost/',
+    beforeParse(win) {
+      // jsdom ships no TextDecoder/TextEncoder; the page uses them to decode message bytes.
+      const globals = win as unknown as Record<string, unknown>;
+      globals.TextDecoder = TextDecoder;
+      globals.TextEncoder = TextEncoder;
+    },
+  });
+  const win = dom.window as unknown as { DL: DeadLetter; DOMParser: unknown; Uint8Array: Uint8ArrayConstructor };
+  DL = win.DL;
+  domParser = win.DOMParser;
+  toBytes = (text) => new win.Uint8Array(Buffer.from(text, 'utf8'));
+});
+
+const analyze = (fixtureName: string, authserv?: string): Message => {
+  const msg = DL.parseEml(toBytes(fixture(fixtureName)), fixtureName);
+  DL.analyzeMessage(msg, { DOMParser: domParser, authserv });
+  return msg;
+};
+
+const titles = (msg: Message, sev: Finding['sev']): string[] =>
+  msg.analysis.findings.filter((f) => f.sev === sev).map((f) => f.title);
+
+describe('DL.orgDomain', () => {
+  it('separates senders under a registry suffix the bundled list omits', () => {
+    expect(DL.orgDomain('evil.co.ke')).toBe('evil.co.ke');
+    expect(DL.orgDomain('victim.co.ke')).toBe('victim.co.ke');
+    expect(DL.orgDomain('evil.co.ke')).not.toBe(DL.orgDomain('victim.co.ke'));
+    expect(DL.orgDomain('a.co.th')).not.toBe(DL.orgDomain('b.co.th'));
+  });
+
+  it('keeps listed suffixes and plain domains working', () => {
+    expect(DL.orgDomain('mail.example.com')).toBe('example.com');
+    expect(DL.orgDomain('a.b.example.co.uk')).toBe('example.co.uk');
+    expect(DL.orgDomain('example.com')).toBe('example.com');
+    expect(DL.orgDomain('')).toBe('');
+  });
+
+  it('does not split a provider domain whose label only looks like a suffix', () => {
+    // "web" is deliberately absent from the marker list: web.de is registrable, so
+    // mail.web.de and web.de must still compare as the same organization.
+    expect(DL.orgDomain('mail.web.de')).toBe('web.de');
+  });
+});
+
+describe('pinned authserv-id', () => {
+  it('withholds verdicts rather than trusting a header the sender could have forged', () => {
+    const { analysis } = analyze('case1-forged-ar.eml', GATEWAY);
+    expect(analysis.auth.pinnedMissing).toBe(true);
+    expect(analysis.auth.trustedIndex).toBe(-1);
+    expect(analysis.auth.spf).toBeNull();
+    expect(analysis.auth.dkim).toBeNull();
+    expect(analysis.auth.dmarc).toBeNull();
+    expect(analysis.auth.alignment.computed).toBeNull();
+    expect(titles({ analysis } as Message, 'medium')).toContain(`No Authentication-Results from your gateway (${GATEWAY})`);
+  });
+
+  it('keeps the forged header visible but marked unused', () => {
+    const { analysis } = analyze('case1-forged-ar.eml', GATEWAY);
+    expect(analysis.auth.ar).toHaveLength(1);
+    expect(analysis.auth.ar[0]?.authserv).toBe('attacker.example');
+    expect(analysis.auth.ar[0]?.trusted).toBeUndefined();
+  });
+
+  it('says so in the exported report instead of quoting the untrusted verdicts', () => {
+    const report = DL.buildReport(analyze('case1-forged-ar.eml', GATEWAY));
+    expect(report).toContain('Authentication: withheld.');
+    expect(report).not.toContain('Authentication (attacker.example)');
+    expect(report).not.toContain('Alignment with From domain');
+  });
+
+  it('still falls back to the topmost header when no gateway is pinned', () => {
+    const { analysis } = analyze('case1-forged-ar.eml');
+    expect(analysis.auth.pinnedMissing).toBe(false);
+    expect(analysis.auth.trustedIndex).toBe(0);
+    expect(analysis.auth.dmarc?.result).toBe('pass');
+  });
+
+  it('uses the pinned gateway when it did stamp the message', () => {
+    const { analysis } = analyze('case3-two-dkim.eml', GATEWAY);
+    expect(analysis.auth.pinnedMissing).toBe(false);
+    expect(analysis.auth.ar[analysis.auth.trustedIndex]?.authserv).toBe(GATEWAY);
+  });
+});
+
+describe('organizational alignment', () => {
+  it('reports a sender under a shared registry suffix as misaligned', () => {
+    const msg = analyze('case2-cc-suffix.eml', GATEWAY);
+    expect(msg.analysis.auth.alignment.dkimAligned).toBe(false);
+    expect(msg.analysis.auth.alignment.computed).toBe('fail');
+    expect(titles(msg, 'high')).toContain('Authenticated domain does not match the From domain');
+  });
+});
+
+describe('multiple DKIM results', () => {
+  it('prefers the passing signature that aligns with the From domain', () => {
+    const msg = analyze('case3-two-dkim.eml', GATEWAY);
+    expect(msg.analysis.auth.dkimAll).toHaveLength(2);
+    expect(msg.analysis.auth.dkim?.props['header.d']).toBe('realsender.com');
+    expect(msg.analysis.auth.alignment.dkimAligned).toBe(true);
+    expect(msg.analysis.auth.alignment.computed).toBe('pass');
+  });
+
+  it('does not raise a misalignment finding on platform-signed mail', () => {
+    const msg = analyze('case3-two-dkim.eml', GATEWAY);
+    expect(titles(msg, 'high')).not.toContain('Authenticated domain does not match the From domain');
+  });
+
+  it('lists every signature so preferring one never hides the others', () => {
+    const msg = analyze('case3-two-dkim.eml', GATEWAY);
+    const note = msg.analysis.findings.find((f) => f.title === '2 DKIM results in the trusted header');
+    expect(note?.sev).toBe('info');
+    expect(note?.detail).toContain('d=mailchimp.example');
+    expect(note?.detail).toContain('d=realsender.com');
+  });
+});
