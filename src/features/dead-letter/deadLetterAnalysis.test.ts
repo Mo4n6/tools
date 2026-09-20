@@ -20,7 +20,6 @@ type Alignment = {
   dkimAligned: boolean | null;
   spfAligned: boolean | null;
   computed: string | null;
-  boundaryUnknown: boolean;
 };
 
 type Auth = {
@@ -40,8 +39,8 @@ type Finding = { sev: 'high' | 'medium' | 'info'; title: string; detail: string;
 type Message = { analysis: { auth: Auth; findings: Finding[] } };
 
 type DeadLetter = {
-  orgDomain(domain: string, listedOnly?: boolean): string;
-  suffixBoundaryUnknown(a: string, b: string): boolean;
+  orgDomain(domain: string): string;
+  TWO_LEVEL: string[];
   parseEml(bytes: Uint8Array, name: string): Message;
   analyzeMessage(msg: Message, opts: { DOMParser: unknown; authserv?: string }): void;
   buildReport(msg: Message): string;
@@ -170,33 +169,48 @@ describe('wildcard registry suffixes', () => {
     // a suffix and two schools below it are unrelated organizations.
     expect(DL.orgDomain('a.hampshire.sch.uk')).toBe('a.hampshire.sch.uk');
     expect(DL.orgDomain('a.hampshire.sch.uk')).not.toBe(DL.orgDomain('b.hampshire.sch.uk'));
+    expect(DL.orgDomain('hampshire.sch.uk')).toBe('hampshire.sch.uk');
     expect(DL.orgDomain('mail.a.hampshire.sch.uk')).toBe('a.hampshire.sch.uk');
   });
 
-  it('reports a signature from a sibling school as a mismatch, not as unproven', () => {
+  it('reports a signature from a sibling school as a mismatch', () => {
     const msg = analyze('case7-wildcard-suffix.eml', GATEWAY);
     expect(msg.analysis.auth.alignment.dkimAligned).toBe(false);
-    expect(msg.analysis.auth.alignment.boundaryUnknown).toBe(false);
     expect(titles(msg, 'high')).toContain('Authenticated domain does not match the From domain');
   });
 });
 
-describe('unproven suffix boundaries', () => {
-  it('does not claim a mismatch it cannot prove', () => {
-    // co.de is registrable, but the marker backstop guesses it is a suffix. The tool must
-    // say it cannot tell rather than accuse a legitimate sender of misalignment.
-    expect(DL.suffixBoundaryUnknown('mail.co.de', 'co.de')).toBe(true);
-    const msg = analyze('case8-unproven-suffix.eml', GATEWAY);
-    expect(msg.analysis.auth.alignment.boundaryUnknown).toBe(true);
+describe('names the suffix list says are registrable', () => {
+  it('treats a subdomain of a registrable name as the same organization', () => {
+    // co.de and edu.cy look like registry suffixes but are not, so a subdomain signature
+    // is relaxed-aligned and must not be reported as a mismatch.
+    expect(DL.orgDomain('mail.co.de')).toBe('co.de');
+    expect(DL.orgDomain('mail.edu.cy')).toBe('edu.cy');
+    expect(DL.TWO_LEVEL).not.toContain('co.de');
+    expect(DL.TWO_LEVEL).not.toContain('edu.cy');
+  });
+
+  it('does not accuse a sender below a registrable name', () => {
+    for (const name of ['case8-unproven-suffix.eml', 'case10-listed-suffix-as-from.eml']) {
+      const msg = analyze(name, GATEWAY);
+      expect(msg.analysis.auth.alignment.dkimAligned).toBe(true);
+      expect(msg.analysis.auth.alignment.computed).toBe('pass');
+      expect(titles(msg, 'high')).not.toContain('Authenticated domain does not match the From domain');
+    }
+  });
+
+  it('picks the aligned signature when another passing one is unrelated', () => {
+    // Two passing signatures, one for an unrelated domain and one below the From domain.
+    const msg = analyze('case9-ambiguous-dkim.eml', GATEWAY);
+    expect(msg.analysis.auth.dkim?.props['header.d']).toBe('mail.co.de');
+    expect(msg.analysis.auth.alignment.dkimAligned).toBe(true);
     expect(titles(msg, 'high')).not.toContain('Authenticated domain does not match the From domain');
-    expect(titles(msg, 'medium')).toContain('Could not confirm the authenticated domain matches the From domain');
   });
 
   it('still calls a verified mismatch a mismatch', () => {
-    // co.ke is on the bundled list, so the boundary is known and the verdict stands.
-    expect(DL.suffixBoundaryUnknown('evil.co.ke', 'victim.co.ke')).toBe(false);
+    // co.ke is a real registry suffix, so two names below it are different organizations.
+    expect(DL.TWO_LEVEL).toContain('co.ke');
     const msg = analyze('case2-cc-suffix.eml', GATEWAY);
-    expect(msg.analysis.auth.alignment.boundaryUnknown).toBe(false);
     expect(titles(msg, 'high')).toContain('Authenticated domain does not match the From domain');
   });
 });

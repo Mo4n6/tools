@@ -465,64 +465,98 @@ DL.isPrivateIp = function (ip) {
 };
 
 /* ---- domain helpers ---- */
-// Registry-operated second-level suffixes. This is NOT a complete Public Suffix List --
-// bundling one would roughly double this file, which has to stay small enough to carry on a
-// disk. It covers the families that actually appear in mail (co/com/net/org/edu/gov/ac/...
-// under ccTLDs); DL.isRegistrySuffix below backstops the long tail.
-DL.TWO_LEVEL = ('co.uk org.uk ac.uk gov.uk me.uk ltd.uk plc.uk net.uk nhs.uk police.uk ' +
-  'com.au net.au org.au edu.au gov.au asn.au id.au co.nz org.nz govt.nz net.nz ac.nz school.nz iwi.nz health.nz ' +
-  'co.jp ne.jp or.jp ac.jp go.jp gr.jp lg.jp ad.jp ed.jp co.kr ne.kr or.kr re.kr pe.kr go.kr mil.kr ac.kr sc.kr hs.kr ms.kr ' +
-  'co.in net.in org.in gov.in ac.in edu.in firm.in gen.in ind.in mil.in res.in ' +
-  'co.za org.za gov.za net.za web.za ac.za edu.za mil.za nom.za ' +
-  'com.br org.br gov.br net.br edu.br mil.br art.br com.mx org.mx gob.mx edu.mx net.mx ' +
-  'com.ar org.ar gob.ar net.ar edu.ar mil.ar int.ar com.co net.co org.co edu.co gov.co mil.co nom.co ' +
-  'com.cn net.cn org.cn gov.cn edu.cn ac.cn mil.cn com.tw net.tw org.tw edu.tw gov.tw idv.tw ' +
-  'com.hk net.hk org.hk edu.hk gov.hk idv.hk com.sg net.sg org.sg edu.sg gov.sg per.sg ' +
-  'com.tr net.tr org.tr edu.tr gov.tr mil.tr bel.tr k12.tr av.tr ' +
-  'co.il org.il net.il ac.il gov.il muni.il idf.il com.my net.my org.my edu.my gov.my mil.my name.my ' +
-  'com.ph net.ph org.ph edu.ph gov.ph mil.ph ngo.ph com.pk net.pk org.pk edu.pk gov.pk gob.pk gok.pk gos.pk ' +
-  'com.eg net.eg org.eg edu.eg gov.eg eun.eg sci.eg com.sa net.sa org.sa edu.sa gov.sa med.sa pub.sa sch.sa ' +
-  'com.ng net.ng org.ng edu.ng gov.ng mil.ng sch.ng name.ng ' +
-  'co.id net.id or.id ac.id go.id sch.id web.id my.id biz.id desa.id mil.id ' +
-  'gc.ca ab.ca bc.ca mb.ca nb.ca nl.ca ns.ca nt.ca nu.ca on.ca pe.ca qc.ca sk.ca yk.ca ' +
-  'com.vn net.vn org.vn edu.vn gov.vn int.vn ac.vn biz.vn info.vn name.vn pro.vn health.vn ' +
-  'com.ua net.ua org.ua edu.ua gov.ua in.ua kiev.ua com.ru net.ru org.ru edu.ru gov.ru int.ru mil.ru ac.ru pp.ru ' +
-  'com.pe net.pe org.pe edu.pe gob.pe mil.pe nom.pe com.ve net.ve org.ve edu.ve gob.ve mil.ve web.ve info.ve co.ve ' +
-  'com.pl net.pl org.pl edu.pl gov.pl biz.pl info.pl waw.pl ' +
-  'co.ke or.ke ne.ke go.ke ac.ke sc.ke me.ke info.ke mobi.ke co.th in.th ac.th go.th mi.th or.th net.th ' +
-  'com.gh edu.gh gov.gh org.gh mil.gh co.tz ac.tz go.tz ne.tz or.tz sc.tz me.tz mil.tz info.tz hotel.tz mobi.tz tv.tz ' +
-  'co.ug or.ug ac.ug sc.ug go.ug ne.ug com.ug org.ug co.zw ac.zw org.zw gov.zw mil.zw ' +
-  'co.zm ac.zm com.zm edu.zm gov.zm org.zm sch.zm co.bw org.bw co.mw ac.mw com.mw gov.mw org.mw co.mz org.mz ' +
-  'com.na co.na org.na com.bd net.bd org.bd edu.bd ac.bd gov.bd mil.bd info.bd ' +
-  'com.np net.np org.np edu.np gov.np mil.np com.lk net.lk org.lk edu.lk gov.lk ac.lk sch.lk ' +
-  'com.bh net.bh org.bh edu.bh gov.bh com.kw net.kw org.kw edu.kw gov.kw com.qa net.qa org.qa edu.qa gov.qa sch.qa ' +
-  'com.om net.om org.om edu.om gov.om med.om com.jo net.jo org.jo edu.jo gov.jo mil.jo com.lb net.lb org.lb edu.lb gov.lb ' +
-  'com.ec net.ec org.ec edu.ec gob.ec mil.ec info.ec pro.ec fin.ec med.ec com.uy net.uy org.uy edu.uy gub.uy mil.uy ' +
-  'com.py net.py org.py edu.py gov.py com.bo net.bo org.bo edu.bo gob.bo gov.bo mil.bo tv.bo ' +
-  'com.do net.do org.do edu.do gob.do gov.do mil.do sld.do art.do web.do com.gt net.gt org.gt edu.gt gob.gt mil.gt ind.gt ' +
-  'com.sv org.sv edu.sv gob.sv red.sv com.hn net.hn org.hn edu.hn gob.hn mil.hn ' +
-  'com.ni net.ni org.ni edu.ni gob.ni mil.ni co.ni com.pa net.pa org.pa edu.pa gob.pa ac.pa sld.pa ' +
-  'co.cr ac.cr fi.cr go.cr or.cr sa.cr ed.cr com.cu net.cu org.cu edu.cu gov.cu inf.cu ' +
-  'co.at or.at ac.at gv.at priv.at com.cy net.cy org.cy edu.cy gov.cy ac.cy com.gr net.gr org.gr edu.gr gov.gr ' +
-  'com.pt edu.pt gov.pt org.pt net.pt int.pt publ.pt nome.pt com.es org.es gob.es edu.es nom.es gov.it edu.it ' +
-  'gouv.fr asso.fr com.fr nom.fr tm.fr ac.be').split(' ');
-// Suffixes the Public Suffix List governs with a wildcard: every label directly under them
-// is itself a suffix, so a registrable name sits one level deeper again. Without this,
-// two unrelated schools under the same local authority compare as one organization.
+// Registry suffix data, generated from a Public Suffix List snapshot (ICANN and private
+// sections) and embedded so this page stays dependency-free and works from a disk with no
+// network. It holds every "<label>.<tld>" the list marks as a suffix for the labels that
+// appear in mail. Regenerate it the same way rather than editing entries by hand: an entry
+// that is not really a suffix splits a domain too deep and accuses a legitimate sender of
+// misalignment, and a missing one makes two unrelated senders compare as the same
+// organization.
+DL.TWO_LEVEL = (
+  'ab.ca ac.ae ac.at ac.bd ac.be ac.bw ac.ci ac.ck ac.cn ac.cr ac.cy ac.eg ac.er ac.fj ac.fk ac.gn ac.id ac.il ' +
+  'ac.im ac.in ac.ir ac.jm ac.jp ac.ke ac.kh ac.kr ac.lk ac.ls ac.ma ac.me ac.ml ac.mm ac.mu ac.mw ac.mz ac.ni ' +
+  'ac.np ac.nz ac.pa ac.pg ac.pk ac.pr ac.rs ac.ru ac.rw ac.se ac.sz ac.th ac.tj ac.tz ac.ug ac.uk ac.vn ac.za ' +
+  'ac.zm ac.zw ad.jp art.br art.do asn.au asso.fr av.tr bc.ca bel.tr biz.id biz.pl biz.vn co.ae co.ag co.am ' +
+  'co.ao co.at co.az co.bb co.bd co.bi co.bj co.bn co.bw co.bz co.ca co.ci co.ck co.cl co.cm co.cr co.cz co.dk ' +
+  'co.dm co.er co.fk co.gg co.gl co.gy co.hu co.id co.il co.im co.in co.io co.ir co.it co.je co.jm co.jp co.ke ' +
+  'co.kh co.kr co.lc co.ls co.ma co.me co.mg co.mm co.mu co.mw co.mz co.na co.ni co.nl co.no co.np co.nz co.om ' +
+  'co.pg co.pl co.pn co.ro co.rs co.rw co.ss co.st co.sz co.th co.tj co.tm co.tt co.tz co.ua co.ug co.uk co.us ' +
+  'co.uz co.ve co.vi co.za co.zm co.zw com.ac com.af com.ag com.ai com.al com.am com.ar com.au com.aw com.az ' +
+  'com.ba com.bb com.bd com.bh com.bi com.bj com.bm com.bn com.bo com.br com.bs com.bt com.by com.bz com.ci ' +
+  'com.ck com.cm com.cn com.co com.cu com.cv com.cw com.cy com.de com.dm com.do com.dz com.ec com.ee com.eg ' +
+  'com.er com.es com.et com.fj com.fk com.fm com.fr com.ge com.gh com.gi com.gl com.gn com.gp com.gr com.gt ' +
+  'com.gu com.gy com.hk com.hn com.hr com.ht com.im com.in com.io com.iq com.jm com.jo com.kg com.kh com.ki ' +
+  'com.km com.kp com.kw com.ky com.kz com.la com.lb com.lc com.lk com.lr com.lv com.ly com.mg com.mk com.ml ' +
+  'com.mm com.mo com.ms com.mt com.mu com.mv com.mw com.mx com.my com.na com.nf com.ng com.ni com.np com.nr ' +
+  'com.om com.pa com.pe com.pf com.pg com.ph com.pk com.pl com.pr com.ps com.pt com.py com.qa com.re com.ro ' +
+  'com.ru com.sa com.sb com.sc com.sd com.se com.sg com.sh com.sl com.sn com.so com.ss com.st com.sv com.sy ' +
+  'com.tj com.tm com.tn com.to com.tr com.tt com.tw com.ua com.ug com.uy com.uz com.vc com.ve com.vi com.vn ' +
+  'com.vu com.ws com.ye com.zm desa.id ed.cr ed.jp edu.ac edu.af edu.al edu.ao edu.ar edu.au edu.az edu.ba ' +
+  'edu.bb edu.bd edu.bh edu.bi edu.bj edu.bm edu.bn edu.bo edu.br edu.bs edu.bt edu.bz edu.ci edu.ck edu.cn ' +
+  'edu.co edu.cu edu.cv edu.cw edu.dm edu.do edu.dz edu.ec edu.ee edu.eg edu.er edu.es edu.et edu.fk edu.fm ' +
+  'edu.gd edu.ge edu.gh edu.gi edu.gl edu.gn edu.gp edu.gr edu.gt edu.gu edu.gy edu.hk edu.hn edu.ht edu.in ' +
+  'edu.io edu.iq edu.it edu.jm edu.jo edu.kg edu.kh edu.ki edu.km edu.kn edu.kp edu.kw edu.ky edu.kz edu.la ' +
+  'edu.lb edu.lc edu.lk edu.lr edu.ls edu.lv edu.ly edu.me edu.mg edu.mk edu.ml edu.mm edu.mn edu.mo edu.ms ' +
+  'edu.mt edu.mv edu.mw edu.mx edu.my edu.mz edu.ng edu.ni edu.np edu.nr edu.om edu.pa edu.pe edu.pf edu.pg ' +
+  'edu.ph edu.pk edu.pl edu.pn edu.pr edu.ps edu.pt edu.py edu.qa edu.rs edu.ru edu.sa edu.sb edu.sc edu.sd ' +
+  'edu.sg edu.sl edu.sn edu.so edu.ss edu.st edu.sv edu.sy edu.tj edu.tm edu.to edu.tr edu.tt edu.tw edu.ua ' +
+  'edu.ug edu.uy edu.vc edu.ve edu.vg edu.vn edu.vu edu.ws edu.ye edu.za edu.zm eun.eg fi.cr fin.ec firm.in ' +
+  'gc.ca gen.in go.bd go.ci go.ck go.cr go.er go.fk go.id go.it go.jm go.jp go.ke go.kh go.kr go.mm go.np ' +
+  'go.pg go.th go.tj go.tz go.ug gob.ar gob.bd gob.bo gob.ck gob.cl gob.cu gob.do gob.ec gob.er gob.es gob.fk ' +
+  'gob.gt gob.hn gob.jm gob.kh gob.mm gob.mx gob.ni gob.np gob.pa gob.pe gob.pg gob.pk gob.sv gob.ve gok.pk ' +
+  'gos.pk gouv.bd gouv.ci gouv.ck gouv.er gouv.fk gouv.fr gouv.ht gouv.jm gouv.kh gouv.km gouv.ml gouv.mm ' +
+  'gouv.np gouv.pg gouv.sn gov.ac gov.ae gov.af gov.al gov.ao gov.ar gov.as gov.au gov.az gov.ba gov.bb gov.bd ' +
+  'gov.bf gov.bh gov.bm gov.bn gov.br gov.bs gov.bt gov.bw gov.by gov.bz gov.cd gov.ck gov.cl gov.cm gov.cn ' +
+  'gov.co gov.cx gov.cy gov.dm gov.do gov.dz gov.ec gov.ee gov.eg gov.er gov.et gov.fj gov.fk gov.gd gov.ge ' +
+  'gov.gh gov.gi gov.gn gov.gr gov.gu gov.gy gov.hk gov.ie gov.il gov.in gov.io gov.iq gov.ir gov.it gov.jm ' +
+  'gov.jo gov.kg gov.kh gov.ki gov.km gov.kn gov.kp gov.kw gov.kz gov.la gov.lb gov.lc gov.lk gov.lr gov.ls ' +
+  'gov.lt gov.lv gov.ly gov.ma gov.me gov.mg gov.mk gov.ml gov.mm gov.mn gov.mo gov.mr gov.ms gov.mu gov.mv ' +
+  'gov.mw gov.my gov.mz gov.na gov.ng gov.nl gov.np gov.nr gov.om gov.pg gov.ph gov.pk gov.pl gov.pn gov.pr ' +
+  'gov.ps gov.pt gov.pw gov.py gov.qa gov.rs gov.ru gov.rw gov.sa gov.sb gov.sc gov.sd gov.sg gov.sh gov.sl ' +
+  'gov.so gov.ss gov.sx gov.sy gov.tj gov.tl gov.tm gov.tn gov.to gov.tr gov.tt gov.tw gov.ua gov.ug gov.uk ' +
+  'gov.vc gov.ve gov.vn gov.ws gov.ye gov.za gov.zm gov.zw govt.bd govt.ck govt.er govt.fk govt.jm govt.kh ' +
+  'govt.mm govt.np govt.nz govt.pg gr.jp gub.bd gub.ck gub.er gub.fk gub.jm gub.kh gub.mm gub.np gub.pg gub.uy ' +
+  'gv.at health.nz health.vn hotel.tz hs.kr id.au idf.il idv.hk idv.tw in.th in.ua ind.gt ind.in inf.cu ' +
+  'info.bd info.ec info.ke info.pl info.tz info.ve info.vn int.ar int.pt int.ru int.vn iwi.nz k12.tr kiev.ua ' +
+  'lg.jp ltd.uk mb.ca me.ke me.tz me.uk med.ec med.om med.sa mi.th mil.ac mil.ae mil.al mil.ar mil.az mil.ba ' +
+  'mil.bd mil.bo mil.br mil.by mil.ck mil.cl mil.cn mil.co mil.cy mil.do mil.ec mil.eg mil.er mil.fj mil.fk ' +
+  'mil.gh mil.gt mil.hn mil.id mil.in mil.io mil.iq mil.jm mil.jo mil.kg mil.kh mil.km mil.kr mil.kz mil.lv ' +
+  'mil.mg mil.mm mil.mv mil.my mil.mz mil.ng mil.ni mil.no mil.np mil.nz mil.pe mil.pg mil.ph mil.pl mil.py ' +
+  'mil.qa mil.ru mil.rw mil.sh mil.st mil.sy mil.tj mil.tm mil.to mil.tr mil.tt mil.tw mil.tz mil.ug mil.uy ' +
+  'mil.vc mil.ve mil.ye mil.za mil.zm mil.zw mobi.ke mobi.tz ms.kr muni.il my.id name.my name.ng name.vn nb.ca ' +
+  'ne.bd ne.ck ne.er ne.fk ne.jm ne.jp ne.ke ne.kh ne.kr ne.mm ne.np ne.pg ne.tz ne.ug ne.us net.ac net.ae ' +
+  'net.af net.ag net.ai net.al net.am net.ar net.au net.az net.ba net.bb net.bd net.bh net.bj net.bm net.bn ' +
+  'net.bo net.br net.bs net.bt net.bw net.bz net.ci net.ck net.cm net.cn net.co net.cu net.cv net.cw net.cy ' +
+  'net.dm net.do net.dz net.ec net.eg net.er net.et net.fj net.fk net.fm net.ge net.gg net.gl net.gn net.gp ' +
+  'net.gr net.gt net.gu net.gy net.hk net.hn net.ht net.id net.il net.im net.in net.io net.iq net.ir net.je ' +
+  'net.jm net.jo net.kg net.kh net.ki net.kn net.kw net.ky net.kz net.la net.lb net.lc net.lk net.lr net.ls ' +
+  'net.lv net.ly net.ma net.me net.mk net.ml net.mm net.mo net.ms net.mt net.mu net.mv net.mw net.mx net.my ' +
+  'net.mz net.na net.nf net.ng net.ni net.np net.nr net.nz net.om net.pa net.pe net.pg net.ph net.pk net.pl ' +
+  'net.pn net.pr net.ps net.pt net.py net.qa net.ru net.rw net.sa net.sb net.sc net.sd net.sg net.sh net.sl ' +
+  'net.so net.ss net.st net.sy net.th net.tj net.tm net.tn net.to net.tr net.tt net.tw net.ua net.uk net.uy ' +
+  'net.uz net.vc net.ve net.vi net.vn net.vu net.ws net.ye net.za net.zm ngo.ph nhs.uk nl.ca nom.ag nom.bd ' +
+  'nom.ck nom.co nom.er nom.es nom.fk nom.fr nom.io nom.jm nom.kh nom.km nom.mg nom.mm nom.nc nom.ni nom.np ' +
+  'nom.pa nom.pe nom.pg nom.pl nom.ro nom.tm nom.ve nom.za nome.pt ns.ca nt.ca nu.ca on.ca or.at or.bd or.bi ' +
+  'or.ci or.ck or.cr or.er or.fk or.id or.it or.jm or.jp or.ke or.kh or.kr or.mm or.mu or.np or.pg or.th or.tz ' +
+  'or.ug or.us org.ac org.ae org.af org.ag org.ai org.al org.am org.ao org.ar org.au org.az org.ba org.bb ' +
+  'org.bd org.bh org.bi org.bj org.bm org.bn org.bo org.br org.bs org.bt org.bw org.bz org.ci org.ck org.cn ' +
+  'org.co org.cu org.cv org.cw org.cy org.dm org.do org.dz org.ec org.ee org.eg org.er org.es org.et org.fj ' +
+  'org.fk org.fm org.ge org.gg org.gh org.gi org.gl org.gn org.gp org.gr org.gt org.gu org.gy org.hk org.hn ' +
+  'org.ht org.hu org.il org.im org.in org.io org.iq org.ir org.je org.jm org.jo org.kg org.kh org.ki org.km ' +
+  'org.kn org.kp org.kw org.ky org.kz org.la org.lb org.lc org.lk org.lr org.ls org.lv org.ly org.ma org.me ' +
+  'org.mg org.mk org.ml org.mm org.mn org.mo org.ms org.mt org.mu org.mv org.mw org.mx org.my org.mz org.na ' +
+  'org.ng org.ni org.np org.nr org.nz org.om org.pa org.pe org.pf org.pg org.ph org.pk org.pl org.pn org.pr ' +
+  'org.ps org.pt org.py org.qa org.ro org.rs org.ru org.rw org.sa org.sb org.sc org.sd org.se org.sg org.sh ' +
+  'org.sl org.sn org.so org.ss org.st org.sv org.sy org.sz org.tj org.tm org.tn org.to org.tr org.tt org.tw ' +
+  'org.ua org.ug org.uk org.uy org.uz org.vc org.ve org.vi org.vn org.vu org.ws org.ye org.yt org.za org.zm ' +
+  'org.zw pe.ca pe.kr plc.uk police.uk pp.ru priv.at pro.ec pro.vn pub.sa publ.pt qc.ca re.kr red.sv res.in ' +
+  'sa.cr sc.ke sc.kr sc.tz sc.ug sch.id sch.lk sch.ng sch.qa sch.sa sch.zm school.nz sci.eg sk.ca sld.do ' +
+  'sld.pa tm.fr tv.bo tv.tz waw.pl web.do web.id web.ve web.za yk.ca').split(' ');
+// Suffixes the list governs with a wildcard: every label directly under them is itself a
+// suffix, so a registrable name sits one level deeper again. Without this, two unrelated
+// schools under the same local authority would compare as one organization.
 DL.WILDCARD_TWO_LEVEL = ('sch.uk').split(' ');
-// Backstop for suffixes the list above misses. Under a two-letter ccTLD these labels are
-// registry-administered nearly everywhere they exist, so "<marker>.<cc>" is usually a
-// suffix -- but not always, and a domain like co.de is registrable. So this is a guess,
-// and DL.suffixBoundaryUnknown below reports where a verdict rests on it rather than
-// stating a mismatch the tool cannot actually prove.
-DL.CC_SLD_MARKERS = ('co com net org edu gov gob gouv gub govt ac mil go ne or nom').split(' ');
-DL.isMarkerSuffix = function (last2) {
-  var p = last2.split('.');
-  return p.length === 2 && p[1].length === 2 && DL.CC_SLD_MARKERS.indexOf(p[0]) >= 0;
-};
-DL.isRegistrySuffix = function (last2) { return DL.TWO_LEVEL.indexOf(last2) >= 0 || DL.isMarkerSuffix(last2); };
-// listedOnly limits the result to boundaries the bundled lists actually verify.
-DL.orgDomain = function (d, listedOnly) {
+DL.orgDomain = function (d) {
   if (!d) return '';
   d = String(d).toLowerCase().replace(/\.$/, '');
   var parts = d.split('.');
@@ -530,15 +564,7 @@ DL.orgDomain = function (d, listedOnly) {
   var last2 = parts.slice(-2).join('.');
   if (DL.WILDCARD_TWO_LEVEL.indexOf(last2) >= 0) return parts.length >= 4 ? parts.slice(-4).join('.') : d;
   if (DL.TWO_LEVEL.indexOf(last2) >= 0) return parts.slice(-3).join('.');
-  if (!listedOnly && DL.isMarkerSuffix(last2)) return parts.slice(-3).join('.');
   return last2;
-};
-// True when two names differ as organizations only because the marker guess was applied.
-// The tool cannot tell a registry suffix from a registrable domain here, so a verdict
-// resting on this is reported as unproven rather than as a mismatch.
-DL.suffixBoundaryUnknown = function (a, b) {
-  if (!a || !b) return false;
-  return DL.orgDomain(a) !== DL.orgDomain(b) && DL.orgDomain(a, true) === DL.orgDomain(b, true);
 };
 DL.domainOfAddr = function (addr) {
   if (!addr) return '';
@@ -1590,21 +1616,9 @@ DL.analyzeAuth = function (msg, findings, trustedAuthserv) {
   out.spf = pickSpf(out.spfAll); out.dkim = pickDkim(out.dkimAll);
   out.dmarc = pick('dmarc'); out.arc = pick('arc'); out.compauth = pick('compauth');
   // alignment (computed locally from what the gateway reported)
-  var al = { fromDomain: fromDom, dkimDomain: '', spfDomain: '', dkimAligned: null, spfAligned: null, computed: null, boundaryUnknown: false };
-  if (out.dkim) {
-    al.dkimDomain = dkimDomainOf(out.dkim);
-    if (out.dkim.result === 'pass' && al.dkimDomain && fromDom) {
-      al.dkimAligned = DL.orgDomain(al.dkimDomain) === DL.orgDomain(fromDom);
-      if (!al.dkimAligned && DL.suffixBoundaryUnknown(al.dkimDomain, fromDom)) al.boundaryUnknown = true;
-    }
-  }
-  if (out.spf) {
-    al.spfDomain = spfDomainOf(out.spf);
-    if (out.spf.result === 'pass' && al.spfDomain && fromDom) {
-      al.spfAligned = DL.orgDomain(al.spfDomain) === DL.orgDomain(fromDom);
-      if (!al.spfAligned && DL.suffixBoundaryUnknown(al.spfDomain, fromDom)) al.boundaryUnknown = true;
-    }
-  }
+  var al = { fromDomain: fromDom, dkimDomain: '', spfDomain: '', dkimAligned: null, spfAligned: null, computed: null };
+  if (out.dkim) { al.dkimDomain = dkimDomainOf(out.dkim); if (out.dkim.result === 'pass' && al.dkimDomain && fromDom) al.dkimAligned = DL.orgDomain(al.dkimDomain) === DL.orgDomain(fromDom); }
+  if (out.spf) { al.spfDomain = spfDomainOf(out.spf); if (out.spf.result === 'pass' && al.spfDomain && fromDom) al.spfAligned = DL.orgDomain(al.spfDomain) === DL.orgDomain(fromDom); }
   if (out.dkim || out.spf) al.computed = (al.dkimAligned === true || al.spfAligned === true) ? 'pass' : 'fail';
   out.alignment = al;
   // findings
@@ -1624,10 +1638,7 @@ DL.analyzeAuth = function (msg, findings, trustedAuthserv) {
       DL.finding(findings, hiddenFail.length ? 'medium' : 'info', out.dkimAll.length + ' DKIM results in the trusted header', 'All: ' + out.dkimAll.map(function (r) { return 'dkim=' + r.result + ' d=' + (dkimDomainOf(r) || '?'); }).join(', ') + '. Verdicts use dkim=' + out.dkim.result + ' d=' + (dkimDomainOf(out.dkim) || '?') + ', the passing result aligned with the From domain where there is one. Mail sent through a platform is normally signed twice.', 'auth');
     }
     if (out.compauth && out.compauth.result === 'fail') DL.finding(findings, 'medium', 'Microsoft composite authentication failed', 'compauth=fail reason=' + (out.compauth.props['reason'] || '?') + '. Exchange Online could not attribute the sender.', 'auth');
-    if (al.computed === 'fail' && (!out.dmarc || out.dmarc.result === 'pass')) {
-      if (al.boundaryUnknown) DL.finding(findings, 'medium', 'Could not confirm the authenticated domain matches the From domain', 'DKIM d=' + (al.dkimDomain || '-') + ', SPF mailfrom=' + (al.spfDomain || '-') + ', From=' + fromDom + '. These differ only below a suffix this tool cannot classify without a full Public Suffix List, so they may well be the same organization. Check the domain by hand.', 'auth');
-      else DL.finding(findings, 'high', 'Authenticated domain does not match the From domain', 'DKIM d=' + (al.dkimDomain || '-') + ', SPF mailfrom=' + (al.spfDomain || '-') + ', From=' + fromDom + '. Passing SPF/DKIM on a different domain proves nothing about the visible sender.', 'auth');
-    }
+    if (al.computed === 'fail' && (!out.dmarc || out.dmarc.result === 'pass')) DL.finding(findings, 'high', 'Authenticated domain does not match the From domain', 'DKIM d=' + (al.dkimDomain || '-') + ', SPF mailfrom=' + (al.spfDomain || '-') + ', From=' + fromDom + '. Passing SPF/DKIM on a different domain proves nothing about the visible sender.', 'auth');
     if (al.computed === 'pass' && out.spf && out.spf.result === 'pass' && al.spfAligned && !(out.dkim && out.dkim.result === 'pass')) DL.finding(findings, 'info', 'Sender authenticated by SPF alignment only', 'No aligned DKIM signature; forwarding will break this.', 'auth');
   }
   if (out.dkimSigs.length && !out.dkim) DL.finding(findings, 'info', 'DKIM-Signature present but not evaluated', 'Signatures cannot be verified offline (no DNS). Domains: ' + out.dkimSigs.map(function (s) { return s.d || '?'; }).join(', '), 'auth');
