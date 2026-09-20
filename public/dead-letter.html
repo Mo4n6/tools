@@ -1548,19 +1548,32 @@ DL.analyzeAuth = function (msg, findings, trustedAuthserv) {
   function dkimDomainOf(r) { return (r.props['header.d'] || r.props['header.i'] || '').replace(/^.*@/, ''); }
   function spfDomainOf(r) { return (r.props['smtp.mailfrom'] || r.props['smtp.helo'] || '').replace(/^.*@/, ''); }
   // A header commonly carries several dkim= clauses (a sending platform's signature and the
-  // customer's own). DMARC alignment needs ANY passing result to match the From domain, so
-  // prefer such a result; taking the first blindly reports legitimate mail as misaligned.
-  function pickBest(all, domainOf) {
+  // customer's own). They are peers: DMARC alignment needs ANY passing result to match the
+  // From domain, so prefer such a result. Taking the first blindly reports legitimate mail
+  // as misaligned.
+  function pickDkim(all) {
     if (!all.length) return null;
     var passing = all.filter(function (r) { return r.result === 'pass'; });
     if (fromDom) {
       var fromOrg = DL.orgDomain(fromDom);
-      for (var i = 0; i < passing.length; i++) { var d = domainOf(passing[i]); if (d && DL.orgDomain(d) === fromOrg) return passing[i]; }
+      for (var i = 0; i < passing.length; i++) { var d = dkimDomainOf(passing[i]); if (d && DL.orgDomain(d) === fromOrg) return passing[i]; }
     }
     return passing.length ? passing[0] : all[0];
   }
+  // SPF is NOT like DKIM: there is one authoritative identity, not a set of peers. DMARC
+  // evaluates RFC5321.MailFrom and falls back to the HELO identity only when the reverse
+  // path is null. So select by identity and never by result -- preferring a passing HELO
+  // clause over a MAIL FROM failure would suppress the failure and report a forged sender
+  // as aligned.
+  function pickSpf(all) {
+    if (!all.length) return null;
+    var mailFrom = all.filter(function (r) { return !!r.props['smtp.mailfrom']; });
+    if (mailFrom.length) return mailFrom[0];
+    var helo = all.filter(function (r) { return !!r.props['smtp.helo']; });
+    return helo.length ? helo[0] : all[0];
+  }
   out.spfAll = pickAll('spf'); out.dkimAll = pickAll('dkim');
-  out.spf = pickBest(out.spfAll, spfDomainOf); out.dkim = pickBest(out.dkimAll, dkimDomainOf);
+  out.spf = pickSpf(out.spfAll); out.dkim = pickDkim(out.dkimAll);
   out.dmarc = pick('dmarc'); out.arc = pick('arc'); out.compauth = pick('compauth');
   // alignment (computed locally from what the gateway reported)
   var al = { fromDomain: fromDom, dkimDomain: '', spfDomain: '', dkimAligned: null, spfAligned: null, computed: null };
@@ -1576,6 +1589,10 @@ DL.analyzeAuth = function (msg, findings, trustedAuthserv) {
     if (out.spf) { if (out.spf.result === 'fail' || out.spf.result === 'softfail') DL.finding(findings, 'high', 'SPF ' + out.spf.result + ' for ' + (al.spfDomain || 'envelope domain'), out.spf.comment || 'Sending IP is not authorized by the envelope domain.', 'auth'); else if (out.spf.result !== 'pass') DL.finding(findings, 'medium', 'SPF ' + out.spf.result, out.spf.comment || 'SPF could not be verified.', 'auth'); }
     if (out.dkim) { if (out.dkim.result === 'fail' || out.dkim.result === 'permerror') DL.finding(findings, 'high', 'DKIM ' + out.dkim.result + (al.dkimDomain ? ' (d=' + al.dkimDomain + ')' : ''), out.dkim.comment || 'Signature did not verify; message modified in transit or signature forged.', 'auth'); else if (out.dkim.result !== 'pass') DL.finding(findings, 'medium', 'DKIM ' + out.dkim.result, out.dkim.comment || 'No valid DKIM signature.', 'auth'); }
     if (out.dmarc) { if (out.dmarc.result === 'fail') DL.finding(findings, 'high', 'DMARC fail for ' + (out.dmarc.props['header.from'] || fromDom), 'Policy action: ' + (out.dmarc.props['action'] || out.dmarc.props['policy'] || 'unknown') + '. The visible From domain is not authenticated.', 'auth'); else if (out.dmarc.result !== 'pass') DL.finding(findings, 'medium', 'DMARC ' + out.dmarc.result, out.dmarc.result === 'none' ? 'The From domain publishes no DMARC policy; spoofing it is easy.' : (out.dmarc.comment || ''), 'auth'); }
+    if (out.spfAll.length > 1) {
+      var otherSpfFail = out.spfAll.filter(function (r) { return r !== out.spf && (r.result === 'fail' || r.result === 'softfail'); });
+      DL.finding(findings, otherSpfFail.length ? 'medium' : 'info', out.spfAll.length + ' SPF results in the trusted header', 'All: ' + out.spfAll.map(function (r) { return 'spf=' + r.result + ' ' + (r.props['smtp.mailfrom'] ? 'mailfrom=' + r.props['smtp.mailfrom'] : r.props['smtp.helo'] ? 'helo=' + r.props['smtp.helo'] : '?'); }).join(', ') + '. Verdicts use the MAIL FROM identity where one was evaluated, which is the identity DMARC uses; HELO counts only for a null reverse path.', 'auth');
+    }
     if (out.dkimAll.length > 1) {
       var hiddenFail = out.dkimAll.filter(function (r) { return r !== out.dkim && (r.result === 'fail' || r.result === 'permerror'); });
       DL.finding(findings, hiddenFail.length ? 'medium' : 'info', out.dkimAll.length + ' DKIM results in the trusted header', 'All: ' + out.dkimAll.map(function (r) { return 'dkim=' + r.result + ' d=' + (dkimDomainOf(r) || '?'); }).join(', ') + '. Verdicts use dkim=' + out.dkim.result + ' d=' + (dkimDomainOf(out.dkim) || '?') + ', the passing result aligned with the From domain where there is one. Mail sent through a platform is normally signed twice.', 'auth');

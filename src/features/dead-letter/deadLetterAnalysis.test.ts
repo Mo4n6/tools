@@ -29,6 +29,7 @@ type Auth = {
   spf: AuthResult | null;
   dkim: AuthResult | null;
   dmarc: AuthResult | null;
+  spfAll: AuthResult[];
   dkimAll: AuthResult[];
   alignment: Alignment;
 };
@@ -147,6 +148,36 @@ describe('organizational alignment', () => {
     expect(msg.analysis.auth.alignment.dkimAligned).toBe(false);
     expect(msg.analysis.auth.alignment.computed).toBe('fail');
     expect(titles(msg, 'high')).toContain('Authenticated domain does not match the From domain');
+  });
+});
+
+describe('SPF identity precedence', () => {
+  it('never prefers a passing HELO result over a MAIL FROM failure', () => {
+    // DMARC evaluates RFC5321.MailFrom and uses the HELO identity only for a null reverse
+    // path, so a forged "spf=pass smtp.helo=..." must not suppress the MAIL FROM failure.
+    const msg = analyze('case4-spf-helo.eml', GATEWAY);
+    expect(msg.analysis.auth.spfAll).toHaveLength(2);
+    expect(msg.analysis.auth.spf?.result).toBe('fail');
+    expect(msg.analysis.auth.spf?.props['smtp.mailfrom']).toBe('attacker.example');
+    expect(msg.analysis.auth.alignment.spfAligned).toBeNull();
+    expect(msg.analysis.auth.alignment.computed).toBe('fail');
+    expect(titles(msg, 'high')).toContain('SPF fail for attacker.example');
+    expect(titles(msg, 'high')).toContain('Authenticated domain does not match the From domain');
+  });
+
+  it('still uses the HELO identity when it is the only one evaluated', () => {
+    const msg = analyze('case5-spf-helo-only.eml', GATEWAY);
+    expect(msg.analysis.auth.spf?.result).toBe('pass');
+    expect(msg.analysis.auth.spf?.props['smtp.helo']).toBe('mail.sender.example');
+    expect(msg.analysis.auth.alignment.spfAligned).toBe(true);
+    expect(msg.analysis.auth.alignment.computed).toBe('pass');
+  });
+
+  it('lists every SPF result so the discarded clause stays visible', () => {
+    const msg = analyze('case4-spf-helo.eml', GATEWAY);
+    const note = msg.analysis.findings.find((f) => f.title === '2 SPF results in the trusted header');
+    expect(note?.detail).toContain('mailfrom=attacker.example');
+    expect(note?.detail).toContain('helo=sender.example');
   });
 });
 
