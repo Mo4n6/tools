@@ -63,6 +63,14 @@ describe('path and registry extraction', () => {
     expect(kinds(r, 'filepath').some((p) => p.includes('update.exe'))).toBe(true);
   });
 
+  // 'HKCU:\\' must not read as a path on drive U:.
+  it('does not mistake a registry hive prefix for a drive path', async () => {
+    const r = await analyze(
+      String.raw`Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name x -Value y`,
+    );
+    expect(kinds(r, 'filepath').some((p) => p.startsWith('U:'))).toBe(false);
+  });
+
   it('finds a Run key', async () => {
     const r = await analyze(
       String.raw`Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name x -Value y`,

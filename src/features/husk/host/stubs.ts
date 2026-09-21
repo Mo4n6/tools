@@ -185,7 +185,7 @@ const RULES: readonly StubRule[] = [
   {
     category: 'evasion',
     signature: 'ExecutionPolicy bypass',
-    pattern: /-(?:ex|exec|executionpolicy)\s+bypass\b/gi,
+    pattern: /-(?:ep|ex|exec|executionpolicy)\s+bypass\b/gi,
   },
   {
     category: 'evasion',

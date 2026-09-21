@@ -79,8 +79,10 @@ const RULES: readonly Rule[] = [
   },
   {
     kind: 'filepath',
+    // The drive letter must not be the tail of a longer word, or 'HKCU:\\'
+    // reads as a path on drive U:.
     pattern:
-      /(?:[A-Za-z]:\\|\\\\[A-Za-z0-9._-]+\\|%[A-Za-z]+%\\|\$env:[A-Za-z]+\\)[^\s"'`<>|*?]{2,200}/g,
+      /(?:(?<![A-Za-z])[A-Za-z]:\\|\\\\[A-Za-z0-9._-]+\\|%[A-Za-z]+%\\|\$env:[A-Za-z]+\\)[^\s"'`<>|*?]{2,200}/g,
     confidence: 'high',
     normalize: (v) => v.replace(/[.,;:)\]}]+$/, ''),
   },
