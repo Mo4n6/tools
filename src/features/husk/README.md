@@ -238,6 +238,29 @@ stage-2 URL, which is usually what the analyst came for. Indicators are
 deduplicated to the earliest layer they appeared in and reported defanged
 (`hxxp://evil[.]test`) so they can be pasted into a ticket safely.
 
+## What real samples corrected
+
+Four real Emotet droppers (from PSDecode's bundled test set) were run through
+Husk. The samples are not committed; `__tests__/realShapes.test.ts` reproduces
+the shapes with benign payloads. Three findings the synthetic corpus could not
+produce, because Invoke-Obfuscation always emits a launcher:
+
+- **A bare base64 blob is the most common real input.** Lifted out of a macro,
+  a scheduled-task action or an EDR command-line field, the `-enc` is already
+  stripped. Two of the four samples were exactly this, matched no recipe, and
+  Husk reported a **false clean** — `reliable: true`, no gaps, no indicators.
+  That is the single worst outcome the design admits. There is now a
+  `bare-base64` recipe, and both samples unwrap four layers.
+- **A run that matched nothing must say so** — but only when it did not
+  *understand* the input, not when the input was simply an ordinary script.
+  Conflating those either cries wolf on every benign script or hides a real
+  failure. The tokenizer separates them: source it read without diagnostics or
+  `Unknown` tokens is unremarkable; source it could not read is a gap.
+- **Emotet packs fallback C2s as an `@`-separated list.** `@` is legal in a
+  URL, so a greedy match swallowed the whole chain as one indicator. Splitting
+  on `@` followed by a scheme recovers all five, and hostnames without a dot
+  are now rejected as concatenation fragments.
+
 ## Security properties
 
 Two are asserted by tests rather than assumed:

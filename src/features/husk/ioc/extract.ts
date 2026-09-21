@@ -39,12 +39,21 @@ const PATH_EXTENSIONS =
 const RULES: readonly Rule[] = [
   {
     kind: 'url',
-    pattern: /\b(?:https?|ftp):\/\/[^\s"'`<>()\]},;|]+/gi,
+    // '@' is legal in a URL (userinfo), but '@' followed by a scheme is a
+    // separator: Emotet packs its fallback URLs as
+    // http://a.test/x/@http://b.test/y/@... and matching greedily across
+    // those swallows the whole chain as one indicator.
+    pattern: /\b(?:https?|ftp):\/\/(?:(?!@(?:https?|ftp):\/\/)[^\s"'`<>()\]},;|])+/gi,
     confidence: 'high',
-    normalize: (v) => v.replace(/[.,;:]+$/, ''),
+    normalize: (v) => v.replace(/[.,;:@]+$/, ''),
     reject: (value) => {
       try {
-        return BENIGN_HOSTS.has(new URL(value).hostname.toLowerCase());
+        const host = new URL(value).hostname.toLowerCase();
+        if (BENIGN_HOSTS.has(host)) return true;
+        // A hostname with no dot is a fragment, not a destination - these
+        // appear when an intermediate layer has the URL split across a
+        // concatenation. 'localhost' and bare IPs are the exceptions.
+        return !host.includes('.') && host !== 'localhost' && !/^\[?[0-9a-f:]+\]?$/i.test(host);
       } catch {
         return false;
       }

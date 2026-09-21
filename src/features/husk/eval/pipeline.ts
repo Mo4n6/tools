@@ -53,6 +53,36 @@ interface Recipe {
 
 // --- Recipes --------------------------------------------------------------
 
+/**
+ * A bare base64 blob, with no launcher around it.
+ *
+ * Analysts paste these constantly - lifted out of a macro, a scheduled task
+ * action, or an EDR command-line field, with the `-enc` already stripped. Real
+ * Emotet droppers ship exactly this way. Without this recipe the input matches
+ * nothing, and a pipeline that unwraps nothing and records nothing reports a
+ * false clean, which is worse than any decoding error.
+ */
+const bareBase64: Recipe = {
+  name: 'bare-base64',
+  apply: async (source) => {
+    const trimmed = source.trim().replace(/^\uFEFF/, '');
+    // Long enough to be a payload, and essentially all base64.
+    if (trimmed.length < 64) return undefined;
+    if (!/^[A-Za-z0-9+/\s]+={0,2}$/.test(trimmed)) return undefined;
+
+    const bytes = base64ToBytes(trimmed);
+    if (bytes.length === 0) return undefined;
+
+    // PowerShell command lines are UTF-16LE; macros sometimes use UTF-8. Try
+    // the more likely one first and keep whichever yields script text.
+    for (const decode of [decodeUtf16le, decodeUtf8]) {
+      const text = decode(bytes);
+      if (looksLikeText(text) && text.trim().length > 0) return text;
+    }
+    return undefined;
+  },
+};
+
 /** powershell -EncodedCommand <base64>, in all its abbreviations. */
 const encodedCommand: Recipe = {
   name: 'encodedcommand',
@@ -131,7 +161,13 @@ const charArray: Recipe = {
   apply: async (source) => decodeCharArray(source),
 };
 
-const RECIPES: readonly Recipe[] = [encodedCommand, compressed, base64Utf8, charArray];
+const RECIPES: readonly Recipe[] = [
+  encodedCommand,
+  bareBase64,
+  compressed,
+  base64Utf8,
+  charArray,
+];
 
 // --- Expression folding ---------------------------------------------------
 
@@ -408,6 +444,27 @@ export async function deobfuscate(
     current = next.text;
   }
 
+  // A sample that produced no layers, no events and no gaps has either
+  // nothing to unwrap - a perfectly ordinary script - or something Husk did
+  // not understand. Those must not be conflated: calling the first unreliable
+  // would cry wolf on every benign script, and calling the second clean is
+  // the worst failure available.
+  //
+  // The tokenizer separates them. Source it read without complaint is a
+  // script with no obfuscation; source that produced diagnostics or Unknown
+  // tokens is something it could not read.
+  if (trace.layers.length === 1 && trace.gaps.size === 0 && !isReadableScript(source)) {
+    const id = trace.gaps.report({
+      kind: 'GAP',
+      signature: 'no rule matched this input',
+      argTypes: [],
+      provenance: { layer: 0 },
+      detail:
+        'nothing was decoded and no construct was recognised; the input may not be PowerShell, or may use an encoding Husk does not implement',
+    });
+    trace.taintDeepest(taintFrom(id));
+  }
+
   if (exhaustedLayers) {
     const id = trace.gaps.report({
       kind: 'GAP',
@@ -465,6 +522,18 @@ function recordResidue(source: string, trace: Trace, layer: number): void {
     trace.taintDeepest(taintFrom(id));
     return;
   }
+}
+
+/**
+ * True when the tokenizer read this source cleanly, meaning any lack of
+ * findings is a genuinely unremarkable script rather than a failure to parse.
+ */
+function isReadableScript(source: string): boolean {
+  if (source.trim().length === 0) return true;
+
+  const { tokens, diagnostics } = tokenize(source);
+  if (diagnostics.length > 0) return false;
+  return !tokens.some((t) => t.kind === TokenKind.Unknown);
 }
 
 interface Unwrapped {
