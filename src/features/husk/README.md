@@ -7,8 +7,18 @@ Design spec: [`docs/husk-spec.md`](../../../docs/husk-spec.md).
 ## Status
 
 Phase 1 complete. The tokenizer agrees with real PowerShell on 100% of the
-oracle corpus, and the pipeline recovers **79.1% (193/244)** of the
-deobfuscation corpus with **zero silent failures**. Target corpus is commodity IR — see
+oracle corpus. Deobfuscation coverage:
+
+| Corpus | Recovered |
+|---|---|
+| Single-transform (244) | **80.7%**, zero silent failures |
+| Layered, 2 transforms (288) | **67.4%** |
+| Layered, 3 transforms (576) | **41.7%** |
+| Layered, all (864) | **50.2%** |
+
+The single-transform number is the flattering one — it answers "can Husk undo
+transform X". Real droppers stack transforms, so the layered corpus is the
+honest measure. Target corpus is commodity IR — see
 [spec section 9](../../../docs/husk-spec.md).
 
 - `core/` — the taint-aware value model, gap ledger and execution trace.
@@ -25,6 +35,7 @@ so tests run without PowerShell installed.
 | File | Contents | Generator |
 |---|---|---|
 | `fixtures/invoke-obfuscation.json` | 244 (obfuscated, expected) pairs across 17 transforms | `scripts/husk/generate-corpus.ps1` |
+| `fixtures/layered.json` | 864 fixtures stacking 2–3 transforms | `scripts/husk/generate-layered-corpus.ps1` |
 | `fixtures/lexer-oracle.json` | 269 cases, ~7.4k ground-truth tokens from the real PowerShell tokenizer | `scripts/husk/generate-lexer-oracle.ps1` |
 
 ```sh
@@ -196,6 +207,10 @@ record a gap naming why.** That test is what forced `recordResidue` to exist.
   arguments.
 - **Only a `(` touching its name is an argument list.** `Write-Host ('a'+'b')`
   has a space and folds; `.GetBytes("x")` does not and must keep its parens.
+- **A payload can be *piped* into IEX, not just passed to it.**
+  `'...'.Replace(...) | &'ieX'` sends its script in through the pipeline.
+  Reading only invocation arguments missed it, and it alone blocked 29% of the
+  layered corpus.
 - **Scripts are statements, not one expression.** Parsing the whole source as a
   single expression made everything after the first statement invisible; adding
   statement splitting moved the Command family from 30% to 83%.

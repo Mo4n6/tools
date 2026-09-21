@@ -15,6 +15,61 @@ export interface Statement {
 }
 
 /**
+ * Splits a statement into its pipeline segments at bracket depth zero.
+ *
+ * `'payload' | &'iex'` sends its payload *into* the invocation rather than
+ * passing it as an argument, which is one of the most common shapes there is.
+ * Reading only arguments misses it entirely.
+ */
+export function splitPipeline(source: string): readonly Statement[] {
+  const { tokens } = tokenize(source);
+  const segments: Statement[] = [];
+
+  let depth = 0;
+  let start = 0;
+
+  const push = (end: number): void => {
+    const text = source.slice(start, end);
+    if (text.trim().length > 0) segments.push({ text, start, end });
+  };
+
+  for (const token of tokens) {
+    switch (token.kind) {
+      case TokenKind.LParen:
+      case TokenKind.LCurly:
+      case TokenKind.LBracket:
+      case TokenKind.DollarParen:
+      case TokenKind.AtParen:
+      case TokenKind.AtCurly:
+        depth += 1;
+        break;
+
+      case TokenKind.RParen:
+      case TokenKind.RCurly:
+      case TokenKind.RBracket:
+        depth = Math.max(0, depth - 1);
+        break;
+
+      case TokenKind.Pipe:
+        if (depth === 0) {
+          push(token.start);
+          start = token.end;
+        }
+        break;
+
+      case TokenKind.EndOfInput:
+        push(token.start);
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  return segments;
+}
+
+/**
  * Statements separated by ';' or a newline, at bracket depth zero. A separator
  * inside brackets belongs to an argument list or a script block, not to the
  * top level.

@@ -4,15 +4,48 @@
 // import them from tests and generators only.
 
 import rawCorpus from './fixtures/invoke-obfuscation.json';
+import rawLayered from './fixtures/layered.json';
 import rawOracle from './fixtures/lexer-oracle.json';
-import type { Corpus, CorpusFixture, LexerOracle, OracleCase } from './types';
+import type {
+  Corpus,
+  CorpusFixture,
+  LayeredCorpus,
+  LayeredFixture,
+  LexerOracle,
+  OracleCase,
+} from './types';
 
-export type { Corpus, CorpusFixture, LexerOracle, OracleCase, OracleToken } from './types';
+export type {
+  Corpus,
+  CorpusFixture,
+  LayeredCorpus,
+  LayeredFixture,
+  LexerOracle,
+  OracleCase,
+  OracleToken,
+} from './types';
 
 export const corpus = rawCorpus as unknown as Corpus;
 export const lexerOracle = rawOracle as unknown as LexerOracle;
 
+/**
+ * Fixtures built by stacking transforms. Single-transform fixtures answer
+ * "can Husk undo X"; these answer "can it undo X inside Y inside Z", which is
+ * what real droppers are and where the interactions break things.
+ */
+export const layeredCorpus = rawLayered as unknown as LayeredCorpus;
+
 export const fixtures: readonly CorpusFixture[] = corpus.fixtures;
+
+export const layeredFixtures: readonly LayeredFixture[] = layeredCorpus.fixtures;
+
+/** Every fixture, single-transform and layered. */
+export const allFixtures: readonly CorpusFixture[] = [...fixtures, ...layeredFixtures];
+
+/** Layered fixtures grouped by how many transforms were stacked. */
+export function layeredByDepth(depth: number): readonly LayeredFixture[] {
+  return layeredFixtures.filter((f) => f.layers.length === depth);
+}
 
 /** Fixtures from one Invoke-Obfuscation transform, e.g. "Out-CompressedCommand". */
 export function fixturesByTransform(transform: string): readonly CorpusFixture[] {

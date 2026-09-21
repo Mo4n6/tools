@@ -100,11 +100,20 @@ implement them. This is permanent incremental work, driven by §6.
 
 ### Measured, phase 1
 
-Against the generated corpus (244 fixtures, 17 transforms): **193 recovered
-(79.1%), 0 silent failures.** Fully recovered families: Compressed, Ascii,
-BXOR, token-level String, Variable, RandomWhitespace and Comment. Still at
-zero: the SpecialCharOnly and Whitespace encoders and token-level Type, all of
-which need statement-level evaluation — that is, phase 2.
+Two corpora, because they answer different questions.
+
+**Single-transform** (244 fixtures, 17 transforms): **197 recovered (80.7%),
+0 silent failures.** This answers "can Husk undo transform X".
+
+**Layered** (864 fixtures stacking 2–3 transforms): **434 recovered (50.2%)** —
+67.4% at two layers, 41.7% at three. This answers "can it undo X inside Y
+inside Z", which is the shape real droppers have and therefore the honest
+number. The single-transform figure flatters the tool and should never be
+quoted on its own.
+
+The gap between them is the lesson: a small corpus of isolated transforms made
+coverage look nearly twice as good as it was. Ranked blockers on the layered
+corpus drive what gets built next.
 
 ### The coverage trap
 

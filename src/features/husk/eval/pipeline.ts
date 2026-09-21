@@ -22,7 +22,7 @@ import { createContext, evaluate } from './evaluator';
 import { base64ToBytes, decodeUtf16le, decodeUtf8, decompressAny, looksLikeText } from './decode';
 import { canonicalize } from './canonicalize';
 import { decodeCharArray } from './charArray';
-import { splitStatements } from './statements';
+import { splitPipeline, splitStatements } from './statements';
 import type { Expr } from './ast';
 
 export interface DeobfuscateOptions {
@@ -152,6 +152,44 @@ function findInvocation(node: Expr): Expr | undefined {
  * latter is a new layer; the former is just a call, so a result that is short
  * and has no script shape is rejected.
  */
+/** Names that mean Invoke-Expression, however they are spelled or computed. */
+const IEX_NAMES = /^(iex|invoke-expression)$/i;
+
+/**
+ * `<payload> | IEX` sends its payload into the invocation through the
+ * pipeline rather than as an argument. This is one of the most common shapes
+ * in real samples, and reading only arguments misses it completely.
+ */
+function foldPipedInvocation(
+  source: string,
+  trace: Trace,
+  layer: number,
+): { text: string; taint: Taint } | undefined {
+  const segments = splitPipeline(source);
+  if (segments.length < 2) return undefined;
+
+  const last = segments[segments.length - 1];
+  const ctx = createContext(trace, layer);
+
+  // The tail may be `IEX`, `&'iex'`, `.('i'+'ex')` or a computed name.
+  const tail = last.text.trim().replace(/^[&.]\s*/, '');
+  let name = tail.replace(/^['"]|['"]$/g, '');
+  if (!IEX_NAMES.test(name)) {
+    const parsed = parseExpression(tail);
+    if (parsed.expression.kind === 'unsupported') return undefined;
+    name = toStringValue(evaluate(parsed.expression, ctx)).trim();
+  }
+  if (!IEX_NAMES.test(name)) return undefined;
+
+  const payloadSource = source.slice(0, last.start).replace(/\|\s*$/, '');
+  const parsedPayload = parseExpression(payloadSource);
+  const value = evaluate(parsedPayload.expression, ctx);
+  const text = toStringValue(value);
+
+  if (text.trim().length === 0 || text === source) return undefined;
+  return { text, taint: value.taint };
+}
+
 /**
  * Fold the first statement that contains an invocation, splicing the result
  * back into the surrounding script. Samples are rarely a single expression.
@@ -419,6 +457,17 @@ async function unwrapOnce(
       origin: { via: 'decode', transform: 'canonicalize', from: layer },
       taint: CLEAN,
     };
+  }
+
+  for (const statement of splitStatements(source)) {
+    const piped = foldPipedInvocation(statement.text, trace, layer);
+    if (piped && piped.text !== source) {
+      return {
+        text: piped.text,
+        origin: { via: 'invoke', operator: '| IEX', from: layer },
+        taint: piped.taint,
+      };
+    }
   }
 
   const folded = foldInvocation(source, trace, layer);

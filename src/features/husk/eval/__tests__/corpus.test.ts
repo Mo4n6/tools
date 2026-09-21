@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { coverage, runAll } from './corpusReport';
+import { coverage, layeredCoverage, runAll, runLayered } from './corpusReport';
 
 // The corpus is the coverage metric. These assert a floor rather than an exact
 // number, so improving the pipeline never fails the build - but regressing it
@@ -10,7 +10,7 @@ import { coverage, runAll } from './corpusReport';
 // percentage, and the per-transform floors are what stop one family quietly
 // collapsing while the total holds steady.
 
-const OVERALL_FLOOR = 0.78;
+const OVERALL_FLOOR = 0.8;
 
 const TRANSFORM_FLOORS: ReadonlyArray<[string, number]> = [
   ['Out-CompressedCommand', 1.0],
@@ -48,6 +48,38 @@ describe('deobfuscation coverage', () => {
       `${transform}: ${bucket!.recovered}/${bucket!.total}`,
     ).toBeGreaterThanOrEqual(floor);
   }, 60000);
+});
+
+// Layered fixtures stack transforms the way real droppers do. The
+// single-transform number is the flattering one: it answers "can Husk undo X",
+// while these answer "can it undo X inside Y inside Z", which is the question
+// that matters. Keep both floors so neither can be traded against the other.
+const LAYERED_FLOOR = 0.48;
+const LAYERED_DEPTH2_FLOOR = 0.65;
+const LAYERED_DEPTH3_FLOOR = 0.38;
+
+describe('layered coverage', () => {
+  it('recovers at least the established share of layered fixtures', async () => {
+    const { recovered, total, ratio } = await layeredCoverage();
+    expect(ratio, `layered ${recovered}/${total}`).toBeGreaterThanOrEqual(LAYERED_FLOOR);
+  }, 180000);
+
+  it('holds two-layer fixtures', async () => {
+    const { recovered, total, ratio } = await layeredCoverage(2);
+    expect(ratio, `depth 2: ${recovered}/${total}`).toBeGreaterThanOrEqual(LAYERED_DEPTH2_FLOOR);
+  }, 180000);
+
+  it('holds three-layer fixtures', async () => {
+    const { recovered, total, ratio } = await layeredCoverage(3);
+    expect(ratio, `depth 3: ${recovered}/${total}`).toBeGreaterThanOrEqual(LAYERED_DEPTH3_FLOOR);
+  }, 180000);
+
+  it('keeps layered silent failures rare', async () => {
+    const results = await runLayered();
+    const silent = results.filter((r) => !r.recovered && r.topGap === undefined);
+    // Not yet zero on layered input, but it must not grow.
+    expect(silent.length, silent.slice(0, 8).map((r) => r.id).join(', ')).toBeLessThanOrEqual(16);
+  }, 180000);
 });
 
 describe('never lies about coverage', () => {

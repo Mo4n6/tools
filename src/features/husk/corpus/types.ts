@@ -20,6 +20,19 @@ export interface CorpusFixture {
   readonly obfuscated: string;
 }
 
+/** A fixture built by stacking transforms, the way real droppers are. */
+export interface LayeredFixture extends CorpusFixture {
+  /** The transforms applied, outermost last. */
+  readonly layers: readonly string[];
+}
+
+export interface LayeredCorpus {
+  readonly generator: string;
+  readonly generatedFor: string;
+  readonly payloads: Readonly<Record<string, string>>;
+  readonly fixtures: readonly LayeredFixture[];
+}
+
 export interface Corpus {
   readonly generator: string;
   readonly generatedFor: string;

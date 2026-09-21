@@ -1,7 +1,7 @@
 // Measures the pipeline against the corpus. Shared by the coverage assertion
 // and the divergence report, so both report the same number.
 
-import { fixtures } from '../../corpus';
+import { fixtures, layeredByDepth, layeredFixtures } from '../../corpus';
 import type { CorpusFixture } from '../../corpus';
 import { TokenKind } from '../../lexer/tokenKind';
 import { tokenize } from '../../lexer/tokenizer';
@@ -73,6 +73,20 @@ export async function runFixture(fixture: CorpusFixture): Promise<FixtureResult>
 
 export async function runAll(): Promise<readonly FixtureResult[]> {
   return Promise.all(fixtures.map(runFixture));
+}
+
+/** Layered fixtures: the shape real droppers actually have. */
+export async function runLayered(): Promise<readonly FixtureResult[]> {
+  return Promise.all(layeredFixtures.map(runFixture));
+}
+
+export async function layeredCoverage(
+  depth?: number,
+): Promise<{ recovered: number; total: number; ratio: number }> {
+  const set = depth === undefined ? layeredFixtures : layeredByDepth(depth);
+  const results = await Promise.all(set.map(runFixture));
+  const recovered = results.filter((r) => r.recovered).length;
+  return { recovered, total: set.length, ratio: recovered / set.length };
 }
 
 export async function coverage(): Promise<{
