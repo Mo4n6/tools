@@ -21,8 +21,19 @@ export interface ParseResult {
   readonly remaining: number;
 }
 
+/**
+ * How deep expression nesting may go before the parser gives up.
+ *
+ * A recursive-descent parser recurses once per nesting level, so deeply
+ * nested input overflows the JS stack - which is a hang, not an error, and
+ * exactly the anti-analysis behaviour the worker budgets exist to prevent.
+ * Real scripts do not come close to this.
+ */
+const MAX_DEPTH = 200;
+
 class Parser {
   private index = 0;
+  private depth = 0;
   private readonly tokens: readonly Token[];
 
   constructor(
@@ -87,6 +98,19 @@ class Parser {
 
   /** Precedence climbing, using the precedence ported from PowerShell. */
   private parseExpression(minPrecedence: number): Expr {
+    if (this.depth >= MAX_DEPTH) {
+      return this.unsupported(this.peek(), `expression nested deeper than ${MAX_DEPTH}`);
+    }
+
+    this.depth += 1;
+    try {
+      return this.parseExpressionInner(minPrecedence);
+    } finally {
+      this.depth -= 1;
+    }
+  }
+
+  private parseExpressionInner(minPrecedence: number): Expr {
     let left = this.parseUnary();
 
     for (;;) {

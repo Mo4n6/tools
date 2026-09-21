@@ -147,9 +147,17 @@ These five cannot be retrofitted. Everything else is refactorable.
    This is what makes instrumentation free and bypass impossible.
 4. **Worker isolation with step and wall-clock budgets**, from the start.
    Anti-analysis loops will otherwise hang the tab.
-5. **`connect-src 'none'` in the CSP, from the first commit.** Analysts are
-   pasting live malware. "This never phones home" must be provable from the
-   headers, not promised in a README.
+5. **`connect-src 'none'` in the CSP.** Analysts are pasting live malware.
+   "This never phones home" must be provable from the headers, not promised in
+   a README.
+
+   **Status: not delivered.** The CSP is document-wide and sibling tools in the
+   shell need network access, so a blanket policy would break them. The route
+   is the Dead Letter precedent - a standalone page with its own policy - which
+   needs a second build entry. Until then the property is asserted by tests
+   (no `fetch`, no `XMLHttpRequest`, no `eval`, no `Function`), which proves
+   the code does not reach for the network but not that the browser would stop
+   it. Weaker, and named as such rather than glossed.
 
 ### And one prohibition
 

@@ -6,8 +6,12 @@ Design spec: [`docs/husk-spec.md`](../../../docs/husk-spec.md).
 
 ## Status
 
-Phase 1 complete. The tokenizer agrees with real PowerShell on 100% of the
-oracle corpus. Deobfuscation coverage:
+Phases 0–3 complete and shipped as a tab in the tools shell at `#/husk`.
+Paste a sample, get decoded layers, recorded host calls, IOCs and an honest
+fidelity report.
+
+The tokenizer agrees with real PowerShell on 100% of the oracle corpus.
+Deobfuscation coverage:
 
 | Corpus | Recovered |
 |---|---|
@@ -23,7 +27,11 @@ honest measure. Target corpus is commodity IR — see
 
 - `core/` — the taint-aware value model, gap ledger and execution trace.
 - `corpus/` — generated ground truth. Test-only; never imported by the app.
+- `analyze.ts` — the entry point: source in, layers + events + IOCs + gaps out.
+- `HuskApp.tsx`, `useHusk.ts`, `husk.worker.ts` — the UI and its worker.
 - `eval/` — the expression parser, constant folder and deobfuscation pipeline.
+- `host/` — stubs for constructs recorded but never performed.
+- `ioc/` — indicator extraction and defanging.
 - `lexer/` — character classification, the token model, and the tokenizer.
 
 ## `corpus/`
@@ -214,6 +222,51 @@ record a gap naming why.** That test is what forced `recordResidue` to exist.
 - **Scripts are statements, not one expression.** Parsing the whole source as a
   single expression made everything after the first statement invisible; adding
   statement splitting moved the Command family from 30% to 83%.
+
+## `host/` and `ioc/`
+
+`host/stubs.ts` recognises network, process, filesystem, registry,
+persistence, assembly, WMI, evasion and timing constructs, records each as a
+trace event, and files it as **`STUB_BY_DESIGN`** — never as a `GAP`. That
+distinction is load-bearing: a stub is working as intended and must never
+appear in the implementation queue.
+
+`ioc/extract.ts` harvests indicators from **every layer reached**, not just the
+final stage. This is what makes Husk useful well below full deobfuscation
+coverage: a sample that only unwraps two of four layers still yields the
+stage-2 URL, which is usually what the analyst came for. Indicators are
+deduplicated to the earliest layer they appeared in and reported defanged
+(`hxxp://evil[.]test`) so they can be pasted into a ticket safely.
+
+## Security properties
+
+Two are asserted by tests rather than assumed:
+
+- **The payload is never handed to the JS engine.** No `eval`, no `Function`
+  constructor. It is parsed and folded by a tree-walking interpreter and stays
+  data throughout.
+- **Analysis makes no network requests.** Stubbing `fetch` and `XMLHttpRequest`
+  and asserting they are never called — including on a sample whose whole
+  purpose is to download a stage.
+
+Two are structural:
+
+- **Worker isolation with step and wall-clock budgets**, so anti-analysis input
+  cannot hang the tab. The parser also caps nesting depth at 200; a test with
+  2000 nested parentheses found that recursive descent otherwise overflows the
+  stack, which is a hang rather than an error.
+- **One dispatch chokepoint** for every member access, static call and cast.
+
+### CSP: not yet delivered
+
+Spec commitment 5 calls for `connect-src 'none'`, which would make "this never
+phones home" provable from the headers rather than promised. It is **not in
+place**, because the CSP is document-wide and sibling tools in the shell need
+network access (model downloads, URL ingestion). The route to it is the Dead
+Letter precedent — a standalone page with its own policy — which needs a second
+build entry. Until then the guarantee rests on the two tests above, which is
+weaker: it proves the code does not reach for the network, not that the browser
+would stop it.
 
 ## Tests
 
