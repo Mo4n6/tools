@@ -429,13 +429,22 @@ class Tokenizer {
     this.diagnose('unterminated expandable string', start);
   }
 
-  /** PowerShell backtick escapes. Unknown escapes yield the literal character. */
+  /**
+   * Backtick escapes, using **Windows PowerShell 5.1** rules.
+   *
+   * This is deliberate: commodity droppers target the PowerShell built into
+   * Windows, and 5.1 has no `e escape. PowerShell 6 added it, so decoding
+   * 5.1-targeted obfuscation with 6+ rules turns the 'e' in a backtick-broken
+   * identifier into an ESC character and silently corrupts the name -
+   * `"tOBA`s`e64St`RINg"` stops being a valid member name.
+   *
+   * Unknown escapes yield the literal character, which is also 5.1 behaviour.
+   */
   private decodeEscape(c: string): string {
     switch (c) {
       case '0': return '\0';
       case 'a': return '\x07';
       case 'b': return '\b';
-      case 'e': return '\x1b';
       case 'f': return '\f';
       case 'n': return '\n';
       case 'r': return '\r';

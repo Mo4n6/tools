@@ -6,12 +6,14 @@ Design spec: [`docs/husk-spec.md`](../../../docs/husk-spec.md).
 
 ## Status
 
-Phase 0 complete. Phase 1 in progress: the tokenizer is done and agrees with
-real PowerShell on 100% of the oracle corpus; the decoder pipeline is next. Target corpus is commodity IR — see
+Phase 1 complete. The tokenizer agrees with real PowerShell on 100% of the
+oracle corpus, and the pipeline recovers **79.1% (193/244)** of the
+deobfuscation corpus with **zero silent failures**. Target corpus is commodity IR — see
 [spec section 9](../../../docs/husk-spec.md).
 
 - `core/` — the taint-aware value model, gap ledger and execution trace.
 - `corpus/` — generated ground truth. Test-only; never imported by the app.
+- `eval/` — the expression parser, constant folder and deobfuscation pipeline.
 - `lexer/` — character classification, the token model, and the tokenizer.
 
 ## `corpus/`
@@ -152,6 +154,51 @@ get wrong:
 - **A quote part-way through a command argument opens a quoted section, not a
   new string.** That is what makes the tail of a `powershell "..."` launcher
   one `Generic` token, spaces included.
+
+## `eval/`
+
+The pipeline runs two engines per layer:
+
+- **Recipes** (`pipeline.ts`, `charArray.ts`) pattern-match whole-command
+  launcher shapes at the text level: `-EncodedCommand`, Deflate/Gzip over
+  base64, and the Ascii/Hex/Octal/Binary/BXOR character-array encoders. Their
+  surrounding `ForEach-Object` pipelines need the phase 2 evaluator, but the
+  transforms themselves are mechanical.
+- **Expression folding** (`parser.ts`, `evaluator.ts`, `members.ts`) evaluates
+  constant expressions through the taint-aware value model. This is what
+  unwraps token and string obfuscation.
+
+`canonicalize.ts` runs first with lossless spelling fixes — escape backticks,
+braced variable names, quoted member names, and method-reference `.Invoke`.
+
+Every member access, static call and cast routes through `members.ts`, which is
+spec commitment 3: a sample cannot reach .NET by another spelling, because
+there is no other path.
+
+### Coverage
+
+`__tests__/corpus.test.ts` asserts an overall floor plus per-transform floors,
+so one family cannot quietly collapse while the total holds. It also asserts
+the honesty contract directly: **every fixture Husk fails to recover must
+record a gap naming why.** That test is what forced `recordResidue` to exist.
+
+### Things the corpus corrected
+
+- **PowerShell's `-split` operator is case-insensitive; `.split()` is not.** A
+  chain declaring `-Split'A'` also splits on every lowercase `a`. Treating it
+  as case-sensitive did not fail loudly — `parseInt` truncated at the missed
+  delimiters and dropped characters out of the decoded script.
+- **Escape rules are 5.1's, not 7's.** Windows PowerShell 5.1 has no `` `e ``
+  escape, so decoding a 5.1-targeted sample with 6+ rules turns the `e` in a
+  backtick-broken identifier into ESC and corrupts the name.
+- **`&('Wri'+'te-Host') "x"` computes a command *name*, not a payload.**
+  Treating the argument as the next layer silently discarded the call's own
+  arguments.
+- **Only a `(` touching its name is an argument list.** `Write-Host ('a'+'b')`
+  has a space and folds; `.GetBytes("x")` does not and must keep its parens.
+- **Scripts are statements, not one expression.** Parsing the whole source as a
+  single expression made everything after the first statement invisible; adding
+  statement splitting moved the Command family from 30% to 83%.
 
 ## Tests
 

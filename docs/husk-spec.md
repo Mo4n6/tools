@@ -98,6 +98,14 @@ implement them. This is permanent incremental work, driven by §6.
 **These are priors, not results.** Replace them with corpus numbers as soon as
 §6 exists.
 
+### Measured, phase 1
+
+Against the generated corpus (244 fixtures, 17 transforms): **193 recovered
+(79.1%), 0 silent failures.** Fully recovered families: Compressed, Ascii,
+BXOR, token-level String, Variable, RandomWhitespace and Comment. Still at
+zero: the SpecialCharOnly and Whitespace encoders and token-level Type, all of
+which need statement-level evaluation — that is, phase 2.
+
 ### The coverage trap
 
 Coverage is not `P(member implemented)`. It is `P(every member in this script is
