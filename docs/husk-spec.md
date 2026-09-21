@@ -98,6 +98,23 @@ implement them. This is permanent incremental work, driven by §6.
 **These are priors, not results.** Replace them with corpus numbers as soon as
 §6 exists.
 
+### Measured, phase 1
+
+Two corpora, because they answer different questions.
+
+**Single-transform** (244 fixtures, 17 transforms): **197 recovered (80.7%),
+0 silent failures.** This answers "can Husk undo transform X".
+
+**Layered** (864 fixtures stacking 2–3 transforms): **434 recovered (50.2%)** —
+67.4% at two layers, 41.7% at three. This answers "can it undo X inside Y
+inside Z", which is the shape real droppers have and therefore the honest
+number. The single-transform figure flatters the tool and should never be
+quoted on its own.
+
+The gap between them is the lesson: a small corpus of isolated transforms made
+coverage look nearly twice as good as it was. Ranked blockers on the layered
+corpus drive what gets built next.
+
 ### The coverage trap
 
 Coverage is not `P(member implemented)`. It is `P(every member in this script is
@@ -130,9 +147,17 @@ These five cannot be retrofitted. Everything else is refactorable.
    This is what makes instrumentation free and bypass impossible.
 4. **Worker isolation with step and wall-clock budgets**, from the start.
    Anti-analysis loops will otherwise hang the tab.
-5. **`connect-src 'none'` in the CSP, from the first commit.** Analysts are
-   pasting live malware. "This never phones home" must be provable from the
-   headers, not promised in a README.
+5. **`connect-src 'none'` in the CSP.** Analysts are pasting live malware.
+   "This never phones home" must be provable from the headers, not promised in
+   a README.
+
+   **Status: not delivered.** The CSP is document-wide and sibling tools in the
+   shell need network access, so a blanket policy would break them. The route
+   is the Dead Letter precedent - a standalone page with its own policy - which
+   needs a second build entry. Until then the property is asserted by tests
+   (no `fetch`, no `XMLHttpRequest`, no `eval`, no `Function`), which proves
+   the code does not reach for the network but not that the browser would stop
+   it. Weaker, and named as such rather than glossed.
 
 ### And one prohibition
 
@@ -164,6 +189,32 @@ Two things fall out of this for free:
 ## 5) The emulated environment
 
 Environment is a first-class, analyst-editable input — not hardcoded.
+
+### Known constants are a phase 1 concern, not phase 3
+
+Measured against the generated corpus: **16% of commodity fixtures reference an
+automatic or environment variable**, and they do it to rebuild `IEX` out of
+character indices rather than write it literally. Real examples from the
+corpus:
+
+```powershell
+&( $verboSeprEFerEncE.TOsTRINg()[1,3]+'X'-jOin'')   # "SilentlyContinue"[1,3] -> "ie" + X
+.( $eNV:cOmSPEc[4,15,25]-JOiN'')                    # "C:\WINDOWS\system32\cmd.exe" -> "iex"
+```
+
+Frequencies across 244 fixtures: `$PSHome` 17, `$VerbosePreference` 10,
+`$env:ComSpec` 10, `$ShellId` 3.
+
+Crucially these are **not** environmental keying. They are fixed, well-known
+constants, identical on every Windows host: `$VerbosePreference` is
+`SilentlyContinue`, `$env:ComSpec` is `C:\WINDOWS\system32\cmd.exe`,
+`$ShellId` is `Microsoft.PowerShell`. A small static table resolves all of
+them, and no analyst input is required.
+
+But without that table, a sixth of commodity samples cannot even reach their
+`IEX` — the dispatch target is unresolvable and the unwrap stops at layer 0.
+So the table ships in phase 1. The *editable* environment panel, for genuine
+victim-specific keying, remains phase 3.
 
 **Synthesise freely for incidental use.** Most environment access in real
 samples builds a drop path or a mutex name: `$env:TEMP`, `$env:APPDATA`, `$PID`.
@@ -328,18 +379,53 @@ enters the runtime.
 - **Hard rule: every line of interpreter must be justified by a corpus
   failure.** This is what keeps the project finite.
 
-## 9) Open questions
+## 9) Target corpus: commodity IR
 
-- Target corpus: commodity IR (malspam droppers, coinminers) or red-team/APT
-  tradecraft? The first is mostly encoding layers and lands near the top of the
-  §2 estimates. The second leans harder on environmental keying and reflection,
-  and the honest ceiling is meaningfully lower.
+**Decided.** Husk targets commodity incident-response samples: malspam
+droppers, loaders, coinminers, infostealers.
+
+This is the right target because commodity obfuscation is **automated and
+anti-signature** rather than anti-analysis. A builder kit or Invoke-Obfuscation
+is applied to a template, producing `-EncodedCommand`, base64+gzip, concat,
+`-f`, char arrays and random casing over a launcher -> decode -> `IEX` ->
+stage 2 structure. The defining property is that **decoding is self-contained**:
+whatever key exists is in the script, because the goal is beating AV, not
+beating an analyst. High volume, low variation, mechanically unwrappable. This
+is where the ~99% in §2 lives.
+
+Red-team and APT tradecraft is the opposite: hand-built and deliberately
+anti-analysis, leaning on reflection, P/Invoke, shellcode, environmental
+keying, kill dates and remote staging — that is, directly on the three
+information-theoretic blocks. Not excluded, but not what the build order
+optimises for.
+
+### Not a runtime mode
+
+Commodity vs red-team is **not** a switch the analyst sets. Which kind of
+sample it is, is a conclusion rather than an input: requiring it up front
+inverts the workflow, and a wrong guess makes the tool behave wrong. It also
+buys nothing internally — same lexer, same decode logic, so two modes would be
+two code paths to test for no coverage gain.
+
+What is real, and what the UI should carry instead:
+
+- **Classification as output.** The trace already records reflection,
+  environmental keying and kill-date checks, so the tool can report
+  *"APT-shaped tradecraft"* from what it observed.
+- **Effort knobs**, which genuinely are settings: step and wall-clock budgets,
+  bounded brute-force on or off, environment panel expanded or collapsed.
+- **A Triage / Deep preset** over those knobs. Honest semantics: how hard the
+  tool works, not what kind of malware it is looking at. Individual knobs stay
+  adjustable underneath.
+
+## 10) Open questions
+
 - Ship threshold: phases 1+3 early, or hold for phase 2 depth? Spec assumes
   early.
 - Whether the lexer is a selective port of `tokenizer.cs` or built from the
   3.0 specification with the source consulted for edge cases.
 
-## 10) Prior art
+## 11) Prior art
 
 `PSDecode`, `PowerDecode`, `Invoke-Deobfuscation` — all require a real
 PowerShell host, and all use cmdlet-override architectures with the bypass

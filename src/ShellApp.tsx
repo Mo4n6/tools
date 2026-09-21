@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import MomoroReaderApp from './App';
 import BinauralBeatsApp from './features/binaural-beats/BinauralBeatsApp';
 import DeadLetterApp from './features/dead-letter/DeadLetterApp';
+import HuskApp from './features/husk/HuskApp';
 
 type ToolDefinition = {
   path: string;
@@ -41,6 +42,13 @@ const toolDefinitions: ToolDefinition[] = [
     label: 'Dead Letter',
     description: 'Offline .eml/.msg viewer and header analysis.',
     render: () => <DeadLetterApp />,
+    available: true,
+  },
+  {
+    path: '/husk',
+    label: 'Husk',
+    description: 'Deobfuscate malicious PowerShell and extract IOCs, offline.',
+    render: () => <HuskApp />,
     available: true,
   },
   {
