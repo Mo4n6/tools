@@ -1,3 +1,6 @@
+// Husk - PowerShell deobfuscation and IOC extraction, fully browser-local.
+// Copyright (c) 2026 Mo (@Mo4n6) - https://github.com/Mo4n6/tools
+//
 // The deobfuscation pipeline.
 //
 // Husk's equivalent of Didier Stevens' eval log: each time a script decodes
@@ -13,7 +16,7 @@
 // Anything neither engine handles is recorded as a gap, never guessed at.
 
 import { Trace } from '../core/trace';
-import { CLEAN, type Taint, markOutput } from '../core/taint';
+import { CLEAN, type Taint, markOutput, taintFrom } from '../core/taint';
 import { toStringValue } from '../core/value';
 import { TokenKind } from '../lexer/tokenKind';
 import { tokenize } from '../lexer/tokenizer';
@@ -89,12 +92,25 @@ const compressed: Recipe = {
   },
 };
 
+/**
+ * Something that runs what it is given. Decoded bytes only become the next
+ * *layer* when they reach one of these: otherwise the bytes are data the
+ * script merely assigned, hashed or planted as a decoy, and replacing the
+ * layer with them would discard the script that actually runs.
+ */
+const EXECUTION_SINK =
+  /\b(?:iex|invoke-expression)\b|\|\s*[&.]?\s*['"]?\s*i?ex\b|\.\s*Invoke\s*\(|\bInvoke-Command\b|\[scriptblock\]|\bNewScriptBlock\b/i;
+
 /** A bare base64 blob decoded to UTF-8, e.g. [Convert]::FromBase64String. */
 const base64Utf8: Recipe = {
   name: 'base64',
   apply: async (source) => {
     if (/frombase64string/i.test(source) === false) return undefined;
     if (/(deflate|gzip)stream/i.test(source)) return undefined; // handled above
+
+    // Without a sink the decoded bytes are data, not the next stage. The IOC
+    // extractor still reports the blob; only layer promotion is withheld.
+    if (!EXECUTION_SINK.test(source)) return undefined;
 
     const match = /frombase64string\s*\(\s*['"]([A-Za-z0-9+/=\s]+)['"]/i.exec(source);
     if (!match) return undefined;
@@ -346,26 +362,34 @@ export async function deobfuscate(
   options: DeobfuscateOptions = {},
 ): Promise<DeobfuscateResult> {
   const maxLayers = options.maxLayers ?? DEFAULTS.maxLayers;
-  const deadline = Date.now() + (options.timeBudgetMs ?? DEFAULTS.timeBudgetMs);
+  const timeBudgetMs = options.timeBudgetMs ?? DEFAULTS.timeBudgetMs;
+  const deadline = Date.now() + timeBudgetMs;
 
   const trace = new Trace(source);
   const seen = new Set<string>([source]);
   let current = source;
+  // True when the loop ended because it ran out of iterations rather than
+  // because unwrapping finished. That output is still obfuscated and must not
+  // be reported as a resolved final stage.
+  let exhaustedLayers = true;
 
   for (let depth = 0; depth < maxLayers; depth += 1) {
     if (Date.now() > deadline) {
-      trace.gaps.report({
+      const id = trace.gaps.report({
         kind: 'GAP',
         signature: 'time budget exhausted',
         argTypes: [],
         provenance: { layer: depth },
-        detail: `stopped after ${maxLayers} layers or ${options.timeBudgetMs ?? DEFAULTS.timeBudgetMs}ms`,
+        detail: `stopped after ${timeBudgetMs}ms`,
       });
+      trace.taintDeepest(taintFrom(id));
+      exhaustedLayers = false;
       break;
     }
 
     const next = await unwrapOnce(current, trace, depth);
     if (!next) {
+      exhaustedLayers = false;
       // Stopping is only honest if it says so. If the residue still carries
       // obfuscation Husk recognises but could not resolve, that is a gap, not
       // a finished unwrap.
@@ -374,11 +398,25 @@ export async function deobfuscate(
     }
 
     // A layer that repeats one already seen is a loop, not progress.
-    if (seen.has(next.text)) break;
+    if (seen.has(next.text)) {
+      exhaustedLayers = false;
+      break;
+    }
     seen.add(next.text);
 
     trace.addLayer(next.text, next.origin, next.taint);
     current = next.text;
+  }
+
+  if (exhaustedLayers) {
+    const id = trace.gaps.report({
+      kind: 'GAP',
+      signature: 'layer budget exhausted',
+      argTypes: [],
+      provenance: { layer: trace.deepest.index },
+      detail: `stopped after ${maxLayers} layers while still making progress`,
+    });
+    trace.taintDeepest(taintFrom(id));
   }
 
   markOutput(trace.gaps, trace.deepest.taint);
@@ -416,13 +454,15 @@ const RESIDUE_MARKERS: ReadonlyArray<[RegExp, string]> = [
 function recordResidue(source: string, trace: Trace, layer: number): void {
   for (const [pattern, signature] of RESIDUE_MARKERS) {
     if (!pattern.test(source)) continue;
-    trace.gaps.report({
+    const id = trace.gaps.report({
       kind: 'GAP',
       signature,
       argTypes: [],
       provenance: { layer },
       detail: 'recognised but not resolvable without the phase 2 evaluator',
     });
+    // The deepest layer depends on this, so it must stop reading as reliable.
+    trace.taintDeepest(taintFrom(id));
     return;
   }
 }

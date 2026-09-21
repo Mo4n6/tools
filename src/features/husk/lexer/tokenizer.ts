@@ -1,3 +1,6 @@
+// Husk - PowerShell deobfuscation and IOC extraction, fully browser-local.
+// Copyright (c) 2026 Mo (@Mo4n6) - https://github.com/Mo4n6/tools
+//
 // The Husk PowerShell tokenizer.
 //
 // Scope is the subset obfuscated commodity droppers emit, not all of

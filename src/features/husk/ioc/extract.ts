@@ -1,3 +1,6 @@
+// Husk - PowerShell deobfuscation and IOC extraction, fully browser-local.
+// Copyright (c) 2026 Mo (@Mo4n6) - https://github.com/Mo4n6/tools
+//
 // IOC extraction across every decoded layer.
 //
 // This runs over the whole trace, not just the final stage, because a sample

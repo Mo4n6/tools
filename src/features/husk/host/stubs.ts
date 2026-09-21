@@ -1,3 +1,6 @@
+// Husk - PowerShell deobfuscation and IOC extraction, fully browser-local.
+// Copyright (c) 2026 Mo (@Mo4n6) - https://github.com/Mo4n6/tools
+//
 // Host stubs: the constructs Husk recognises but will never perform.
 //
 // Every one of these is recorded as STUB_BY_DESIGN rather than GAP. That

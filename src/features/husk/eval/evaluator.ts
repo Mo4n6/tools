@@ -16,6 +16,7 @@ import {
   toArrayValue,
   toStringValue,
   typeNameOf,
+  withTaint,
 } from '../core/value';
 import type { Trace } from '../core/trace';
 import { TokenKind } from '../lexer/tokenKind';
@@ -250,7 +251,16 @@ function splitOperator(
   let parts: string[] = [subject];
   for (const separator of separators) {
     if (separator === '') continue;
-    const pattern = new RegExp(escapeRegExp(separator), caseSensitive ? 'g' : 'gi');
+    // PowerShell's -split takes a regular expression, so '\d' splits on any
+    // digit rather than on the two literal characters. (The .Split() *method*
+    // is literal, and lives in members.ts.) A pattern JavaScript cannot
+    // compile falls back to a literal search rather than failing the run.
+    let pattern: RegExp;
+    try {
+      pattern = new RegExp(separator, caseSensitive ? 'g' : 'gi');
+    } catch {
+      pattern = new RegExp(escapeRegExp(separator), caseSensitive ? 'g' : 'gi');
+    }
     parts = parts.flatMap((part) => part.split(pattern));
   }
   return psArray(parts.map((p) => psString(p)), taint);
@@ -274,9 +284,13 @@ function replaceOperator(
   } catch {
     regex = new RegExp(escapeRegExp(pattern), caseSensitive ? 'g' : 'gi');
   }
-  // .NET uses $1 for groups, which JavaScript shares, but $$ differs enough
-  // that a literal replacement is the safer reading for obfuscated input.
-  return psString(subject.replace(regex, () => replacement), taint);
+  // .NET substitutions must be honoured: '(a)(b)' -replace '$2$1' is 'ba',
+  // not the literal '$2$1'. JavaScript shares $1..$9, $&, $` and $', and
+  // treats $$ as an escaped dollar the same way, so the replacement string
+  // can be passed through. The one divergence is .NET's named-group syntax
+  // ${name}, which JavaScript spells $<name>.
+  const jsReplacement = replacement.replace(/\$\{(\w+)\}/g, '$<$1>');
+  return psString(subject.replace(regex, jsReplacement), taint);
 }
 
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -316,7 +330,11 @@ function elementAt(target: PSValue, index: number, taint: Taint): PSValue {
   if (target.kind === 'array') {
     const i = index < 0 ? target.items.length + index : index;
     const item = target.items[i];
-    return item === undefined ? psNull(taint) : item;
+    if (item === undefined) return psNull(taint);
+    // The element carries its own taint, but the container's and the index's
+    // matter too: splitting a host-derived string yields a tainted array of
+    // clean pieces, and returning one raw would make it look trustworthy.
+    return withTaint(item, taint);
   }
   const text = toStringValue(target);
   const i = index < 0 ? text.length + index : index;

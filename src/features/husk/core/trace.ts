@@ -5,7 +5,7 @@
 // a layer, and the analyst reads the layers rather than the original.
 
 import { GapLedger, type GapRecord, type Provenance } from './gaps';
-import { type Taint, isTainted, markOutput } from './taint';
+import { type Taint, isTainted, markOutput, union } from './taint';
 
 /** How a layer came to exist. */
 export type LayerOrigin =
@@ -82,6 +82,22 @@ export class Trace {
     // a gap the report must surface prominently.
     markOutput(this.gaps, taint);
     return layer;
+  }
+
+  /**
+   * Mark the deepest layer as depending on something Husk could not resolve.
+   *
+   * Recording a gap in the ledger is not enough on its own: `isReliable`
+   * reads layer and event taint, so an unresolved residue would otherwise be
+   * reported as a trustworthy final stage - the exact silent-confidence
+   * failure the design exists to avoid.
+   */
+  taintDeepest(taint: Taint): void {
+    if (!isTainted(taint)) return;
+    const last = this.layerList.length - 1;
+    const layer = this.layerList[last];
+    this.layerList[last] = { ...layer, taint: union(layer.taint, taint) };
+    markOutput(this.gaps, taint);
   }
 
   addEvent(event: TraceEvent): void {

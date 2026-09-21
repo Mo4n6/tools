@@ -1,5 +1,9 @@
+// Husk - PowerShell deobfuscation and IOC extraction, fully browser-local.
+// Copyright (c) 2026 Mo (@Mo4n6) - https://github.com/Mo4n6/tools
+//
 import { useCallback, useMemo, useState } from 'react';
 
+import { HUSK_AUTHOR, HUSK_AUTHOR_URL, HUSK_COPYRIGHT, HUSK_SOURCE_URL } from './attribution';
 import type { GapRecord } from './core/gaps';
 import type { Ioc, IocKind } from './ioc/types';
 import { useHusk } from './useHusk';
@@ -209,6 +213,32 @@ const HuskApp = (): JSX.Element => {
           )}
         </section>
       </div>
+
+      <footer className="mt-6 border-t border-emerald-500/20 pt-3 text-xs text-emerald-300/50">
+        <span>{HUSK_COPYRIGHT}</span>
+        <span aria-hidden="true"> · </span>
+        <a
+          className="underline hover:text-emerald-200"
+          href={HUSK_AUTHOR_URL}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          @{HUSK_AUTHOR}
+        </a>
+        <span aria-hidden="true"> · </span>
+        <a
+          className="underline hover:text-emerald-200"
+          href={HUSK_SOURCE_URL}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          source
+        </a>
+        <span aria-hidden="true"> · </span>
+        <span>
+          Lexer tables ported from PowerShell (MIT), Copyright (c) Microsoft Corporation.
+        </span>
+      </footer>
     </div>
   );
 };
