@@ -328,18 +328,53 @@ enters the runtime.
 - **Hard rule: every line of interpreter must be justified by a corpus
   failure.** This is what keeps the project finite.
 
-## 9) Open questions
+## 9) Target corpus: commodity IR
 
-- Target corpus: commodity IR (malspam droppers, coinminers) or red-team/APT
-  tradecraft? The first is mostly encoding layers and lands near the top of the
-  §2 estimates. The second leans harder on environmental keying and reflection,
-  and the honest ceiling is meaningfully lower.
+**Decided.** Husk targets commodity incident-response samples: malspam
+droppers, loaders, coinminers, infostealers.
+
+This is the right target because commodity obfuscation is **automated and
+anti-signature** rather than anti-analysis. A builder kit or Invoke-Obfuscation
+is applied to a template, producing `-EncodedCommand`, base64+gzip, concat,
+`-f`, char arrays and random casing over a launcher -> decode -> `IEX` ->
+stage 2 structure. The defining property is that **decoding is self-contained**:
+whatever key exists is in the script, because the goal is beating AV, not
+beating an analyst. High volume, low variation, mechanically unwrappable. This
+is where the ~99% in §2 lives.
+
+Red-team and APT tradecraft is the opposite: hand-built and deliberately
+anti-analysis, leaning on reflection, P/Invoke, shellcode, environmental
+keying, kill dates and remote staging — that is, directly on the three
+information-theoretic blocks. Not excluded, but not what the build order
+optimises for.
+
+### Not a runtime mode
+
+Commodity vs red-team is **not** a switch the analyst sets. Which kind of
+sample it is, is a conclusion rather than an input: requiring it up front
+inverts the workflow, and a wrong guess makes the tool behave wrong. It also
+buys nothing internally — same lexer, same decode logic, so two modes would be
+two code paths to test for no coverage gain.
+
+What is real, and what the UI should carry instead:
+
+- **Classification as output.** The trace already records reflection,
+  environmental keying and kill-date checks, so the tool can report
+  *"APT-shaped tradecraft"* from what it observed.
+- **Effort knobs**, which genuinely are settings: step and wall-clock budgets,
+  bounded brute-force on or off, environment panel expanded or collapsed.
+- **A Triage / Deep preset** over those knobs. Honest semantics: how hard the
+  tool works, not what kind of malware it is looking at. Individual knobs stay
+  adjustable underneath.
+
+## 10) Open questions
+
 - Ship threshold: phases 1+3 early, or hold for phase 2 depth? Spec assumes
   early.
 - Whether the lexer is a selective port of `tokenizer.cs` or built from the
   3.0 specification with the source consulted for edge cases.
 
-## 10) Prior art
+## 11) Prior art
 
 `PSDecode`, `PowerDecode`, `Invoke-Deobfuscation` — all require a real
 PowerShell host, and all use cmdlet-override architectures with the bypass

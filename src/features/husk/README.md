@@ -6,8 +6,33 @@ Design spec: [`docs/husk-spec.md`](../../../docs/husk-spec.md).
 
 ## Status
 
-Phase 0/1 groundwork. The lexer's character classification and token model are
-in place; the tokenizer itself is not yet written.
+Phase 0 complete; phase 1 not started. Target corpus is commodity IR — see
+[spec section 9](../../../docs/husk-spec.md).
+
+- `core/` — the taint-aware value model, gap ledger and execution trace.
+- `lexer/` — character classification and the token model. The tokenizer
+  itself is not yet written.
+
+## `core/`
+
+The three pieces that cannot be retrofitted later:
+
+- **`value.ts`** — `PSValue`, where every value carries taint. Containers union
+  their elements' taint, so a tainted value cannot hide inside an array or
+  hashtable and re-emerge looking trustworthy.
+- **`taint.ts`** — propagation. Taint is a set of gap ids rather than a
+  boolean, so any unreliable output can name exactly what made it unreliable.
+  Clean evaluation allocates nothing: `union` returns the shared `CLEAN` set,
+  or reuses its single tainted input.
+- **`gaps.ts`** — the ledger. Gaps deduplicate by kind and signature, so a
+  member called in a loop is one record with a large blast radius rather than
+  ten thousand rows. `GAP`, `STUB_BY_DESIGN` and `HARD_BLOCK` are never
+  conflated; only `GAP` reaches the actionable queue.
+- **`trace.ts`** — decoded layers and events. This is the Didier Stevens eval
+  log: each `IEX` hands back a layer with its provenance.
+
+Note that `propagate()` counts toward blast radius while `union()` does not.
+Bookkeeping must not inflate the implementation queue's ranking.
 
 ## Ported code
 
