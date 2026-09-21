@@ -1,0 +1,20 @@
+{
+  "artifacts": [
+    {
+      "id": "powershell:parser-tables",
+      "packageOrModelName": "PowerShell / System.Management.Automation parser",
+      "versionOrHash": "b4831e5a6886666f327cce75c46e974db0e10fa0",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/PowerShell/PowerShell",
+      "attributionText": "Portions of the Husk lexer are ported from PowerShell (MIT), Copyright (c) Microsoft Corporation. Ported files: src/System.Management.Automation/engine/parser/CharTraits.cs and token.cs.",
+      "portedFiles": [
+        "src/System.Management.Automation/engine/parser/CharTraits.cs",
+        "src/System.Management.Automation/engine/parser/token.cs"
+      ],
+      "generatedBy": [
+        "scripts/port-char-traits.mjs",
+        "scripts/port-tokens.mjs"
+      ]
+    }
+  ]
+}
