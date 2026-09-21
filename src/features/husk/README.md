@@ -10,8 +10,43 @@ Phase 0 complete; phase 1 not started. Target corpus is commodity IR — see
 [spec section 9](../../../docs/husk-spec.md).
 
 - `core/` — the taint-aware value model, gap ledger and execution trace.
+- `corpus/` — generated ground truth. Test-only; never imported by the app.
 - `lexer/` — character classification and the token model. The tokenizer
   itself is not yet written.
+
+## `corpus/`
+
+Ground truth we did not author, so a fixture cannot encode the same
+misunderstanding as the code it tests. Both files are generated and committed,
+so tests run without PowerShell installed.
+
+| File | Contents | Generator |
+|---|---|---|
+| `fixtures/invoke-obfuscation.json` | 244 (obfuscated, expected) pairs across 17 transforms | `scripts/husk/generate-corpus.ps1` |
+| `fixtures/lexer-oracle.json` | 269 cases, ~7.4k ground-truth tokens from the real PowerShell tokenizer | `scripts/husk/generate-lexer-oracle.ps1` |
+
+```sh
+npm run husk:corpus -- -InvokeObfuscationPath /path/to/Invoke-Obfuscation
+npm run husk:oracle
+```
+
+Requires `pwsh` and a clone of
+[Invoke-Obfuscation](https://github.com/danielbohannon/Invoke-Obfuscation).
+Payloads are benign by design — no malware is committed here.
+
+### Two things worth knowing
+
+**No-ops are dropped at generation.** `Out-ObfuscatedTokenCommand` only
+transforms the token type it is asked for, so a payload with no member access
+returns byte-identical output for `-TokenTypeToObfuscate Member`. The first
+corpus run was 42% such fixtures. They are worse than useless: a deobfuscator
+that did nothing would pass them and inflate the coverage number. The
+`all-token-types` payload exists so every token type has something to work on.
+
+**Five oracle cases have `errorCount > 0`.** Those are
+`Out-EncodedSpecialCharOnlyCommand` launchers, which wrap their payload for
+`cmd.exe` and so are not standalone PowerShell. `lexableCases()` excludes them
+from token-stream equality; they remain useful as launcher-wrapper samples.
 
 ## `core/`
 

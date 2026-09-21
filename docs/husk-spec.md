@@ -165,6 +165,32 @@ Two things fall out of this for free:
 
 Environment is a first-class, analyst-editable input — not hardcoded.
 
+### Known constants are a phase 1 concern, not phase 3
+
+Measured against the generated corpus: **16% of commodity fixtures reference an
+automatic or environment variable**, and they do it to rebuild `IEX` out of
+character indices rather than write it literally. Real examples from the
+corpus:
+
+```powershell
+&( $verboSeprEFerEncE.TOsTRINg()[1,3]+'X'-jOin'')   # "SilentlyContinue"[1,3] -> "ie" + X
+.( $eNV:cOmSPEc[4,15,25]-JOiN'')                    # "C:\WINDOWS\system32\cmd.exe" -> "iex"
+```
+
+Frequencies across 244 fixtures: `$PSHome` 17, `$VerbosePreference` 10,
+`$env:ComSpec` 10, `$ShellId` 3.
+
+Crucially these are **not** environmental keying. They are fixed, well-known
+constants, identical on every Windows host: `$VerbosePreference` is
+`SilentlyContinue`, `$env:ComSpec` is `C:\WINDOWS\system32\cmd.exe`,
+`$ShellId` is `Microsoft.PowerShell`. A small static table resolves all of
+them, and no analyst input is required.
+
+But without that table, a sixth of commodity samples cannot even reach their
+`IEX` — the dispatch target is unresolvable and the unwrap stops at layer 0.
+So the table ships in phase 1. The *editable* environment panel, for genuine
+victim-specific keying, remains phase 3.
+
 **Synthesise freely for incidental use.** Most environment access in real
 samples builds a drop path or a mutex name: `$env:TEMP`, `$env:APPDATA`, `$PID`.
 Any plausible value produces structurally correct output ("drops to

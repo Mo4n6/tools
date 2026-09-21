@@ -14,6 +14,8 @@
     "test": "vitest run",
     "check:tts-manifest": "node scripts/check-tts-manifest.mjs",
     "port:powershell": "node scripts/port-powershell.mjs",
+    "husk:corpus": "pwsh -NoProfile -File scripts/husk/generate-corpus.ps1",
+    "husk:oracle": "pwsh -NoProfile -File scripts/husk/generate-lexer-oracle.ps1",
     "check:browser-imports": "node scripts/check-browser-imports.mjs",
     "check:kokoro-chunk": "node scripts/check-kokoro-chunk.mjs",
     "check:deployed-assets": "node scripts/check-deployed-assets.mjs"
