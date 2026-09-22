@@ -31,7 +31,7 @@ HISTORY = ROOT / "src/features/rotation-goblin/rotation-history.json"
 VALUATION_OUT = ROOT / "src/features/rotation-goblin/valuationData.generated.ts"
 
 TICKERS = [
-    "SPY", "XLE", "XLF", "XLB", "XLU", "XLV", "XLI", "IWM",
+    "SPY", "XLE", "XLF", "XLB", "XLU", "XLV", "XLI", "XLK", "SMH", "IWM",
     "IYR", "EFA", "EEM", "GLD", "TLT", "PDBC", "KMLM", "UUP",
 ]
 

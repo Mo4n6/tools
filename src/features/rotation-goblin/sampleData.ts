@@ -52,6 +52,8 @@ const assetMeta: AssetMeta[] = [
   { ticker:'XLU', theme:'Utilities' },
   { ticker:'XLV', theme:'Health Care' },
   { ticker:'XLI', theme:'Industrials' },
+  { ticker:'XLK', theme:'Technology' },
+  { ticker:'SMH', theme:'Semiconductors' },
   { ticker:'IWM', theme:'U.S. Small Caps' },
   { ticker:'IYR', theme:'U.S. Real Estate' },
   { ticker:'EFA', theme:'Developed ex-U.S.' },
@@ -197,6 +199,8 @@ const dollar = technical('UUP');
 const bonds = technical('TLT');
 const smallCaps = technical('IWM');
 const gold = technical('GLD');
+const technology = technical('XLK');
+const semiconductors = technical('SMH');
 
 const spyRiskOn = benchmarkSnapshot.above200d && benchmarkSnapshot.ret3m > 0;
 const spyRiskOff = !benchmarkSnapshot.above200d && benchmarkSnapshot.ret3m < 0;
@@ -232,6 +236,16 @@ export const regimeCards = [
     label:'Gold vs SPY',
     ...directional(gold?.rel3m ?? 0,'OUTPERFORM','LAGGING'),
     note:`${gold?.rel3m && gold.rel3m > 0 ? '+' : ''}${(gold?.rel3m ?? 0).toFixed(1)}% relative / 3M`,
+  },
+  {
+    label:'Tech vs SPY',
+    ...directional(technology?.rel3m ?? 0,'OUTPERFORM','LAGGING'),
+    note:`${technology?.rel3m && technology.rel3m > 0 ? '+' : ''}${(technology?.rel3m ?? 0).toFixed(1)}% relative / 3M`,
+  },
+  {
+    label:'Semis vs SPY',
+    ...directional(semiconductors?.rel3m ?? 0,'OUTPERFORM','LAGGING'),
+    note:`${semiconductors?.rel3m && semiconductors.rel3m > 0 ? '+' : ''}${(semiconductors?.rel3m ?? 0).toFixed(1)}% relative / 3M`,
   },
 ] as const;
 
