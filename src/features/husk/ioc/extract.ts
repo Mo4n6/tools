@@ -85,8 +85,25 @@ const RULES: readonly Rule[] = [
     normalize: (v) => v.toLowerCase(),
     reject: (value, context) => {
       if (BENIGN_HOSTS.has(value.toLowerCase())) return true;
-      // Already captured as part of a URL.
-      return new RegExp(`https?://[^\\s]*${escapeRegExp(value)}`, 'i').test(context);
+
+      // A real hostname is at most 253 characters. Anything longer matched
+      // something else - a hex-encoded PE reads as dotted labels, and real
+      // samples do contain those.
+      if (value.length > 253) return true;
+
+      // Already captured as part of a URL. This is a plain substring search
+      // on purpose: building a RegExp out of matched text crashed on real
+      // input, and escaping is not a fix when the text is unbounded.
+      const haystack = context.toLowerCase();
+      const needle = value.toLowerCase();
+      let from = 0;
+      for (;;) {
+        const at = haystack.indexOf(needle, from);
+        if (at === -1) return false;
+        const before = haystack.slice(Math.max(0, at - 12), at);
+        if (/:\/\/[^\s]*$/.test(before)) return true;
+        from = at + 1;
+      }
     },
   },
   {
@@ -132,7 +149,6 @@ const RULES: readonly Rule[] = [
   },
 ];
 
-const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** The base64 prefix an MZ/PE header produces, whatever the byte alignment. */
 const PE_BASE64_PREFIXES = ['TVqQ', 'TVpQ', 'TVoA', 'TVro', 'TVpB'];

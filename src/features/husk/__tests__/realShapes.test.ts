@@ -98,3 +98,35 @@ describe('hostname fragments are rejected', () => {
     expect(urls).toContain('http://203.0.113.5/a');
   });
 });
+
+describe('pathological input does not crash the extractor', () => {
+  // A hex-encoded PE reads as dotted labels and matched the domain rule.
+  // Building a RegExp out of that matched text threw "Invalid regular
+  // expression" on real samples - escaping is not a fix when the text is
+  // unbounded, so the check is a plain substring search now.
+  it('survives a hex blob that parses as a dotted hostname', async () => {
+    const hexPe = `4d5a90${'.g'.repeat(4000)}.com`;
+    await expect(analyze(`$b = '${hexPe}'`)).resolves.toBeDefined();
+  });
+
+  it('rejects an over-length hostname rather than reporting it', async () => {
+    const huge = `${'a.'.repeat(200)}com`;
+    const domains = (await analyze(`$x = '${huge}'`)).iocs.indicators
+      .filter((i) => i.kind === 'domain')
+      .map((i) => i.value);
+    expect(domains.every((d) => d.length <= 253)).toBe(true);
+  });
+
+  it('still suppresses a domain already captured inside a URL', async () => {
+    const indicators = (await analyze(`$u = 'http://evil.test/a'`)).iocs.indicators;
+    expect(indicators.filter((i) => i.kind === 'domain' && i.value === 'evil.test')).toHaveLength(0);
+    expect(indicators.some((i) => i.kind === 'url')).toBe(true);
+  });
+
+  it('still reports a bare domain that is not part of a URL', async () => {
+    const domains = (await analyze(`$h = 'badhost.top'`)).iocs.indicators
+      .filter((i) => i.kind === 'domain')
+      .map((i) => i.value);
+    expect(domains).toContain('badhost.top');
+  });
+});
