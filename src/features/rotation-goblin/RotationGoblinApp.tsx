@@ -116,20 +116,9 @@ const RotationGoblinApp = ():JSX.Element => {
     <div className="mx-auto max-w-[1500px] space-y-5 text-zinc-100">
       <section className="overflow-hidden rounded-xl border border-emerald-500/30 bg-gradient-to-br from-[#07110a] via-[#09130d] to-[#050706] p-6 shadow-[0_0_30px_rgba(16,185,129,0.1)]">
         <p className="text-xs font-semibold tracking-[0.24em] text-lime-300">SECTOR ROTATION RADAR</p>
-        <div className="mt-2 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <h1 className="text-4xl font-black tracking-tight text-emerald-100 md:text-6xl">Rotation Goblin 👹</h1>
-            <p className="mt-2 max-w-3xl text-emerald-300/75">Sniffing around the market for sectors the herd forgot about — then checking whether money has actually started rotating back in.</p>
-          </div>
-          <div className={`flex flex-col items-start gap-1 rounded-md border bg-black/20 px-3 py-2 text-xs ${dataHealthy ? 'border-emerald-500/20 text-emerald-300/60' : 'border-red-500/50 text-red-200'}`}>
-            <span className={pipelinePassed ? 'text-emerald-300' : 'text-red-300'}>{pipelinePassed ? '● PIPELINE OK' : '● PIPELINE FAILED'} • {dataMeta.pipeline.conclusion.toUpperCase()}</span>
-            <span className={technicalFresh ? 'text-emerald-300' : 'text-red-300'}>{technicalFresh ? 'CURRENT TECHNICALS' : 'STALE TECHNICALS'} • {dataMeta.technicals.source}</span>
-            <span className={valuationFresh ? 'text-emerald-300' : 'text-red-300'}>{valuationFresh ? 'CURRENT VALUATION' : 'STALE VALUATION'} • {dataMeta.valuations.providers.join(' + ')}</span>
-            <span>Snapshot {new Date(dataMeta.technicals.generatedAt).toLocaleString()}</span>
-            <span>Technical session {dataMeta.technicalSessionAsOf}</span>
-            <span>Valuation sources {dataMeta.oldestValuationSourceAsOf ?? '—'} → {dataMeta.newestValuationSourceAsOf ?? '—'}</span>
-            {dataMeta.pipeline.completedAt ? <span>Last run {new Date(dataMeta.pipeline.completedAt).toLocaleString()}</span> : null}
-          </div>
+        <div className="mt-2">
+          <h1 className="text-4xl font-black tracking-tight text-emerald-100 md:text-6xl">Rotation Goblin 👹</h1>
+          <p className="mt-2 max-w-3xl text-emerald-300/75">Sniffing around the market for sectors the herd forgot about — then checking whether money has actually started rotating back in.</p>
         </div>
       </section>
 
