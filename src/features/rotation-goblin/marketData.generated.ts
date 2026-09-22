@@ -15,15 +15,15 @@ export type GeneratedTechnicalRow = {
   rel12m: number;
   drawdown52w: number;
   above200d: boolean;
-  history: { month: string; value: number }[];
 };
 
 export const marketDataMeta = {
   "source": "Yahoo primary",
-  "generatedAt": "2026-09-22T17:13:48Z",
+  "generatedAt": "2026-09-22T18:30:41Z",
   "benchmark": "SPY",
   "live": true,
-  "note": "Technicals are automated. Rotation history uses automated sponsor valuation where applicable and technical-only scoring for non-earnings assets."
+  "canonicalHistory": "technical-state-history.json",
+  "note": "Live technicals and chart history are derived from the same canonical point-in-time technical-state store."
 } as const;
 
 export const benchmarkSnapshot = {
@@ -40,9 +40,9 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "ticker": "XLE",
     "price": 62.46,
     "asOf": "2026-09-21",
-    "rsi14w": 60.2,
+    "rsi14w": 60.16,
     "rsiTrend": "down",
-    "relativeRsi": 52.6,
+    "relativeRsi": 52.58,
     "relativeTrend": "down",
     "ret3m": 16.23,
     "rel1m": -3.07,
@@ -50,19 +50,13 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "rel6m": -10.4,
     "rel12m": 22.01,
     "drawdown52w": -4.7,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 60
-      }
-    ]
+    "above200d": true
   },
   {
     "ticker": "XLF",
     "price": 55.9,
     "asOf": "2026-09-21",
-    "rsi14w": 56.2,
+    "rsi14w": 56.21,
     "rsiTrend": "down",
     "relativeRsi": 41.4,
     "relativeTrend": "down",
@@ -72,19 +66,13 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "rel6m": -3.82,
     "rel12m": -11.1,
     "drawdown52w": -4.2,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 54
-      }
-    ]
+    "above200d": true
   },
   {
     "ticker": "XLB",
     "price": 49.71,
     "asOf": "2026-09-21",
-    "rsi14w": 45.9,
+    "rsi14w": 45.86,
     "rsiTrend": "down",
     "relativeRsi": 37.1,
     "relativeTrend": "down",
@@ -94,21 +82,15 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "rel6m": -10.59,
     "rel12m": -5.46,
     "drawdown52w": -6.95,
-    "above200d": false,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 38
-      }
-    ]
+    "above200d": false
   },
   {
     "ticker": "XLU",
     "price": 40.66,
     "asOf": "2026-09-21",
-    "rsi14w": 36.0,
+    "rsi14w": 36.01,
     "rsiTrend": "down",
-    "relativeRsi": 32.2,
+    "relativeRsi": 32.18,
     "relativeTrend": "down",
     "ret3m": -8.41,
     "rel1m": -7.97,
@@ -116,21 +98,15 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "rel6m": -22.44,
     "rel12m": -15.74,
     "drawdown52w": -13.03,
-    "above200d": false,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 26
-      }
-    ]
+    "above200d": false
   },
   {
     "ticker": "XLV",
     "price": 169.01,
     "asOf": "2026-09-21",
-    "rsi14w": 62.4,
+    "rsi14w": 62.42,
     "rsiTrend": "down",
-    "relativeRsi": 51.7,
+    "relativeRsi": 51.73,
     "relativeTrend": "down",
     "ret3m": 13.06,
     "rel1m": -3.21,
@@ -138,21 +114,15 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "rel6m": -1.78,
     "rel12m": 6.07,
     "drawdown52w": -3.43,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 53
-      }
-    ]
+    "above200d": true
   },
   {
     "ticker": "XLI",
     "price": 169.98,
     "asOf": "2026-09-21",
-    "rsi14w": 44.4,
+    "rsi14w": 44.43,
     "rsiTrend": "down",
-    "relativeRsi": 31.5,
+    "relativeRsi": 31.48,
     "relativeTrend": "down",
     "ret3m": -6.25,
     "rel1m": -6.76,
@@ -160,21 +130,15 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "rel6m": -11.59,
     "rel12m": -4.53,
     "drawdown52w": -8.62,
-    "above200d": false,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 20
-      }
-    ]
+    "above200d": false
   },
   {
     "ticker": "XLK",
     "price": 194.85,
     "asOf": "2026-09-21",
-    "rsi14w": 66.8,
+    "rsi14w": 66.82,
     "rsiTrend": "up",
-    "relativeRsi": 63.8,
+    "relativeRsi": 63.78,
     "relativeTrend": "up",
     "ret3m": 1.52,
     "rel1m": 4.78,
@@ -182,21 +146,15 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "rel6m": 20.59,
     "rel12m": 19.98,
     "drawdown52w": -1.46,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 61
-      }
-    ]
+    "above200d": true
   },
   {
     "ticker": "SMH",
     "price": 596.03,
     "asOf": "2026-09-21",
-    "rsi14w": 60.9,
+    "rsi14w": 60.87,
     "rsiTrend": "up",
-    "relativeRsi": 57.5,
+    "relativeRsi": 57.53,
     "relativeTrend": "up",
     "ret3m": -10.9,
     "rel1m": 4.18,
@@ -204,19 +162,13 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "rel6m": 29.24,
     "rel12m": 59.33,
     "drawdown52w": -10.9,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 55
-      }
-    ]
+    "above200d": true
   },
   {
     "ticker": "IWM",
     "price": 285.58,
     "asOf": "2026-09-21",
-    "rsi14w": 51.6,
+    "rsi14w": 51.61,
     "rsiTrend": "down",
     "relativeRsi": 36.9,
     "relativeTrend": "down",
@@ -226,13 +178,7 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "rel6m": -1.15,
     "rel12m": -0.47,
     "drawdown52w": -6.15,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 50
-      }
-    ]
+    "above200d": true
   },
   {
     "ticker": "IYR",
@@ -240,7 +186,7 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "asOf": "2026-09-21",
     "rsi14w": 45.3,
     "rsiTrend": "down",
-    "relativeRsi": 36.8,
+    "relativeRsi": 36.83,
     "relativeTrend": "down",
     "ret3m": -1.95,
     "rel1m": -6.48,
@@ -248,21 +194,15 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "rel6m": -10.62,
     "rel12m": -11.47,
     "drawdown52w": -7.11,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 35
-      }
-    ]
+    "above200d": true
   },
   {
     "ticker": "EFA",
     "price": 106.13,
     "asOf": "2026-09-21",
-    "rsi14w": 56.9,
+    "rsi14w": 56.94,
     "rsiTrend": "down",
-    "relativeRsi": 40.7,
+    "relativeRsi": 40.73,
     "relativeTrend": "down",
     "ret3m": 1.48,
     "rel1m": -2.77,
@@ -270,19 +210,13 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "rel6m": -3.9,
     "rel12m": -0.69,
     "drawdown52w": -2.46,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 53
-      }
-    ]
+    "above200d": true
   },
   {
     "ticker": "EEM",
     "price": 68.83,
     "asOf": "2026-09-21",
-    "rsi14w": 60.4,
+    "rsi14w": 60.44,
     "rsiTrend": "flat",
     "relativeRsi": 53.4,
     "relativeTrend": "up",
@@ -292,21 +226,15 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "rel6m": 3.74,
     "rel12m": 11.57,
     "drawdown52w": -3.34,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 67
-      }
-    ]
+    "above200d": true
   },
   {
     "ticker": "GLD",
     "price": 398.38,
     "asOf": "2026-09-21",
-    "rsi14w": 48.8,
+    "rsi14w": 48.81,
     "rsiTrend": "down",
-    "relativeRsi": 40.1,
+    "relativeRsi": 40.09,
     "relativeTrend": "down",
     "ret3m": 3.59,
     "rel1m": -5.65,
@@ -314,21 +242,15 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "rel6m": -19.6,
     "rel12m": 0.27,
     "drawdown52w": -19.67,
-    "above200d": false,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 18
-      }
-    ]
+    "above200d": false
   },
   {
     "ticker": "TLT",
     "price": 81.8,
     "asOf": "2026-09-21",
-    "rsi14w": 42.9,
-    "rsiTrend": "flat",
-    "relativeRsi": 32.4,
+    "rsi14w": 42.92,
+    "rsiTrend": "up",
+    "relativeRsi": 32.45,
     "relativeTrend": "flat",
     "ret3m": -3.88,
     "rel1m": -1.92,
@@ -336,43 +258,31 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "rel6m": -18.63,
     "rel12m": -18.98,
     "drawdown52w": -7.52,
-    "above200d": false,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 8
-      }
-    ]
+    "above200d": false
   },
   {
     "ticker": "PDBC",
     "price": 19.44,
     "asOf": "2026-09-21",
-    "rsi14w": 66.1,
-    "rsiTrend": "up",
-    "relativeRsi": 56.7,
-    "relativeTrend": "up",
+    "rsi14w": 66.12,
+    "rsiTrend": "flat",
+    "relativeRsi": 56.65,
+    "relativeTrend": "flat",
     "ret3m": 18.83,
     "rel1m": 3.07,
     "rel3m": 14.07,
     "rel6m": -6.42,
     "rel12m": 27.54,
     "drawdown52w": -3.28,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 49
-      }
-    ]
+    "above200d": true
   },
   {
     "ticker": "KMLM",
     "price": 30.69,
     "asOf": "2026-09-21",
-    "rsi14w": 65.2,
+    "rsi14w": 65.21,
     "rsiTrend": "up",
-    "relativeRsi": 52.0,
+    "relativeRsi": 52.04,
     "relativeTrend": "up",
     "ret3m": 9.69,
     "rel1m": 3.22,
@@ -380,34 +290,22 @@ export const technicalRows: GeneratedTechnicalRow[] = [
     "rel6m": -8.46,
     "rel12m": 0.68,
     "drawdown52w": -1.35,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 42
-      }
-    ]
+    "above200d": true
   },
   {
     "ticker": "UUP",
     "price": 28.48,
     "asOf": "2026-09-21",
-    "rsi14w": 61.2,
+    "rsi14w": 61.24,
     "rsiTrend": "up",
-    "relativeRsi": 42.1,
-    "relativeTrend": "flat",
+    "relativeRsi": 42.13,
+    "relativeTrend": "up",
     "ret3m": 0.42,
     "rel1m": 0.36,
     "rel3m": -3.6,
     "rel6m": -14.16,
     "rel12m": -9.04,
     "drawdown52w": -0.42,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-21",
-        "value": 28
-      }
-    ]
+    "above200d": true
   }
 ];
