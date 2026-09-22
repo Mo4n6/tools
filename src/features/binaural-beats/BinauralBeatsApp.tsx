@@ -1,3 +1,7 @@
+// Binaural Beats — tone generation for sleep, focus and calm.
+// SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
+// Required Notice: Copyright 2026 Mo4n6 (https://github.com/Mo4n6/tools)
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BinauralEngine, isWebAudioSupported } from './audioEngine';
 import {

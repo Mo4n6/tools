@@ -1,13 +1,22 @@
 /**
  * Husk — PowerShell deobfuscation and IOC extraction, fully browser-local.
  *
- * Copyright (c) 2026 Mo (@Mo4n6). All rights reserved.
+ * SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
+ * Required Notice: Copyright 2026 Mo4n6 (https://github.com/Mo4n6/tools)
  *
- * Portions of the lexer are ported from PowerShell, Copyright (c) Microsoft
- * Corporation, under the MIT License. See docs/licenses/husk-manifest.json.
+ * Portions of the lexer are ported from PowerShell under the MIT License:
+ * Copyright (c) Microsoft Corporation. That notice is a condition of the MIT
+ * grant, so keep it on one line and intact. Record: docs/licenses/husk-manifest.json.
  */
 
-export const HUSK_AUTHOR = 'Mo4n6' as const;
-export const HUSK_AUTHOR_URL = 'https://x.com/Mo4n6' as const;
-export const HUSK_SOURCE_URL = 'https://github.com/Mo4n6/tools' as const;
-export const HUSK_COPYRIGHT = 'Copyright (c) 2026 Mo (@Mo4n6)' as const;
+import {
+  PROJECT_AUTHOR,
+  PROJECT_AUTHOR_URL,
+  PROJECT_BYLINE,
+  PROJECT_SOURCE_URL,
+} from '../../licenses/projectLicense';
+
+export const HUSK_AUTHOR = PROJECT_AUTHOR;
+export const HUSK_AUTHOR_URL = PROJECT_AUTHOR_URL;
+export const HUSK_SOURCE_URL = PROJECT_SOURCE_URL;
+export const HUSK_COPYRIGHT = PROJECT_BYLINE;

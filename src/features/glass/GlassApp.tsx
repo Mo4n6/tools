@@ -1,5 +1,6 @@
 // Glass — image upscaling that runs entirely in the browser tab.
-// Copyright (c) 2026 Mo (@Mo4n6) - https://github.com/Mo4n6/tools
+// SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
+// Required Notice: Copyright 2026 Mo4n6 (https://github.com/Mo4n6/tools)
 //
 // The tier is the operator's choice, not the tool's. Each card states what the
 // method actually does, what it costs and what it is for, because the three

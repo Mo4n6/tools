@@ -1,3 +1,9 @@
+// Momoro Reader — read and listen to documents, locally.
+// SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
+// Required Notice: Copyright 2026 Mo4n6 (https://github.com/Mo4n6/tools)
+//
+// Speech model weights carry their own licence; see docs/licenses/tts-manifest.json.
+
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ttsManifest } from './licenses/ttsManifest';
 import { ingestInput } from './features/ingest/urlAdapter';
