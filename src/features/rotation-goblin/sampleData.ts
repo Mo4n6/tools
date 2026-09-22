@@ -1,6 +1,7 @@
 import { benchmarkSnapshot, marketDataMeta, technicalRows } from './marketData.generated';
 import { valuationDataMeta, valuationRows, type ValuationStatus } from './valuationData.generated';
 import { pipelineStatus } from './pipelineStatus.generated';
+import { decisionEngineMeta, decisionEngineRows, type DecisionComponentScores, type DecisionSignal } from './decisionEngine.generated';
 
 export type Phase = 'Capitulation' | 'Accumulation' | 'Rotation' | 'Momentum' | 'Crowded' | 'Decay';
 export type Trend = 'up' | 'flat' | 'down';
@@ -35,9 +36,10 @@ export type EtfRow = {
   drawdown52w: number;
   above200d: boolean;
   phase: Phase;
-  rotationScore: number;
-  contrarianScore: number;
-  momentumScore: number;
+  decisionScore: number;
+  decisionSignal: DecisionSignal;
+  decisionComponents: DecisionComponentScores;
+  historicalEdgeMonthlyPct: number;
   note: string;
 };
 
@@ -66,42 +68,6 @@ const assetMeta: AssetMeta[] = [
   { ticker:'UUP', theme:'U.S. Dollar' },
 ];
 
-const clamp = (value:number):number => Math.max(0,Math.min(100,value));
-const rsiSweetSpot = (rsi:number):number => clamp(100 - Math.abs(rsi - 58) * 4);
-const momentumRsiScore = (rsi:number):number => clamp((rsi - 35) * 2.25);
-const relativeRsiScore = (rsi:number):number => clamp((rsi - 35) * 2.5);
-const relativePerformanceScore = (rel6m:number):number => clamp(50 + rel6m * 3);
-const oversoldScore = (rsi:number):number => clamp((50 - rsi) * 3);
-const drawdownScore = (drawdown52w:number):number => clamp(Math.abs(Math.min(0,drawdown52w)) * 4);
-
-const rotationScoreFor = (valueScore:number|null,rsi:number,relativeRsi:number,rel6m:number):number => {
-  const rsiScore = rsiSweetSpot(rsi);
-  const relativeScore = relativeRsiScore(relativeRsi);
-  const performanceScore = relativePerformanceScore(rel6m);
-
-  if (valueScore === null) {
-    return Math.round(rsiScore * 0.20 + relativeScore * 0.45 + performanceScore * 0.35);
-  }
-
-  return Math.round(
-    valueScore * 0.30 +
-    rsiScore * 0.15 +
-    relativeScore * 0.30 +
-    performanceScore * 0.25
-  );
-};
-
-const contrarianScoreFor = (valueScore:number|null,rsi:number,drawdown52w:number):number => {
-  const oversold = oversoldScore(rsi);
-  const drawdown = drawdownScore(drawdown52w);
-
-  if (valueScore === null) {
-    return Math.round(oversold * 0.55 + drawdown * 0.45);
-  }
-
-  return Math.round(valueScore * 0.45 + oversold * 0.30 + drawdown * 0.25);
-};
-
 const phaseFor = (
   valueScore:number|null,
   row:(typeof technicalRows)[number],
@@ -118,11 +84,11 @@ const phaseFor = (
 
 const noteFor = (phase:Phase,valueStatus:ValuationStatus):string => {
   const valuationClause = valueStatus === 'not_applicable'
-    ? ' This asset uses technical/regime signals only because equity-style valuation multiples are not meaningful.'
+    ? ' Equity-style valuation multiples are not meaningful for this asset; the Decision Score is technical-only regardless.'
     : valueStatus === 'stale'
-      ? ' Valuation is using a recent last-known-good sponsor snapshot because the current refresh failed.'
+      ? ' Valuation context is using a recent last-known-good sponsor snapshot; the technical Decision Score is unaffected.'
       : valueStatus === 'error'
-        ? ' Valuation data is temporarily unavailable, so the score is falling back to technical signals.'
+        ? ' Valuation context is temporarily unavailable; the technical Decision Score is unaffected.'
         : '';
 
   switch (phase) {
@@ -137,20 +103,15 @@ const noteFor = (phase:Phase,valueStatus:ValuationStatus):string => {
 
 const technicalByTicker = new Map(technicalRows.map((row) => [row.ticker,row]));
 const valuationByTicker = new Map(valuationRows.map((row) => [row.ticker,row]));
+const decisionByTicker = new Map(decisionEngineRows.map((row) => [row.ticker,row]));
 
 export const sampleEtfs: EtfRow[] = assetMeta.flatMap((meta) => {
   const technical = technicalByTicker.get(meta.ticker);
   const valuation = valuationByTicker.get(meta.ticker);
-  if (!technical || !valuation) return [];
+  const decision = decisionByTicker.get(meta.ticker);
+  if (!technical || !valuation || !decision) return [];
 
   const valueScore = valuation.status === 'automated' || valuation.status === 'stale' ? valuation.valueScore : null;
-  const rotationScore = rotationScoreFor(valueScore,technical.rsi14w,technical.relativeRsi,technical.rel6m);
-  const contrarianScore = contrarianScoreFor(valueScore,technical.rsi14w,technical.drawdown52w);
-  const momentumScore = Math.round(
-    momentumRsiScore(technical.rsi14w) * 0.35 +
-    relativeRsiScore(technical.relativeRsi) * 0.40 +
-    relativePerformanceScore(technical.rel6m) * 0.25
-  );
   const phase = phaseFor(valueScore,technical);
 
   return [{
@@ -182,9 +143,10 @@ export const sampleEtfs: EtfRow[] = assetMeta.flatMap((meta) => {
     drawdown52w:technical.drawdown52w,
     above200d:technical.above200d,
     phase,
-    rotationScore,
-    contrarianScore,
-    momentumScore,
+    decisionScore:decision.decisionScore,
+    decisionSignal:decision.signal,
+    decisionComponents:decision.componentScores,
+    historicalEdgeMonthlyPct:decision.historicalEdgeMonthlyPct,
     note:noteFor(phase,valuation.status),
   }];
 });
@@ -265,6 +227,7 @@ export const dataMeta = {
   technicals: marketDataMeta,
   valuations: valuationDataMeta,
   pipeline: pipelineStatus,
+  decisionEngine: decisionEngineMeta,
   technicalSessionAsOf: benchmarkSnapshot.asOf,
   oldestValuationSourceAsOf,
   newestValuationSourceAsOf,

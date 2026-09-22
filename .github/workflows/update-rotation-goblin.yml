@@ -12,6 +12,10 @@ on:
       - 'src/features/rotation-goblin/sampleData.ts'
       - 'scripts/update-rotation-goblin.py'
       - 'scripts/rotation_goblin_core.py'
+      - 'scripts/build-rotation-goblin-decision-engine.py'
+      - 'scripts/validate-rotation-goblin-decision-engine.py'
+      - 'scripts/build-rotation-goblin-decision-engine.py'
+      - 'scripts/validate-rotation-goblin-decision-engine.py'
       - 'scripts/update-rotation-goblin-valuations.py'
       - 'scripts/validate-rotation-goblin-data.py'
       - 'src/features/rotation-goblin/technical-state-history.json'
@@ -60,8 +64,14 @@ jobs:
       - name: Refresh technical indicators
         run: python scripts/update-rotation-goblin.py
 
+      - name: Build Decision Engine
+        run: python scripts/build-rotation-goblin-decision-engine.py
+
       - name: Validate generated market data
         run: python scripts/validate-rotation-goblin-data.py
+
+      - name: Validate Decision Engine
+        run: python scripts/validate-rotation-goblin-decision-engine.py
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -86,14 +96,14 @@ jobs:
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
-          if [ -z "$(git status --porcelain -- src/features/rotation-goblin/marketData.generated.ts src/features/rotation-goblin/technical-state-history.json public/rotation-goblin/history src/features/rotation-goblin/valuationData.generated.ts src/features/rotation-goblin/valuation-history.json)" ]; then
+          if [ -z "$(git status --porcelain -- src/features/rotation-goblin/marketData.generated.ts src/features/rotation-goblin/technical-state-history.json public/rotation-goblin/history src/features/rotation-goblin/valuationData.generated.ts src/features/rotation-goblin/valuation-history.json src/features/rotation-goblin/decisionEngine.generated.ts src/features/rotation-goblin/research/decision-engine-calibration.json)" ]; then
             echo "No market-data changes to commit."
             exit 0
           fi
 
           git config user.name "rotation-goblin-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add src/features/rotation-goblin/marketData.generated.ts src/features/rotation-goblin/technical-state-history.json public/rotation-goblin/history src/features/rotation-goblin/valuationData.generated.ts src/features/rotation-goblin/valuation-history.json
+          git add src/features/rotation-goblin/marketData.generated.ts src/features/rotation-goblin/technical-state-history.json public/rotation-goblin/history src/features/rotation-goblin/valuationData.generated.ts src/features/rotation-goblin/valuation-history.json src/features/rotation-goblin/decisionEngine.generated.ts src/features/rotation-goblin/research/decision-engine-calibration.json
           git commit -m "Update Rotation Goblin market data"
           for attempt in 1 2 3 4; do
             git fetch origin main

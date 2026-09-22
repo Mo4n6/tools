@@ -21,6 +21,22 @@ const phaseMeta: Record<Phase,{ action:string; color:string; dot:string; descrip
 
 const scoreClass = (value:number|null):string => value === null ? 'text-zinc-500' : value >= 75 ? 'text-emerald-300' : value >= 50 ? 'text-amber-300' : 'text-zinc-400';
 
+const decisionSignalClass = (signal:EtfRow['decisionSignal']):string => {
+  if (signal === 'STRONG') return 'border-emerald-400/50 bg-emerald-500/10 text-emerald-200';
+  if (signal === 'CONSTRUCTIVE') return 'border-lime-400/40 bg-lime-500/10 text-lime-200';
+  if (signal === 'WATCH') return 'border-amber-400/40 bg-amber-500/10 text-amber-200';
+  if (signal === 'WEAK') return 'border-orange-400/40 bg-orange-500/10 text-orange-200';
+  return 'border-red-400/50 bg-red-500/10 text-red-200';
+};
+
+const decisionComponentMeta = [
+  ['relativeMomentum','Relative Momentum','Relative RSI, relative-RSI acceleration, 1M relative strength, and short-vs-medium acceleration.'],
+  ['trendStructure','Trend Structure','Price vs 200DMA, 200DMA slope, and the 50DMA/200DMA spread.'],
+  ['momentumState','Momentum State','14-week RSI and its 4-week rate of change.'],
+  ['relativePerformance','Relative Performance','3M and 6M ETF/SPY relative returns.'],
+  ['drawdownRecovery','Drawdown / Recovery','Distance from the 52-week high and recovery from the 52-week low.'],
+] as const;
+
 const calendarDaysSince = (dateText:string|null):number => {
   if (!dateText) return Number.POSITIVE_INFINITY;
   const then = new Date(`${dateText}T00:00:00Z`).getTime();
@@ -149,7 +165,7 @@ const RotationGoblinApp = ():JSX.Element => {
         : 'Latest pipeline passed and source data is within freshness limits.';
   const [phaseFilter,setPhaseFilter] = useState<'All'|Phase>('All');
   const [query,setQuery] = useState('');
-  const [sortKey,setSortKey] = useState<keyof EtfRow>('rotationScore');
+  const [sortKey,setSortKey] = useState<keyof EtfRow>('decisionScore');
   const [sortDirection,setSortDirection] = useState<-1|1>(-1);
   const [selectedTicker,setSelectedTicker] = useState('XLB');
 
@@ -217,8 +233,15 @@ const RotationGoblinApp = ():JSX.Element => {
         <div className="mt-4 rounded-lg border border-lime-500/30 bg-lime-500/5 p-4 text-sm text-lime-100"><strong>Model sweet spot:</strong> the transition from <span className="text-amber-200">Accumulation</span> → <span className="text-emerald-200">Rotation</span>, where valuation is still supportive but relative momentum has begun confirming the thesis.</div>
       </section>
 
-      <section className="grid gap-3 lg:grid-cols-3">
-        {[['Rotation Score','Is money starting to care?','Cheap/fair valuation + improving relative RSI + ETF/SPY outperformance.'],['Contrarian Score','Is this thing hated enough?','Cheap valuation + oversold conditions + evidence that selling pressure is stabilizing.'],['Momentum Score','Is the trend actually alive?','Sustained absolute and relative strength. Useful confirmation, but high momentum can also mean less margin of safety.']].map(([title,q,body]) => <article key={title} className="rounded-xl border border-emerald-500/20 bg-[#07110a] p-4"><p className="text-xs font-semibold tracking-[0.16em] text-lime-300">{title}</p><h3 className="mt-2 font-bold text-emerald-100">{q}</h3><p className="mt-2 text-sm leading-relaxed text-emerald-300/60">{body}</p></article>)}
+      <section className="rounded-xl border border-emerald-500/25 bg-[#07110a] p-5">
+        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+          <div><p className="text-xs font-semibold tracking-[0.2em] text-lime-300">DECISION ENGINE</p><h2 className="mt-1 text-2xl font-bold text-emerald-100">Historically calibrated technical score</h2></div>
+          <p className="text-xs text-emerald-300/45">{dataMeta.decisionEngine.matureTrainingRows.toLocaleString()} mature weekly states • {dataMeta.decisionEngine.walkForward.foldCount} purged walk-forward folds</p>
+        </div>
+        <p className="mt-2 max-w-4xl text-sm leading-relaxed text-emerald-300/60">The 0–100 Decision Score ranks the current technical setup using only point-in-time price-derived features. Valuation stays visible as separate context and does not influence this score.</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          {decisionComponentMeta.map(([key,title,body]) => <article key={key} className="rounded-lg border border-emerald-500/15 bg-black/20 p-4"><div className="flex items-center justify-between gap-2"><strong className="text-emerald-100">{title}</strong><span className="text-xs font-black text-lime-300">{(dataMeta.decisionEngine.componentWeights[key] * 100).toFixed(0)}%</span></div><p className="mt-2 text-xs leading-relaxed text-emerald-300/50">{body}</p></article>)}
+        </div>
       </section>
 
       <section className="rounded-xl border border-emerald-500/25 bg-[#07110a] p-5">
@@ -232,13 +255,13 @@ const RotationGoblinApp = ():JSX.Element => {
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[1050px] border-collapse text-sm">
             <thead><tr className="border-b border-emerald-500/20 text-left text-xs uppercase tracking-wider text-emerald-300/55">
-              {([['ticker','ETF'],['theme','Theme'],['valueScore','Value'],['rsi14w','RSI 14W'],['relativeRsi','Relative RSI'],['rel6m','6M vs SPY'],['phase','Phase'],['rotationScore','Rotation'],['contrarianScore','Contrarian'],['momentumScore','Momentum']] as [keyof EtfRow,string][]).map(([key,label]) => <th key={key} className="cursor-pointer px-3 py-3 hover:text-emerald-100" onClick={()=>sortBy(key)}>{label}{sortKey===key ? (sortDirection===-1?' ↓':' ↑') : ''}</th>)}
+              {([['ticker','ETF'],['theme','Theme'],['decisionScore','Decision'],['valueScore','Value'],['rsi14w','RSI 14W'],['relativeRsi','Relative RSI'],['rel3m','3M vs SPY'],['rel6m','6M vs SPY'],['phase','Phase']] as [keyof EtfRow,string][]).map(([key,label]) => <th key={key} className="cursor-pointer px-3 py-3 hover:text-emerald-100" onClick={()=>sortBy(key)}>{label}{sortKey===key ? (sortDirection===-1?' ↓':' ↑') : ''}</th>)}
             </tr></thead>
             <tbody>{rows.map((row) => <tr key={row.ticker} onClick={()=>setSelectedTicker(row.ticker)} className={`cursor-pointer border-b border-emerald-500/10 transition hover:bg-emerald-500/5 ${selected?.ticker===row.ticker?'bg-emerald-500/5':''}`}>
-              <td className="px-3 py-3 font-bold text-emerald-100">{row.ticker}</td><td className="px-3 py-3 text-emerald-300/75">{row.theme}</td><td className={`px-3 py-3 font-bold ${scoreClass(row.valueScore)}`} title={row.valuationNote}>{row.valueScore === null ? '—' : Math.round(row.valueScore)}
+              <td className="px-3 py-3 font-bold text-emerald-100">{row.ticker}</td><td className="px-3 py-3 text-emerald-300/75">{row.theme}</td><td className="px-3 py-3"><div className="flex items-center gap-2"><span className={`font-black ${scoreClass(row.decisionScore)}`}>{row.decisionScore.toFixed(1)}</span><span className={`rounded border px-1.5 py-0.5 text-[9px] font-black ${decisionSignalClass(row.decisionSignal)}`}>{row.decisionSignal}</span></div></td><td className={`px-3 py-3 font-bold ${scoreClass(row.valueScore)}`} title={row.valuationNote}>{row.valueScore === null ? '—' : Math.round(row.valueScore)}
                 {row.valueStatus === 'automated' ? <span className="ml-1 text-[9px] text-emerald-300/40">AUTO</span> : null}
                 {row.valueStatus === 'stale' ? <span className="ml-1 text-[9px] font-black text-amber-300">STALE</span> : null}
-                {row.valueStatus === 'error' ? <span className="ml-1 text-[9px] font-black text-red-300">ERR</span> : null}</td><td className="px-3 py-3">{Math.round(row.rsi14w)} {trend(row.rsiTrend)}</td><td className="px-3 py-3">{Math.round(row.relativeRsi)} {trend(row.relativeTrend)}</td><td className={`px-3 py-3 font-semibold ${row.rel6m>=0?'text-emerald-300':'text-red-300'}`}>{pct(row.rel6m)}</td><td className="px-3 py-3"><span className={`rounded-full border px-2 py-1 text-xs font-bold ${phaseMeta[row.phase].color}`}>{row.phase}</span></td><td className={`px-3 py-3 font-bold ${scoreClass(row.rotationScore)}`}>{row.rotationScore}</td><td className={`px-3 py-3 font-bold ${scoreClass(row.contrarianScore)}`}>{row.contrarianScore}</td><td className={`px-3 py-3 font-bold ${scoreClass(row.momentumScore)}`}>{row.momentumScore}</td>
+                {row.valueStatus === 'error' ? <span className="ml-1 text-[9px] font-black text-red-300">ERR</span> : null}</td><td className="px-3 py-3">{Math.round(row.rsi14w)} {trend(row.rsiTrend)}</td><td className="px-3 py-3">{Math.round(row.relativeRsi)} {trend(row.relativeTrend)}</td><td className={`px-3 py-3 font-semibold ${row.rel3m>=0?'text-emerald-300':'text-red-300'}`}>{pct(row.rel3m)}</td><td className={`px-3 py-3 font-semibold ${row.rel6m>=0?'text-emerald-300':'text-red-300'}`}>{pct(row.rel6m)}</td><td className="px-3 py-3"><span className={`rounded-full border px-2 py-1 text-xs font-bold ${phaseMeta[row.phase].color}`}>{row.phase}</span></td>
             </tr>)}</tbody>
           </table>
         </div>
@@ -249,11 +272,18 @@ const RotationGoblinApp = ():JSX.Element => {
       </section>
 
       {selected ? <section className="rounded-xl border border-emerald-500/25 bg-[#07110a] p-5">
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between"><div><p className="text-xs font-semibold tracking-[0.2em] text-lime-300">DRILL-DOWN</p><h2 className="mt-1 text-2xl font-bold text-emerald-100">{selected.ticker} — {selected.theme}</h2></div><span className={`self-start rounded-full border px-3 py-1 text-xs font-bold ${phaseMeta[selected.phase].color}`}>{selected.phase}</span></div>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between"><div><p className="text-xs font-semibold tracking-[0.2em] text-lime-300">DRILL-DOWN</p><h2 className="mt-1 text-2xl font-bold text-emerald-100">{selected.ticker} — {selected.theme}</h2></div><div className="flex flex-wrap gap-2"><span className={`self-start rounded border px-3 py-1 text-xs font-black ${decisionSignalClass(selected.decisionSignal)}`}>DECISION {selected.decisionScore.toFixed(1)} • {selected.decisionSignal}</span><span className={`self-start rounded-full border px-3 py-1 text-xs font-bold ${phaseMeta[selected.phase].color}`}>{selected.phase}</span></div></div>
         <div className="mt-4 grid gap-4 xl:grid-cols-2">
           <div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {[['Price',selected.price === null ? '—' : `${selected.price.toFixed(2)}`],['Value',selected.valueScore === null ? '—' : Math.round(selected.valueScore)],['RSI 14W',Math.round(selected.rsi14w)],['Relative RSI',Math.round(selected.relativeRsi)],['1M vs SPY',pct(selected.rel1m)],['3M vs SPY',pct(selected.rel3m)],['6M vs SPY',pct(selected.rel6m)],['12M vs SPY',pct(selected.rel12m)],['Rotation',selected.rotationScore]].map(([label,value]) => <div key={label} className="rounded-lg border border-emerald-500/15 bg-black/20 p-3"><p className="text-xs text-emerald-300/45">{label}</p><p className="mt-1 text-xl font-black text-emerald-100">{value}</p></div>)}
+              {[['Decision',selected.decisionScore.toFixed(1)],['Price',selected.price === null ? '—' : `${selected.price.toFixed(2)}`],['Value',selected.valueScore === null ? '—' : Math.round(selected.valueScore)],['RSI 14W',Math.round(selected.rsi14w)],['Relative RSI',Math.round(selected.relativeRsi)],['1M vs SPY',pct(selected.rel1m)],['3M vs SPY',pct(selected.rel3m)],['6M vs SPY',pct(selected.rel6m)],['12M vs SPY',pct(selected.rel12m)]].map(([label,value]) => <div key={label} className="rounded-lg border border-emerald-500/15 bg-black/20 p-3"><p className="text-xs text-emerald-300/45">{label}</p><p className="mt-1 text-xl font-black text-emerald-100">{value}</p></div>)}
+            </div>
+            <div className="mt-3 rounded-lg border border-lime-500/25 bg-lime-500/5 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-xs font-semibold tracking-[0.16em] text-lime-300">DECISION ENGINE BREAKDOWN</p><p className="mt-1 text-sm text-emerald-300/55">Each component is a historical percentile score; weights are recalibrated from purged walk-forward evidence.</p></div><span className={`rounded border px-2 py-1 text-xs font-black ${decisionSignalClass(selected.decisionSignal)}`}>{selected.decisionSignal}</span></div>
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                {decisionComponentMeta.map(([key,title]) => <div key={key} className="rounded border border-emerald-500/15 bg-black/20 p-2"><p className="text-[10px] text-emerald-300/45">{title}</p><p className={`mt-1 text-lg font-black ${scoreClass(selected.decisionComponents[key])}`}>{selected.decisionComponents[key].toFixed(0)}</p><p className="text-[9px] text-lime-300/60">{(dataMeta.decisionEngine.componentWeights[key] * 100).toFixed(0)}% weight</p></div>)}
+              </div>
+              <p className="mt-3 text-[11px] text-emerald-300/45">Historical calibration edge: {selected.historicalEdgeMonthlyPct >= 0 ? '+' : ''}{selected.historicalEdgeMonthlyPct.toFixed(3)} percentage points/month vs SPY. Descriptive historical calibration, not a return forecast.</p>
             </div>
             <div className="mt-3 rounded-lg border border-emerald-500/20 bg-black/20 p-4 text-sm leading-relaxed text-emerald-100"><p className="font-black text-lime-300">{phaseMeta[selected.phase].action}</p><p className="mt-2">{selected.note}</p><p className="mt-3 text-emerald-300/60"><strong className="text-emerald-200">Why:</strong> {phaseMeta[selected.phase].description}</p></div>
             <div className="mt-3 rounded-lg border border-emerald-500/20 bg-black/20 p-4 text-sm leading-relaxed text-emerald-100">
@@ -282,11 +312,14 @@ const RotationGoblinApp = ():JSX.Element => {
       </section> : null}
 
       <section className="rounded-xl border border-emerald-500/25 bg-[#07110a] p-5">
-        <p className="text-xs font-semibold tracking-[0.2em] text-lime-300">MVP METHODOLOGY</p><h2 className="mt-1 text-2xl font-bold text-emerald-100">What V1 actually scores</h2>
+        <p className="text-xs font-semibold tracking-[0.2em] text-lime-300">DECISION ENGINE V1</p><h2 className="mt-1 text-2xl font-bold text-emerald-100">How the score is trained</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {[['Value','Automated sponsor-page valuation for equity/real-estate ETFs: primary multiple + P/B versus SPY, then blended with tracked-history percentile once enough samples accumulate.'],['Momentum','14-week RSI, 3/6/12-month performance, and trend persistence.'],['Relative Strength','ETF/SPY ratio plus RSI calculated on that ratio.'],['Phase','Rules designed to surface the shift from hated → stabilizing → being repriced.']].map(([title,body]) => <div key={title} className="rounded-lg border border-emerald-500/15 bg-black/20 p-4"><strong className="text-emerald-100">{title}</strong><p className="mt-2 text-sm leading-relaxed text-emerald-300/55">{body}</p></div>)}
+          <div className="rounded-lg border border-emerald-500/15 bg-black/20 p-4"><strong className="text-emerald-100">Point-in-time inputs</strong><p className="mt-2 text-sm leading-relaxed text-emerald-300/55">Only technical features reconstructable on each historical date are used. Valuation is excluded from the trained score.</p></div>
+          <div className="rounded-lg border border-emerald-500/15 bg-black/20 p-4"><strong className="text-emerald-100">Training target</strong><p className="mt-2 text-sm leading-relaxed text-emerald-300/55">Historical 3M and 6M ETF-vs-SPY forward relative returns, normalized to a monthly rate and weighted equally.</p></div>
+          <div className="rounded-lg border border-emerald-500/15 bg-black/20 p-4"><strong className="text-emerald-100">Walk-forward validation</strong><p className="mt-2 text-sm leading-relaxed text-emerald-300/55">{dataMeta.decisionEngine.walkForward.foldCount} expanding validation folds with a {dataMeta.decisionEngine.walkForward.purgeDays}-day embargo prevent future outcome periods from leaking into model fitting.</p></div>
+          <div className="rounded-lg border border-emerald-500/15 bg-black/20 p-4"><strong className="text-emerald-100">Weighting</strong><p className="mt-2 text-sm leading-relaxed text-emerald-300/55">70% historical walk-forward evidence + 30% of the original component architecture. Weak historical components lose weight instead of being forced into the score.</p></div>
         </div>
-        <p className="mt-4 text-xs leading-relaxed text-emerald-300/45"><strong>Data status:</strong> {dataMeta.technicals.note} {dataMeta.valuations.note} Technical freshness is checked at page runtime; valuation freshness uses the sponsor's actual effective date, not merely the scrape time.</p>
+        <p className="mt-4 text-xs leading-relaxed text-emerald-300/45"><strong>Training window:</strong> {dataMeta.decisionEngine.trainingStart} → {dataMeta.decisionEngine.trainingEnd} • {dataMeta.decisionEngine.matureTrainingRows.toLocaleString()} mature observations. <strong>Data status:</strong> {dataMeta.technicals.note} {dataMeta.valuations.note}</p>
       </section>
     </div>
   );
