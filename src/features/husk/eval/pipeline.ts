@@ -20,8 +20,8 @@ import { CLEAN, type Taint, markOutput, taintFrom } from '../core/taint';
 import { toStringValue } from '../core/value';
 import { TokenKind } from '../lexer/tokenKind';
 import { tokenize } from '../lexer/tokenizer';
-import { parseExpression } from './parser';
-import { createContext, evaluate } from './evaluator';
+import { parseExpression, type InvokeAliases } from './parser';
+import { createContext, evaluate, type EvalContext } from './evaluator';
 import { base64ToBytes, decodeUtf16le, decodeUtf8, decompressAny, looksLikeText } from './decode';
 import { canonicalize } from './canonicalize';
 import { decodeCharArray } from './charArray';
@@ -207,6 +207,78 @@ function findInvocation(node: Expr): Expr | undefined {
 /** Names that mean Invoke-Expression, however they are spelled or computed. */
 const IEX_NAMES = /^(iex|invoke-expression)$/i;
 
+/** `$name = <expr>` at the start of a statement. */
+const ASSIGNMENT = /^\s*\$\{?([A-Za-z_][\w:]*)\}?\s*=\s*([\s\S]+)$/;
+
+/** `Set-Alias`/`sal`/`New-Alias <name> <value>`, with or without -Name/-Value. */
+const ALIAS_DEFINITION =
+  /\b(?:set-alias|new-alias|sal|nal)\b\s+(?:-name\s+)?([^\s;|]+)\s+(?:-value\s+)?([^\s;|]+)/i;
+
+/**
+ * Variables assigned in this layer, so a later statement can read them.
+ *
+ * Obfuscators split a name across statements - `$t0 = 'ZE95'.replace(...)`
+ * then `sal g $t0` - and without carrying the assignment forward the alias
+ * target is unresolvable.
+ */
+function collectVariables(source: string, trace: Trace, layer: number): EvalContext {
+  const ctx = createContext(trace, layer);
+
+  for (const statement of splitStatements(source)) {
+    const match = ASSIGNMENT.exec(statement.text);
+    if (!match) continue;
+
+    const [, name, expression] = match;
+    const parsed = parseExpression(expression);
+    if (parsed.expression.kind === 'unsupported') continue;
+
+    // Evaluating must not manufacture gaps: this is bookkeeping, and a failed
+    // assignment is not something the analyst needs in the queue.
+    const before = trace.gaps.size;
+    const value = evaluate(parsed.expression, ctx);
+    if (trace.gaps.size !== before) continue;
+
+    ctx.variables.set(name.toLowerCase(), value);
+  }
+
+  return ctx;
+}
+
+/**
+ * Aliases in this layer that resolve to Invoke-Expression.
+ *
+ * `sal g $t0` where `$t0` spells "IEx" makes every later `g <payload>` an
+ * invocation. Real MalwareBazaar samples use exactly this, and without it
+ * Husk sees no execution sink, decodes nothing, and - because the script
+ * tokenises cleanly - reports it as an unremarkable clean script.
+ */
+function collectInvokeAliases(source: string, trace: Trace, layer: number): Set<string> {
+  const aliases = new Set<string>();
+  if (!/\b(?:set-alias|new-alias|sal|nal)\b/i.test(source)) return aliases;
+
+  const ctx = collectVariables(source, trace, layer);
+
+  for (const statement of splitStatements(source)) {
+    const match = ALIAS_DEFINITION.exec(statement.text);
+    if (!match) continue;
+
+    const [, rawName, rawValue] = match;
+    const name = rawName.replace(/^['"]|['"]$/g, '').toLowerCase();
+    if (name.length === 0) continue;
+
+    let target = rawValue.replace(/^['"]|['"]$/g, '');
+    if (!IEX_NAMES.test(target)) {
+      const parsed = parseExpression(rawValue);
+      if (parsed.expression.kind === 'unsupported') continue;
+      target = toStringValue(evaluate(parsed.expression, ctx)).trim();
+    }
+
+    if (IEX_NAMES.test(target)) aliases.add(name);
+  }
+
+  return aliases;
+}
+
 /**
  * `<payload> | IEX` sends its payload into the invocation through the
  * pipeline rather than as an argument. This is one of the most common shapes
@@ -216,6 +288,7 @@ function foldPipedInvocation(
   source: string,
   trace: Trace,
   layer: number,
+  aliases: InvokeAliases,
 ): { text: string; taint: Taint } | undefined {
   const segments = splitPipeline(source);
   if (segments.length < 2) return undefined;
@@ -226,15 +299,15 @@ function foldPipedInvocation(
   // The tail may be `IEX`, `&'iex'`, `.('i'+'ex')` or a computed name.
   const tail = last.text.trim().replace(/^[&.]\s*/, '');
   let name = tail.replace(/^['"]|['"]$/g, '');
-  if (!IEX_NAMES.test(name)) {
-    const parsed = parseExpression(tail);
+  if (!IEX_NAMES.test(name) && !aliases.has(name.toLowerCase())) {
+    const parsed = parseExpression(tail, aliases);
     if (parsed.expression.kind === 'unsupported') return undefined;
     name = toStringValue(evaluate(parsed.expression, ctx)).trim();
   }
-  if (!IEX_NAMES.test(name)) return undefined;
+  if (!IEX_NAMES.test(name) && !aliases.has(name.toLowerCase())) return undefined;
 
   const payloadSource = source.slice(0, last.start).replace(/\|\s*$/, '');
-  const parsedPayload = parseExpression(payloadSource);
+  const parsedPayload = parseExpression(payloadSource, aliases);
   const value = evaluate(parsedPayload.expression, ctx);
   const text = toStringValue(value);
 
@@ -250,11 +323,12 @@ function foldInvocation(
   source: string,
   trace: Trace,
   layer: number,
+  aliases: InvokeAliases,
 ): { text: string; taint: Taint; rewritten?: boolean } | undefined {
   const statements = splitStatements(source);
   if (statements.length > 1) {
     for (const statement of statements) {
-      const folded = foldStatementInvocation(statement.text, trace, layer);
+      const folded = foldStatementInvocation(statement.text, trace, layer, aliases);
       if (!folded) continue;
 
       // A statement that yields a new script is the layer; one that only
@@ -268,15 +342,16 @@ function foldInvocation(
     }
     return undefined;
   }
-  return foldStatementInvocation(source, trace, layer);
+  return foldStatementInvocation(source, trace, layer, aliases);
 }
 
 function foldStatementInvocation(
   source: string,
   trace: Trace,
   layer: number,
+  aliases: InvokeAliases,
 ): { text: string; taint: Taint; rewritten?: boolean } | undefined {
-  const parsed = parseExpression(source);
+  const parsed = parseExpression(source, aliases);
   const invocation = findInvocation(parsed.expression);
   if (!invocation || invocation.kind !== 'invoke') return undefined;
 
@@ -311,7 +386,21 @@ function foldStatementInvocation(
  * This is what turns ('Wri'+'te-'+'Host') into Write-Host without needing the
  * surrounding statement to be understood.
  */
-function foldConstants(source: string, trace: Trace, layer: number): string | undefined {
+/**
+ * Fold every constant expression in the source, rewriting each to its value.
+ *
+ * This walks parenthesised groups and parses each one, so the work is
+ * quadratic in the nesting depth: 2000 nested parentheses means 2000 parses
+ * over shrinking-but-still-large text. The between-layer budget does not help,
+ * because this all happens inside one layer - so the deadline is enforced here
+ * too, and gives up rather than grinding.
+ */
+function foldConstants(
+  source: string,
+  trace: Trace,
+  layer: number,
+  deadline: number,
+): string | undefined {
   const tokens = tokenize(source).tokens;
   if (tokens.length === 0) return undefined;
 
@@ -321,7 +410,26 @@ function foldConstants(source: string, trace: Trace, layer: number): string | un
   let changed = false;
 
   // Walk parenthesised groups; each one that folds to a literal is replaced.
+  let sinceCheck = 0;
   for (let i = 0; i < tokens.length; i += 1) {
+    // Checking the clock every iteration would itself be costly, so sample it.
+    if ((sinceCheck += 1) >= 64) {
+      sinceCheck = 0;
+      if (Date.now() > deadline) {
+        const id = trace.gaps.report({
+          kind: 'GAP',
+          signature: 'constant folding hit the time budget',
+          argTypes: [],
+          provenance: { layer },
+          detail: 'expression nesting too deep to fold within the budget',
+        });
+        // Recording it is not enough - output that stopped short of being
+        // folded must stop reading as reliable.
+        trace.taintDeepest(taintFrom(id));
+        break;
+      }
+    }
+
     const token = tokens[i];
     if (token.text !== '(') continue;
 
@@ -423,7 +531,7 @@ export async function deobfuscate(
       break;
     }
 
-    const next = await unwrapOnce(current, trace, depth);
+    const next = await unwrapOnce(current, trace, depth, deadline);
     if (!next) {
       exhaustedLayers = false;
       // Stopping is only honest if it says so. If the residue still carries
@@ -546,7 +654,10 @@ async function unwrapOnce(
   source: string,
   trace: Trace,
   layer: number,
+  deadline: number,
 ): Promise<Unwrapped | undefined> {
+  // Aliases are per layer: each decoded stage may define its own.
+  const aliases = collectInvokeAliases(source, trace, layer);
   for (const recipe of RECIPES) {
     const decoded = await recipe.apply(source);
     if (decoded && decoded !== source) {
@@ -569,7 +680,7 @@ async function unwrapOnce(
   }
 
   for (const statement of splitStatements(source)) {
-    const piped = foldPipedInvocation(statement.text, trace, layer);
+    const piped = foldPipedInvocation(statement.text, trace, layer, aliases);
     if (piped && piped.text !== source) {
       return {
         text: piped.text,
@@ -579,7 +690,7 @@ async function unwrapOnce(
     }
   }
 
-  const folded = foldInvocation(source, trace, layer);
+  const folded = foldInvocation(source, trace, layer, aliases);
   if (folded && folded.text !== source) {
     return {
       text: folded.text,
@@ -590,7 +701,7 @@ async function unwrapOnce(
     };
   }
 
-  const constants = foldConstants(source, trace, layer);
+  const constants = foldConstants(source, trace, layer, deadline);
   if (constants && constants !== source) {
     return {
       text: constants,

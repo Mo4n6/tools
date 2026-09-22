@@ -130,3 +130,38 @@ describe('pathological input does not crash the extractor', () => {
     expect(domains).toContain('badhost.top');
   });
 });
+
+describe('aliased Invoke-Expression', () => {
+  // Real MalwareBazaar samples alias a computed name to IEX and invoke
+  // through it. Husk saw no execution sink, decoded nothing, and - because
+  // the script tokenises cleanly - reported an unremarkable clean result.
+  it('resolves an alias built by string replacement', async () => {
+    const sample = `$t0='ZE95'.replace('Z','I').replace('95','x');sal g $t0;g ('Write-Host ' + '"pwned"')`;
+    const result = await analyze(sample);
+    expect(result.output).toContain('Write-Host');
+    expect(result.output).toContain('pwned');
+  });
+
+  it.each([
+    ['sal', `sal q 'IEX'; q ('Write-Host 1')`],
+    ['Set-Alias', `Set-Alias q 'IEX'; q ('Write-Host 1')`],
+    ['New-Alias', `New-Alias q 'IEX'; q ('Write-Host 1')`],
+    ['named parameters', `Set-Alias -Name q -Value 'Invoke-Expression'; q ('Write-Host 1')`],
+  ])('handles %s', async (_label, sample) => {
+    expect((await analyze(sample)).output).toContain('Write-Host 1');
+  });
+
+  it('resolves an alias used as a pipeline sink', async () => {
+    const sample = `sal q 'IEX'; ('Write-Host ' + '2') | q`;
+    expect((await analyze(sample)).output).toContain('Write-Host 2');
+  });
+
+  it('does not treat an alias to something else as an execution sink', async () => {
+    // Constant folding still applies - ('some' + 'path') becomes 'somepath' -
+    // but the alias must not produce an *invocation* layer, which would
+    // replace the script with its own argument.
+    const result = await analyze(`sal ll 'Get-ChildItem'; ll ('some' + 'path')`);
+    expect(result.output).toContain('ll');
+    expect(result.layers.some((l) => l.origin.via === 'invoke')).toBe(false);
+  });
+});

@@ -109,3 +109,22 @@ describe('the result is self-describing', () => {
     expect(result.actionableGaps.every((g) => g.kind === 'GAP')).toBe(true);
   });
 });
+
+describe('the time budget binds inside a layer, not only between layers', () => {
+  // Constant folding parses every parenthesised group, so deep nesting is
+  // quadratic within a single layer. Checking the clock only between layers
+  // let a 1.5s budget run for 8.5s on a quiet machine.
+  it('honours a small budget on deeply nested input', async () => {
+    const started = Date.now();
+    await analyze(`${'('.repeat(2000)}'a'${')'.repeat(2000)}`, { timeBudgetMs: 800 });
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it('records the budget it hit rather than failing quietly', async () => {
+    const result = await analyze(`${'('.repeat(3000)}'a'${')'.repeat(3000)}`, {
+      timeBudgetMs: 300,
+    });
+    expect(result.gaps.some((g) => /budget/.test(g.signature))).toBe(true);
+    expect(result.reliable).toBe(false);
+  });
+});

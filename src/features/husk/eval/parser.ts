@@ -15,6 +15,15 @@ const TRIVIA = new Set([TokenKind.Comment, TokenKind.LineContinuation, TokenKind
 /** Command names that re-enter the interpreter with their argument. */
 const INVOKE_COMMANDS = new Set(['iex', 'invoke-expression']);
 
+/**
+ * Aliases discovered in the sample that resolve to Invoke-Expression.
+ *
+ * `sal g $t0` where `$t0` spells "IEx" makes `g <payload>` an invocation, and
+ * a parser that does not know that reads it as an unknown command and loses
+ * the layer entirely.
+ */
+export type InvokeAliases = ReadonlySet<string>;
+
 export interface ParseResult {
   readonly expression: Expr;
   /** Tokens left unconsumed, which usually means a statement, not an expression. */
@@ -39,8 +48,15 @@ class Parser {
   constructor(
     tokens: readonly Token[],
     private readonly source: string,
+    private readonly aliases: InvokeAliases = new Set(),
   ) {
     this.tokens = tokens.filter((t) => !TRIVIA.has(t.kind));
+  }
+
+  /** True when this command name re-enters the interpreter. */
+  private isInvokeName(name: string): boolean {
+    const lowered = name.toLowerCase();
+    return INVOKE_COMMANDS.has(lowered) || this.aliases.has(lowered);
   }
 
   private peek(offset = 0): Token | undefined {
@@ -322,8 +338,7 @@ class Parser {
 
       case TokenKind.Identifier:
       case TokenKind.Generic: {
-        const lowered = token.text.toLowerCase();
-        if (INVOKE_COMMANDS.has(lowered)) {
+        if (this.isInvokeName(token.text)) {
           const argument = this.parseExpression(0);
           return {
             kind: 'invoke',
@@ -434,11 +449,15 @@ function memberNameOf(token: Token): string {
 }
 
 /** Parse PowerShell source as a single expression. */
-export function parseExpression(source: string): ParseResult {
-  return new Parser(tokenize(source).tokens, source).parse();
+export function parseExpression(source: string, aliases: InvokeAliases = new Set()): ParseResult {
+  return new Parser(tokenize(source).tokens, source, aliases).parse();
 }
 
 /** Parse an already-tokenized expression. */
-export function parseTokens(tokens: readonly Token[], source: string): ParseResult {
-  return new Parser(tokens, source).parse();
+export function parseTokens(
+  tokens: readonly Token[],
+  source: string,
+  aliases: InvokeAliases = new Set(),
+): ParseResult {
+  return new Parser(tokens, source, aliases).parse();
 }
