@@ -37,6 +37,15 @@ export interface DeobfuscateOptions {
 
 const DEFAULTS = { maxLayers: 24, timeBudgetMs: 5000 } as const;
 
+/**
+ * Largest parenthesised group constant folding will attempt.
+ *
+ * Folding re-parses the group's inner text, so without a cap the outermost
+ * group of a multi-megabyte layer is re-tokenised in full - once per group.
+ * No real obfuscated expression approaches this size.
+ */
+const MAX_FOLDABLE_GROUP = 64 * 1024;
+
 export interface DeobfuscateResult {
   readonly trace: Trace;
   /** The deepest layer reached - the closest thing to a final stage. */
@@ -410,11 +419,12 @@ function foldConstants(
   let changed = false;
 
   // Walk parenthesised groups; each one that folds to a literal is replaced.
-  let sinceCheck = 0;
   for (let i = 0; i < tokens.length; i += 1) {
-    // Checking the clock every iteration would itself be costly, so sample it.
-    if ((sinceCheck += 1) >= 64) {
-      sinceCheck = 0;
+    // Every iteration, not sampled. One iteration re-tokenises and re-parses
+    // the group's whole inner text, which on a multi-megabyte layer is
+    // hundreds of milliseconds - so sampling every 64 let a 5s budget run for
+    // minutes. Date.now() is free next to that.
+    {
       if (Date.now() > deadline) {
         const id = trace.gaps.report({
           kind: 'GAP',
@@ -457,6 +467,10 @@ function foldConstants(
     if (close === -1) continue;
 
     const inner = source.slice(token.end, tokens[close].start);
+    // Folding an enormous group is never useful - the result would be a
+    // literal bigger than most samples - and it is what makes this loop
+    // quadratic on large layers.
+    if (inner.length > MAX_FOLDABLE_GROUP) continue;
     if (!/['"]|\bchar\b|\bf\b/i.test(inner)) continue;
 
     const parsed = parseExpression(inner);
