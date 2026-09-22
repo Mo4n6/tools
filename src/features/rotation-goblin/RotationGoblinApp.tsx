@@ -122,9 +122,9 @@ const RotationGoblinApp = ():JSX.Element => {
             <p className="mt-2 max-w-3xl text-emerald-300/75">Sniffing around the market for sectors the herd forgot about — then checking whether money has actually started rotating back in.</p>
           </div>
           <div className={`flex flex-col items-start gap-1 rounded-md border bg-black/20 px-3 py-2 text-xs ${dataHealthy ? 'border-emerald-500/20 text-emerald-300/60' : 'border-red-500/50 text-red-200'}`}>
-            <span className={dataHealthy ? 'text-emerald-300' : 'text-red-300'}>{dataHealthy ? '● PIPELINE OK' : '● PIPELINE FAILED'} • {dataMeta.pipeline.conclusion.toUpperCase()}</span>
-            <span className={dataHealthy && dataMeta.technicals.live ? 'text-emerald-300' : 'text-amber-300'}>{dataHealthy && dataMeta.technicals.live ? 'LIVE TECHNICALS' : 'LAST GOOD SNAPSHOT'} • {dataMeta.technicals.source}</span>
-            <span className={dataHealthy ? 'text-emerald-300' : 'text-amber-200'}>AUTO VALUATION • {dataMeta.valuations.providers.join(' + ')}</span>
+            <span className={pipelinePassed ? 'text-emerald-300' : 'text-red-300'}>{pipelinePassed ? '● PIPELINE OK' : '● PIPELINE FAILED'} • {dataMeta.pipeline.conclusion.toUpperCase()}</span>
+            <span className={technicalFresh ? 'text-emerald-300' : 'text-red-300'}>{technicalFresh ? 'CURRENT TECHNICALS' : 'STALE TECHNICALS'} • {dataMeta.technicals.source}</span>
+            <span className={valuationFresh ? 'text-emerald-300' : 'text-red-300'}>{valuationFresh ? 'CURRENT VALUATION' : 'STALE VALUATION'} • {dataMeta.valuations.providers.join(' + ')}</span>
             <span>Snapshot {new Date(dataMeta.technicals.generatedAt).toLocaleString()}</span>
             <span>Technical session {dataMeta.technicalSessionAsOf}</span>
             <span>Valuation sources {dataMeta.oldestValuationSourceAsOf ?? '—'} → {dataMeta.newestValuationSourceAsOf ?? '—'}</span>
@@ -136,7 +136,7 @@ const RotationGoblinApp = ():JSX.Element => {
       {!dataHealthy ? <section className="rounded-xl border border-red-500/60 bg-red-500/10 p-4 text-sm leading-relaxed text-red-100 shadow-[0_0_24px_rgba(239,68,68,0.08)]">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="font-black tracking-wide text-red-200">🚨 DATA PIPELINE FAILED</p>
+            <p className="font-black tracking-wide text-red-200">{!pipelinePassed ? '🚨 DATA PIPELINE FAILED' : '🚨 STALE DATA DETECTED'}</p>
             <p className="mt-1 text-red-100/80">The dashboard is not treating this snapshot as current. It is showing the last committed data only.</p>
             <p className="mt-2 text-xs text-red-200/70">{freshnessReason}</p>
             <p className="mt-1 text-xs text-red-200/50">{dataMeta.pipeline.note}</p>
@@ -170,7 +170,7 @@ const RotationGoblinApp = ():JSX.Element => {
 
       <section className="rounded-xl border border-emerald-500/25 bg-[#07110a] p-5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div><p className="text-xs font-semibold tracking-[0.2em] text-lime-300">MARKET RADAR</p><div className="mt-1 flex flex-wrap items-center gap-2"><h2 className="text-2xl font-bold text-emerald-100">ETF Regime Table</h2><span className={`rounded border px-2 py-0.5 text-[10px] font-black tracking-wide ${dataHealthy ? 'border-emerald-400/40 text-emerald-200' : 'border-red-400/50 bg-red-500/10 text-red-200'}`}>{dataHealthy ? 'DATA OK' : 'PIPELINE ERROR'}</span></div></div>
+          <div><p className="text-xs font-semibold tracking-[0.2em] text-lime-300">MARKET RADAR</p><div className="mt-1 flex flex-wrap items-center gap-2"><h2 className="text-2xl font-bold text-emerald-100">ETF Regime Table</h2><span className={`rounded border px-2 py-0.5 text-[10px] font-black tracking-wide ${dataHealthy ? 'border-emerald-400/40 text-emerald-200' : 'border-red-400/50 bg-red-500/10 text-red-200'}`}>{dataHealthy ? 'DATA OK' : (!pipelinePassed ? 'PIPELINE ERROR' : 'DATA STALE')}</span></div></div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <select value={phaseFilter} onChange={(event)=>setPhaseFilter(event.target.value as 'All'|Phase)} className="rounded-md border border-emerald-500/25 bg-[#050706] px-3 py-2 text-sm text-emerald-100"><option value="All">All phases</option>{phases.map((phase)=><option key={phase}>{phase}</option>)}</select>
             <input value={query} onChange={(event)=>setQuery(event.target.value)} placeholder="Search ticker or theme…" className="rounded-md border border-emerald-500/25 bg-[#050706] px-3 py-2 text-sm text-emerald-100 placeholder:text-emerald-300/30" />
