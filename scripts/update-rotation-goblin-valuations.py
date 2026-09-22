@@ -354,10 +354,14 @@ def upsert_history(
         "primaryRelative": round(primary_relative, 4),
         "pbRelative": round(pb_relative, 4),
     }
-    if entries and entries[-1].get("date") == snapshot_date:
-        entries[-1] = entry
-    else:
-        entries.append(entry)
+    # Sponsor dates can lag the scrape date. Rebuild chronologically and
+    # discard any later entry created by the old scrape-date semantics.
+    entries = [
+        existing for existing in entries
+        if str(existing.get("date", "")) < snapshot_date
+    ]
+    entries.append(entry)
+    entries.sort(key=lambda existing: str(existing.get("date", "")))
     history[ticker] = entries[-MAX_HISTORY_SAMPLES:]
     return history[ticker]
 
