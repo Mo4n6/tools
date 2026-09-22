@@ -128,6 +128,24 @@ def fetch_history(ticker: str, start: dt.date, end: dt.date) -> tuple[list[tuple
     raise RuntimeError(f"All providers failed for {ticker}: {' | '.join(errors)}")
 
 
+def remove_incomplete_session(
+    rows: list[tuple[dt.date, float]],
+    now_utc: dt.datetime,
+) -> list[tuple[dt.date, float]]:
+    """Do not treat an intraday daily bar as a completed market session.
+
+    Scheduled refreshes run after the U.S. close. PR/push validation can run
+    during market hours, so before 22:00 UTC we deliberately use the prior
+    completed session if the provider already exposes today's partial bar.
+    """
+    if not rows:
+        return rows
+    today = now_utc.date()
+    if rows[-1][0] == today and now_utc.hour < 22:
+        return rows[:-1]
+    return rows
+
+
 def weekly_close(rows: list[tuple[dt.date, float]]) -> list[tuple[dt.date, float]]:
     weeks: dict[tuple[int, int], tuple[dt.date, float]] = {}
     for day, close in rows:
@@ -251,16 +269,20 @@ def history_points(history: dict[str, list[dict[str, object]]], ticker: str) -> 
 
 
 def main() -> None:
-    today = dt.datetime.now(dt.timezone.utc).date()
+    now_utc = dt.datetime.now(dt.timezone.utc)
+    today = now_utc.date()
     start = today - dt.timedelta(days=LOOKBACK_DAYS)
 
     all_rows: dict[str, list[tuple[dt.date, float]]] = {}
     providers: dict[str, str] = {}
     for ticker in TICKERS:
         rows, provider = fetch_history(ticker, start, today)
+        rows = remove_incomplete_session(rows, now_utc)
+        if len(rows) < 260:
+            raise RuntimeError(f"{ticker}: fewer than 260 completed daily sessions after filtering")
         all_rows[ticker] = rows
         providers[ticker] = provider
-        print(f"{ticker}: {len(rows)} rows via {provider}")
+        print(f"{ticker}: {len(rows)} completed rows via {provider}; latest={rows[-1][0]}")
 
     spy_daily = all_rows["SPY"]
     spy_weekly = weekly_close(spy_daily)
@@ -343,7 +365,7 @@ def main() -> None:
 
     used_providers = sorted(set(providers.values()))
     provider_label = " + ".join(used_providers)
-    generated_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    generated_at = now_utc.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     type_header = """export type GeneratedTrend = 'up' | 'flat' | 'down';
 
