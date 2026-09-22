@@ -138,7 +138,7 @@ NOT_APPLICABLE = {
 }
 
 
-def http_get(url: str, attempts: int = 2) -> str:
+def http_get_bytes(url: str, attempts: int = 2) -> bytes:
     last_error: Exception | None = None
     for attempt in range(attempts):
         try:
@@ -149,28 +149,36 @@ def http_get(url: str, attempts: int = 2) -> str:
                     "--silent",
                     "--show-error",
                     "--location",
+                    "--max-redirs",
+                    "10",
                     "--connect-timeout",
                     "5",
                     "--max-time",
-                    "12",
+                    "20",
                     "--user-agent",
                     USER_AGENT,
                     "--header",
-                    "Accept: text/html,application/xhtml+xml",
+                    "Accept: */*",
                     "--header",
                     "Accept-Language: en-US,en;q=0.9",
                     url,
                 ],
                 check=True,
                 capture_output=True,
-                timeout=15,
+                timeout=25,
             )
-            return completed.stdout.decode("utf-8", errors="replace")
+            if not completed.stdout:
+                raise RuntimeError("empty response")
+            return completed.stdout
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             if attempt + 1 < attempts:
                 time.sleep(1)
     raise RuntimeError(f"Unable to fetch {url}: {last_error}")
+
+
+def http_get(url: str, attempts: int = 2) -> str:
+    return http_get_bytes(url, attempts=attempts).decode("utf-8", errors="replace")
 
 
 class TextExtractor(HTMLParser):
@@ -357,21 +365,32 @@ def main() -> None:
 
     def fetch_one(item: tuple[str, dict[str, Any]]) -> tuple[str, dict[str, float | None]]:
         ticker, config = item
-        raw = http_get(config["url"])
-        if ticker in {"SPY", "IWM"}:
-            debug_text = plain_text(raw)
-            debug_label = "Price/Book Ratio" if ticker == "SPY" else "P/B Ratio"
-            debug_at = debug_text.find(debug_label)
-            if debug_at >= 0:
-                print(f"DEBUG_{ticker}: {debug_text[debug_at:debug_at + 900]}")
-        if config["kind"] == "ssga":
-            values = parse_ssga(raw)
-        elif config["kind"] == "ishares":
-            values = parse_ishares(raw)
-        elif config["kind"] == "vaneck":
-            values = parse_vaneck(raw)
+        kind = config["kind"]
+
+        if kind == "vaneck_pdf":
+            pdf_errors: list[str] = []
+            values: dict[str, float | None] | None = None
+            for url in config.get("urls", [config["url"]]):
+                try:
+                    values = parse_vaneck_pdf(http_get_bytes(url))
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    pdf_errors.append(f"{url}: {exc}")
+            if values is None:
+                raise RuntimeError(" | ".join(pdf_errors))
         else:
-            raise RuntimeError(f"Unsupported valuation source kind: {config['kind']}")
+            raw = http_get(config["url"])
+            if kind == "ssga":
+                values = parse_ssga(raw)
+            elif kind == "ishares":
+                values = parse_ishares(raw)
+            else:
+                raise RuntimeError(f"Unsupported valuation source kind: {kind}")
+
+        required = ["pb", config["primaryMetric"]]
+        if ticker == "SPY":
+            required = ["pb", "forward_pe", "pe", "pcf"]
+        validate_parsed_metrics(ticker, values, required)
         return ticker, values
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
