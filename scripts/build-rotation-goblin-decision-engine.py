@@ -12,9 +12,10 @@ Method:
 1. Join mature completed-week states to 3M/6M future relative returns.
 2. Learn non-parametric decile response curves for each technical feature.
 3. Combine related features into five interpretable components.
-4. Measure each component's predictive spread in purged walk-forward folds.
-5. Shrink evidence-derived weights toward the pre-registered 30/25/20/15/10
-   architecture so one historical period cannot wildly overfit the model.
+4. Measure each component's predictive spread in five purged walk-forward folds.
+5. Blend 70% evidence-derived weights with 30% of the pre-registered
+   30/25/20/15/10 architecture so weak evidence is de-emphasized without
+   letting one historical period completely dictate the model.
 6. Fit the final response curves on all mature history and score the latest
    canonical state for each ETF.
 
@@ -102,7 +103,7 @@ FEATURE_DESCRIPTIONS = {
 
 DECILE_COUNT = 10
 BIN_SHRINK_SAMPLES = 30.0
-PRIOR_SHRINK = 0.70
+PRIOR_SHRINK = 0.30
 PURGE_DAYS = 190
 MIN_TRAIN_ROWS = 1500
 MIN_VALIDATION_ROWS = 300
@@ -336,7 +337,9 @@ def walk_forward_diagnostics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     unique_dates = sorted({row["dateObj"] for row in rows})
     require(len(unique_dates) >= 300, "Not enough unique weeks for walk-forward validation")
 
-    fractions = [0.55, 0.70, 0.85, 1.00]
+    # Five expanding-window validation folds spanning multiple market regimes.
+    # Each fold keeps a six-month purge between training labels and validation.
+    fractions = [0.40, 0.52, 0.64, 0.76, 0.88, 1.00]
     boundaries = [
         unique_dates[min(len(unique_dates) - 1, int((len(unique_dates) - 1) * fraction))]
         for fraction in fractions
@@ -565,7 +568,7 @@ def main() -> None:
         "targetUnit": "percentage points of ETF-vs-SPY relative return per month",
         "featurePolicy": "price-derived point-in-time features only; valuation excluded",
         "weightPolicy": (
-            "70% pre-registered component weights + 30% purged walk-forward "
+            "30% pre-registered component weights + 70% purged walk-forward "
             "evidence weights derived from top-minus-bottom quintile predictive spread"
         ),
         "priorWeights": {
