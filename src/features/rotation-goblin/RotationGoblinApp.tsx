@@ -46,6 +46,7 @@ const RotationChart = ({ row }:{ row:EtfRow }):JSX.Element => {
 };
 
 const RotationGoblinApp = ():JSX.Element => {
+  const pipelineHealthy = dataMeta.pipeline.conclusion === 'success';
   const [phaseFilter,setPhaseFilter] = useState<'All'|Phase>('All');
   const [query,setQuery] = useState('');
   const [sortKey,setSortKey] = useState<keyof EtfRow>('rotationScore');
@@ -85,13 +86,26 @@ const RotationGoblinApp = ():JSX.Element => {
             <h1 className="text-4xl font-black tracking-tight text-emerald-100 md:text-6xl">Rotation Goblin 👹</h1>
             <p className="mt-2 max-w-3xl text-emerald-300/75">Sniffing around the market for sectors the herd forgot about — then checking whether money has actually started rotating back in.</p>
           </div>
-          <div className="flex flex-col items-start gap-1 rounded-md border border-emerald-500/20 bg-black/20 px-3 py-2 text-xs text-emerald-300/60">
-            <span className={dataMeta.technicals.live ? 'text-emerald-300' : 'text-amber-300'}>{dataMeta.technicals.live ? 'LIVE TECHNICALS' : 'SEED TECHNICALS'} • {dataMeta.technicals.source}</span>
-            <span className="text-emerald-300">AUTO VALUATION • {dataMeta.valuations.providers.join(' + ')}</span>
-            <span>Updated {new Date(dataMeta.technicals.generatedAt).toLocaleString()}</span>
+          <div className={`flex flex-col items-start gap-1 rounded-md border bg-black/20 px-3 py-2 text-xs ${pipelineHealthy ? 'border-emerald-500/20 text-emerald-300/60' : 'border-red-500/50 text-red-200'}`}>
+            <span className={pipelineHealthy ? 'text-emerald-300' : 'text-red-300'}>{pipelineHealthy ? '● PIPELINE OK' : '● PIPELINE FAILED'} • {dataMeta.pipeline.conclusion.toUpperCase()}</span>
+            <span className={pipelineHealthy && dataMeta.technicals.live ? 'text-emerald-300' : 'text-amber-300'}>{pipelineHealthy && dataMeta.technicals.live ? 'LIVE TECHNICALS' : 'LAST GOOD SNAPSHOT'} • {dataMeta.technicals.source}</span>
+            <span className={pipelineHealthy ? 'text-emerald-300' : 'text-amber-200'}>AUTO VALUATION • {dataMeta.valuations.providers.join(' + ')}</span>
+            <span>Snapshot {new Date(dataMeta.technicals.generatedAt).toLocaleString()}</span>
+            {dataMeta.pipeline.completedAt ? <span>Last run {new Date(dataMeta.pipeline.completedAt).toLocaleString()}</span> : null}
           </div>
         </div>
       </section>
+
+      {!pipelineHealthy ? <section className="rounded-xl border border-red-500/60 bg-red-500/10 p-4 text-sm leading-relaxed text-red-100 shadow-[0_0_24px_rgba(239,68,68,0.08)]">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="font-black tracking-wide text-red-200">🚨 DATA PIPELINE FAILED</p>
+            <p className="mt-1 text-red-100/80">The latest refresh did not complete successfully. The dashboard is showing the last committed good snapshot, so treat all signals as stale until the next successful run.</p>
+            <p className="mt-2 text-xs text-red-200/60">{dataMeta.pipeline.note}</p>
+          </div>
+          {dataMeta.pipeline.runUrl ? <a href={dataMeta.pipeline.runUrl} target="_blank" rel="noreferrer" className="shrink-0 rounded-md border border-red-400/40 bg-red-950/30 px-3 py-2 text-xs font-bold text-red-100 hover:bg-red-900/30">Open failed workflow ↗</a> : null}
+        </div>
+      </section> : null}
 
       <section className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm leading-relaxed text-amber-100">
         <strong>⚠ Financial caveat:</strong> This dashboard is for education, research, and entertainment only. It is not financial, investment, tax, or legal advice. Signals can be wrong, stale, or spectacularly stupid. Past performance does not predict future returns. Do your own research and consider your own risk tolerance before buying or selling anything.
@@ -118,7 +132,7 @@ const RotationGoblinApp = ():JSX.Element => {
 
       <section className="rounded-xl border border-emerald-500/25 bg-[#07110a] p-5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div><p className="text-xs font-semibold tracking-[0.2em] text-lime-300">MARKET RADAR</p><h2 className="mt-1 text-2xl font-bold text-emerald-100">ETF Regime Table</h2></div>
+          <div><p className="text-xs font-semibold tracking-[0.2em] text-lime-300">MARKET RADAR</p><div className="mt-1 flex flex-wrap items-center gap-2"><h2 className="text-2xl font-bold text-emerald-100">ETF Regime Table</h2><span className={`rounded border px-2 py-0.5 text-[10px] font-black tracking-wide ${pipelineHealthy ? 'border-emerald-400/40 text-emerald-200' : 'border-red-400/50 bg-red-500/10 text-red-200'}`}>{pipelineHealthy ? 'DATA OK' : 'PIPELINE ERROR'}</span></div></div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <select value={phaseFilter} onChange={(event)=>setPhaseFilter(event.target.value as 'All'|Phase)} className="rounded-md border border-emerald-500/25 bg-[#050706] px-3 py-2 text-sm text-emerald-100"><option value="All">All phases</option>{phases.map((phase)=><option key={phase}>{phase}</option>)}</select>
             <input value={query} onChange={(event)=>setQuery(event.target.value)} placeholder="Search ticker or theme…" className="rounded-md border border-emerald-500/25 bg-[#050706] px-3 py-2 text-sm text-emerald-100 placeholder:text-emerald-300/30" />
