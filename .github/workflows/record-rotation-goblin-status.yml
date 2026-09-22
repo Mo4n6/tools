@@ -110,4 +110,21 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add src/features/rotation-goblin/pipelineStatus.generated.ts
           git commit -m "Record Rotation Goblin pipeline status"
-          git push
+          for attempt in 1 2 3 4; do
+            git fetch origin main
+            if ! git rebase origin/main; then
+              git rebase --abort || true
+              echo "Rebase failed while another Rotation Goblin writer updated main."
+              exit 1
+            fi
+
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+
+            echo "Push raced with another writer; retrying ($attempt/4)..."
+            sleep $((attempt * 2))
+          done
+
+          echo "Unable to push after 4 attempts."
+          exit 1
