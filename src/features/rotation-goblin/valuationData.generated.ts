@@ -23,7 +23,7 @@ export type GeneratedValuationRow = {
 };
 
 export const valuationDataMeta = {
-  "generatedAt": "2026-09-22T17:04:31Z",
+  "generatedAt": "2026-09-22T17:13:48Z",
   "benchmark": "SPY",
   "minimumHistorySamples": 20,
   "automatedTickers": [
@@ -62,7 +62,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": "iShares",
     "sourceUrl": "https://www.ishares.com/us/products/239637/ishares-msci-emerging-markets-etf",
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-21",
     "primaryMetric": "P/E",
     "primaryMultiple": 19.74,
     "benchmarkMultiple": 25.29,
@@ -74,7 +74,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "trackedHistoryPercentile": null,
     "historySamples": 1,
     "valueScore": 81.5,
-    "note": "Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
+    "note": "Sponsor fundamentals are as of 2026-09-21. Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
   },
   {
     "ticker": "EFA",
@@ -83,7 +83,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": "iShares",
     "sourceUrl": "https://www.ishares.com/us/products/239623/ishares-msci-eafe-etf",
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-21",
     "primaryMetric": "P/E",
     "primaryMultiple": 19.1,
     "benchmarkMultiple": 25.29,
@@ -95,7 +95,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "trackedHistoryPercentile": null,
     "historySamples": 1,
     "valueScore": 83.4,
-    "note": "Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
+    "note": "Sponsor fundamentals are as of 2026-09-21. Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
   },
   {
     "ticker": "GLD",
@@ -125,7 +125,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": "iShares",
     "sourceUrl": "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf",
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-21",
     "primaryMetric": "P/E",
     "primaryMultiple": 18.23,
     "benchmarkMultiple": 25.29,
@@ -137,7 +137,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "trackedHistoryPercentile": null,
     "historySamples": 1,
     "valueScore": 85.6,
-    "note": "Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
+    "note": "Sponsor fundamentals are as of 2026-09-21. Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
   },
   {
     "ticker": "IYR",
@@ -146,7 +146,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": "iShares",
     "sourceUrl": "https://www.ishares.com/us/products/239520/ishares-us-real-estate-etf",
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-21",
     "primaryMetric": "P/CF",
     "primaryMultiple": 16.67,
     "benchmarkMultiple": 18.47,
@@ -158,7 +158,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "trackedHistoryPercentile": null,
     "historySamples": 1,
     "valueScore": 73.8,
-    "note": "Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
+    "note": "Sponsor fundamentals are as of 2026-09-21. Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
   },
   {
     "ticker": "KMLM",
@@ -209,7 +209,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": "iShares",
     "sourceUrl": "https://www.ishares.com/us/products/239705/ishares-semiconductor-etf",
     "proxyTicker": "SOXX",
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-21",
     "primaryMetric": "P/E",
     "primaryMultiple": 65.25,
     "benchmarkMultiple": 25.29,
@@ -221,7 +221,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "trackedHistoryPercentile": null,
     "historySamples": 1,
     "valueScore": 0.0,
-    "note": "Valuation proxy: SOXX is used for the semiconductor complex because the SMH sponsor endpoint blocks automated CI access. Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
+    "note": "Valuation proxy: SOXX is used for the semiconductor complex because the SMH sponsor endpoint blocks automated CI access. Sponsor fundamentals are as of 2026-09-21. Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
   },
   {
     "ticker": "TLT",
@@ -272,7 +272,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": "State Street",
     "sourceUrl": "https://www.ssga.com/us/en/intermediary/etfs/state-street-materials-select-sector-spdr-etf-xlb",
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-21",
     "primaryMetric": "Forward P/E (FY1)",
     "primaryMultiple": 17.01,
     "benchmarkMultiple": 21.48,
@@ -284,7 +284,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "trackedHistoryPercentile": null,
     "historySamples": 1,
     "valueScore": 80.8,
-    "note": "Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
+    "note": "Sponsor fundamentals are as of 2026-09-21. Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
   },
   {
     "ticker": "XLE",
@@ -293,7 +293,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": "State Street",
     "sourceUrl": "https://www.ssga.com/us/en/intermediary/etfs/state-street-energy-select-sector-spdr-etf-xle",
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-21",
     "primaryMetric": "Forward P/E (FY1)",
     "primaryMultiple": 12.35,
     "benchmarkMultiple": 21.48,
@@ -305,7 +305,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "trackedHistoryPercentile": null,
     "historySamples": 1,
     "valueScore": 95.1,
-    "note": "Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
+    "note": "Sponsor fundamentals are as of 2026-09-21. Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
   },
   {
     "ticker": "XLF",
@@ -314,7 +314,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": "State Street",
     "sourceUrl": "https://www.ssga.com/us/en/intermediary/etfs/state-street-financial-select-sector-spdr-etf-xlf",
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-21",
     "primaryMetric": "Forward P/E (FY1)",
     "primaryMultiple": 15.68,
     "benchmarkMultiple": 21.48,
@@ -326,7 +326,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "trackedHistoryPercentile": null,
     "historySamples": 1,
     "valueScore": 85.1,
-    "note": "Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
+    "note": "Sponsor fundamentals are as of 2026-09-21. Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
   },
   {
     "ticker": "XLI",
@@ -335,7 +335,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": "State Street",
     "sourceUrl": "https://www.ssga.com/us/en/intermediary/etfs/state-street-industrial-select-sector-spdr-etf-xli",
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-21",
     "primaryMetric": "Forward P/E (FY1)",
     "primaryMultiple": 24.73,
     "benchmarkMultiple": 21.48,
@@ -347,7 +347,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "trackedHistoryPercentile": null,
     "historySamples": 1,
     "valueScore": 31.7,
-    "note": "Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
+    "note": "Sponsor fundamentals are as of 2026-09-21. Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
   },
   {
     "ticker": "XLK",
@@ -356,7 +356,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": "State Street",
     "sourceUrl": "https://www.ssga.com/us/en/intermediary/etfs/state-street-technology-select-sector-spdr-etf-xlk",
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-21",
     "primaryMetric": "Forward P/E (FY1)",
     "primaryMultiple": 27.27,
     "benchmarkMultiple": 21.48,
@@ -368,7 +368,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "trackedHistoryPercentile": null,
     "historySamples": 1,
     "valueScore": 15.0,
-    "note": "Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
+    "note": "Sponsor fundamentals are as of 2026-09-21. Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
   },
   {
     "ticker": "XLU",
@@ -377,7 +377,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": "State Street",
     "sourceUrl": "https://www.ssga.com/us/en/intermediary/etfs/state-street-utilities-select-sector-spdr-etf-xlu",
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-21",
     "primaryMetric": "Forward P/E (FY1)",
     "primaryMultiple": 16.99,
     "benchmarkMultiple": 21.48,
@@ -389,7 +389,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "trackedHistoryPercentile": null,
     "historySamples": 1,
     "valueScore": 81.1,
-    "note": "Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
+    "note": "Sponsor fundamentals are as of 2026-09-21. Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
   },
   {
     "ticker": "XLV",
@@ -398,7 +398,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": "State Street",
     "sourceUrl": "https://www.ssga.com/us/en/intermediary/etfs/state-street-health-care-select-sector-spdr-etf-xlv",
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-21",
     "primaryMetric": "Forward P/E (FY1)",
     "primaryMultiple": 20.2,
     "benchmarkMultiple": 21.48,
@@ -410,6 +410,6 @@ export const valuationRows: GeneratedValuationRow[] = [
     "trackedHistoryPercentile": null,
     "historySamples": 1,
     "valueScore": 57.9,
-    "note": "Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
+    "note": "Sponsor fundamentals are as of 2026-09-21. Value score blends the ETF's primary valuation multiple and P/B versus SPY. Tracked-history percentile activates after 20 samples; currently 1."
   }
 ];
