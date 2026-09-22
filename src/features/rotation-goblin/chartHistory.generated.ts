@@ -7,7 +7,7 @@ export type HistoricalChartPoint = {
 };
 
 export const chartHistoryMeta = {
-  "generatedAt": "2026-09-22T18:30:41Z",
+  "generatedAt": "2026-09-22T18:41:41Z",
   "latestCanonicalSession": "2026-09-21",
   "frequency": "completed-weeks-plus-latest-daily-session",
   "benchmark": "SPY"
