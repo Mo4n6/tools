@@ -39,9 +39,6 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install valuation parser dependency
-        run: python -m pip install "pypdf>=5,<7"
-
       - name: Refresh valuation layer
         run: python scripts/update-rotation-goblin-valuations.py
 
