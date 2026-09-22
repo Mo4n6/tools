@@ -9,7 +9,7 @@ P/E-based "value" score.
 Sources:
 - State Street fund pages for SPY and Select Sector SPDR ETFs
 - iShares fund pages for IWM, IYR, EFA, and EEM
-- VanEck's official SMH fund page for semiconductor valuation
+- iShares SOXX sponsor page as a clearly labeled semiconductor valuation proxy for SMH
 
 The script stores a daily valuation snapshot so the dashboard can build its own
 tracked-history percentile over time. Until enough observations accumulate,
@@ -39,6 +39,7 @@ USER_AGENT = "RotationGoblin/1.0 (+https://github.com/Mo4n6/tools)"
 MIN_HISTORY_SAMPLES = 20
 MAX_HISTORY_SAMPLES = 1500
 MAX_STALE_DAYS = 10
+MAX_SOURCE_AGE_DAYS = 10
 
 SSGA_BASE = "https://www.ssga.com/us/en/intermediary/etfs/"
 ISHARES_BASE = "https://www.ishares.com/us/products/"
@@ -205,6 +206,39 @@ def plain_text(raw_html: str) -> str:
     return re.sub(r"\s+", " ", " ".join(parser.parts)).strip()
 
 
+MONTHS = {
+    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
+    "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
+    "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9, "oct": 10,
+    "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
+}
+
+
+def parse_sponsor_date(text: str) -> str | None:
+    match = re.search(
+        r"as of\s+([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    month = MONTHS.get(match.group(1).lower())
+    if month is None:
+        return None
+    try:
+        return dt.date(int(match.group(3)), month, int(match.group(2))).isoformat()
+    except ValueError:
+        return None
+
+
+def sponsor_date_after(text: str, label: str, max_chars: int = 1800) -> str | None:
+    match = re.search(re.escape(label), text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    window = text[match.start():match.end() + max_chars]
+    return parse_sponsor_date(window)
+
+
 def decimal_after(text: str, label: str, max_chars: int = 1200) -> float | None:
     """Return the first decimal-formatted value after a metric label.
 
@@ -231,23 +265,31 @@ def decimal_in_section(text: str, section: str, label: str, max_chars: int = 300
     return decimal_after(section_text, label, max_chars=max_chars)
 
 
-def parse_ssga(raw_html: str) -> dict[str, float | None]:
+def parse_ssga(raw_html: str) -> dict[str, Any]:
     text = plain_text(raw_html)
     return {
         "pb": decimal_in_section(text, "Fund Characteristics", "Price/Book Ratio"),
         "forward_pe": decimal_in_section(text, "Fund Characteristics", "Price/Earnings Ratio FY1"),
         "pe": decimal_in_section(text, "Index Characteristics", "Price/Earnings"),
         "pcf": decimal_in_section(text, "Index Characteristics", "Price/Cash Flow"),
+        "source_as_of": sponsor_date_after(text, "Fund Characteristics"),
     }
 
 
-def parse_ishares(raw_html: str) -> dict[str, float | None]:
+def parse_ishares(raw_html: str) -> dict[str, Any]:
     text = plain_text(raw_html)
+    dates = [
+        sponsor_date_after(text, "P/B Ratio"),
+        sponsor_date_after(text, "P/E Ratio"),
+        sponsor_date_after(text, "P/CF Ratio"),
+    ]
+    valid_dates = sorted(date for date in dates if date)
     return {
         "pb": decimal_in_section(text, "Portfolio Characteristics", "P/B Ratio"),
         "pe": decimal_in_section(text, "Portfolio Characteristics", "P/E Ratio"),
         "pcf": decimal_in_section(text, "Portfolio Characteristics", "P/CF Ratio"),
         "forward_pe": None,
+        "source_as_of": valid_dates[0] if valid_dates else None,
     }
 
 
@@ -423,7 +465,7 @@ def main() -> None:
     fetched: dict[str, dict[str, float | None]] = {}
     errors: dict[str, str] = {}
 
-    def fetch_one(item: tuple[str, dict[str, Any]]) -> tuple[str, dict[str, float | None]]:
+    def fetch_one(item: tuple[str, dict[str, Any]]) -> tuple[str, dict[str, Any]]:
         ticker, config = item
         kind = config["kind"]
 
@@ -439,6 +481,15 @@ def main() -> None:
         if ticker == "SPY":
             required = ["pb", "forward_pe", "pe", "pcf"]
         validate_parsed_metrics(ticker, values, required)
+        source_as_of = values.get("source_as_of")
+        if not isinstance(source_as_of, str):
+            raise RuntimeError(f"{ticker}: could not determine sponsor source date")
+        source_date = dt.date.fromisoformat(source_as_of)
+        age = (dt.datetime.now(dt.timezone.utc).date() - source_date).days
+        if age < 0 or age > MAX_SOURCE_AGE_DAYS:
+            raise RuntimeError(
+                f"{ticker}: sponsor valuation source date {source_as_of} is stale/invalid (age={age} days)"
+            )
         return ticker, values
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
@@ -510,11 +561,12 @@ def main() -> None:
         primary_relative = primary / benchmark
         pb_relative = pb / benchmark_pb
         cross_score = ratio_score(primary_relative) * 0.65 + ratio_score(pb_relative) * 0.35
+        source_as_of = str(values["source_as_of"])
 
         entries = upsert_history(
             history,
             ticker,
-            today,
+            source_as_of,
             cross_score,
             primary_relative,
             pb_relative,
@@ -536,7 +588,7 @@ def main() -> None:
             "provider": config["provider"],
             "sourceUrl": config["url"],
             "proxyTicker": config.get("proxyTicker"),
-            "asOf": today,
+            "asOf": source_as_of,
             "primaryMetric": metric_label(metric),
             "primaryMultiple": round(primary, 2),
             "benchmarkMultiple": round(benchmark, 2),
@@ -554,6 +606,7 @@ def main() -> None:
                     "the SMH sponsor endpoint blocks automated CI access. "
                     if config.get("proxyTicker") else ""
                 )
+                + f"Sponsor fundamentals are as of {source_as_of}. "
                 + "Value score blends the ETF's primary valuation multiple and P/B versus SPY. "
                 + (
                     f"Tracked-history percentile is active with {len(entries)} samples."
