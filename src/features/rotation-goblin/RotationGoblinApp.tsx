@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { historicalChartSeries } from './chartHistory.generated';
 import { dataMeta, type EtfRow, type Phase, sampleEtfs } from './sampleData';
 
 const phases: Phase[] = ['Capitulation','Accumulation','Rotation','Momentum','Crowded','Decay'];
@@ -40,25 +41,56 @@ const pct = (value:number):string => `${value > 0 ? '+' : ''}${value.toFixed(1)}
 const trend = (value:EtfRow['rsiTrend']):string => value === 'up' ? '↑' : value === 'down' ? '↓' : '→';
 
 const RotationChart = ({ row }:{ row:EtfRow }):JSX.Element => {
-  const width = 620;
-  const height = 230;
-  const pad = 30;
-  const points = row.history.map((point,index) => ({
-    x: pad + (index * (width - pad * 2)) / Math.max(1,row.history.length - 1),
-    y: height - pad - (point.value / 100) * (height - pad * 2),
-    ...point,
-  }));
-  const polyline = points.map((p) => `${p.x},${p.y}`).join(' ');
+  const [rangeYears,setRangeYears] = useState<1|3|5|10>(5);
+  const historical = historicalChartSeries[row.ticker] ?? [];
+  const livePoint = { date:row.asOf, rsi14w:row.rsi14w, relativeRsi14w:row.relativeRsi };
+  const combined = historical.length && historical[historical.length - 1]?.date === row.asOf
+    ? historical.map((point) => ({ date:point.date, rsi14w:point.rsi14w, relativeRsi14w:point.relativeRsi14w }))
+    : [...historical.map((point) => ({ date:point.date, rsi14w:point.rsi14w, relativeRsi14w:point.relativeRsi14w })),livePoint];
+
+  const latestDate = combined.length ? new Date(`${combined[combined.length - 1].date}T00:00:00Z`) : new Date();
+  const cutoff = new Date(latestDate);
+  cutoff.setUTCFullYear(cutoff.getUTCFullYear() - rangeYears);
+  const visible = combined.filter((point) => new Date(`${point.date}T00:00:00Z`) >= cutoff);
+
+  const width = 700;
+  const height = 250;
+  const padX = 42;
+  const padY = 28;
+  const xFor = (index:number):number => padX + (index * (width - padX * 2)) / Math.max(1,visible.length - 1);
+  const yFor = (value:number):number => height - padY - (value / 100) * (height - padY * 2);
+  const rsiLine = visible.map((point,index)=>`${xFor(index)},${yFor(point.rsi14w)}`).join(' ');
+  const relativeLine = visible.map((point,index)=>`${xFor(index)},${yFor(point.relativeRsi14w)}`).join(' ');
+  const labelIndexes = visible.length
+    ? Array.from(new Set([0,Math.floor((visible.length-1)*0.25),Math.floor((visible.length-1)*0.5),Math.floor((visible.length-1)*0.75),visible.length-1]))
+    : [];
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-56 w-full" role="img" aria-label={`${row.ticker} rotation score history`}>
-      {[25,50,75].map((level) => {
-        const y = height - pad - (level / 100) * (height - pad * 2);
-        return <g key={level}><line x1={pad} y1={y} x2={width-pad} y2={y} stroke="rgba(52,211,153,0.14)" /><text x="3" y={y+4} fill="#64748b" fontSize="11">{level}</text></g>;
-      })}
-      <polyline points={polyline} fill="none" stroke="#86efac" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
-      {points.map((p,index) => <g key={p.month}><circle cx={p.x} cy={p.y} r="3" fill="#d9f99d" />{(index % 2 === 0 || index === points.length - 1) ? <text x={p.x} y={height-6} textAnchor="middle" fill="#64748b" fontSize="10">{p.month}</text> : null}</g>)}
-    </svg>
+    <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-4 text-[11px]">
+          <span className="flex items-center gap-1.5 text-lime-200"><span className="h-0.5 w-5 bg-lime-300" />14W RSI</span>
+          <span className="flex items-center gap-1.5 text-sky-200"><span className="h-0.5 w-5 bg-sky-300" />Relative RSI</span>
+        </div>
+        <div className="flex gap-1">
+          {([1,3,5,10] as const).map((years)=><button key={years} type="button" onClick={()=>setRangeYears(years)} className={`rounded border px-2 py-1 text-[10px] font-bold ${rangeYears===years?'border-lime-400/50 bg-lime-500/10 text-lime-200':'border-emerald-500/20 text-emerald-300/45 hover:text-emerald-100'}`}>{years}Y</button>)}
+        </div>
+      </div>
+      {visible.length > 1 ? (
+        <svg viewBox={`0 0 ${width} ${height}`} className="h-60 w-full" role="img" aria-label={`${row.ticker} 14-week RSI and relative RSI history`}>
+          {[30,50,70].map((level) => {
+            const y = yFor(level);
+            return <g key={level}><line x1={padX} y1={y} x2={width-padX} y2={y} stroke="rgba(52,211,153,0.14)" strokeDasharray={level===50?'4 4':undefined} /><text x="5" y={y+4} fill="#64748b" fontSize="11">{level}</text></g>;
+          })}
+          <polyline points={rsiLine} fill="none" stroke="#bef264" strokeWidth="2.3" strokeLinejoin="round" strokeLinecap="round" />
+          <polyline points={relativeLine} fill="none" stroke="#7dd3fc" strokeWidth="2.1" strokeLinejoin="round" strokeLinecap="round" />
+          {labelIndexes.map((index) => <text key={visible[index].date} x={xFor(index)} y={height-5} textAnchor={index===0?'start':index===visible.length-1?'end':'middle'} fill="#64748b" fontSize="10">{visible[index].date.slice(0,4)}</text>)}
+          <circle cx={xFor(visible.length-1)} cy={yFor(visible[visible.length-1].rsi14w)} r="3.5" fill="#bef264"><title>{`${visible[visible.length-1].date} • RSI ${visible[visible.length-1].rsi14w.toFixed(1)}`}</title></circle>
+          <circle cx={xFor(visible.length-1)} cy={yFor(visible[visible.length-1].relativeRsi14w)} r="3.5" fill="#7dd3fc"><title>{`${visible[visible.length-1].date} • Relative RSI ${visible[visible.length-1].relativeRsi14w.toFixed(1)}`}</title></circle>
+        </svg>
+      ) : <div className="flex h-60 items-center justify-center text-sm text-amber-200/70">Historical chart data is being generated.</div>}
+      <p className="mt-1 text-[11px] text-emerald-300/40">{visible.length} weekly observations shown • completed-week history plus the latest completed daily-session reading</p>
+    </div>
   );
 };
 
@@ -203,7 +235,7 @@ const RotationGoblinApp = ():JSX.Element => {
               )}
             </div>
           </div>
-          <div className="rounded-lg border border-emerald-500/15 bg-black/20 p-3"><div className="flex items-center justify-between gap-3"><strong className="text-sm text-emerald-100">Rotation score history</strong><span className="text-[11px] text-emerald-300/40">{dataMeta.technicals.live ? 'persisted by daily workflow' : 'starts after first live refresh'}</span></div><RotationChart row={selected} /></div>
+          <div className="rounded-lg border border-emerald-500/15 bg-black/20 p-3"><div className="flex items-center justify-between gap-3"><strong className="text-sm text-emerald-100">Technical momentum history</strong><span className="text-[11px] text-emerald-300/40">10Y point-in-time backfill</span></div><p className="mt-1 text-xs text-emerald-300/45">14-week RSI and ETF/SPY Relative RSI. Historical weeks exclude valuation and future information.</p><div className="mt-3"><RotationChart row={selected} /></div></div>
         </div>
       </section> : null}
 
