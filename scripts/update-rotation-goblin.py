@@ -327,10 +327,14 @@ def main() -> None:
 
         score = rotation_score(value_scores.get(ticker), rsi14w, relative_rsi, rel6m)
         entries = history.setdefault(ticker, [])
-        if entries and entries[-1].get("date") == as_of:
-            entries[-1] = {"date": as_of, "value": score}
-        else:
-            entries.append({"date": as_of, "value": score})
+        # Upsert by completed-session date and discard any later entry that
+        # could only have come from a previously captured intraday bar.
+        entries = [
+            entry for entry in entries
+            if str(entry.get("date", "")) < as_of
+        ]
+        entries.append({"date": as_of, "value": score})
+        entries.sort(key=lambda entry: str(entry.get("date", "")))
         history[ticker] = entries[-90:]
 
         technical_rows.append({
