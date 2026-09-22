@@ -42,6 +42,18 @@ jobs:
       - name: Validate historical dataset
         run: python scripts/validate-rotation-goblin-history.py
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck chart against generated history
+        run: npm run typecheck
+
       - name: Commit historical dataset
         if: github.event_name != 'pull_request'
         shell: bash
