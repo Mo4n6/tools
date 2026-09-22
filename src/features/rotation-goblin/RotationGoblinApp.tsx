@@ -162,7 +162,7 @@ const RotationGoblinApp = ():JSX.Element => {
                     <div><span className="text-emerald-300/45">Tracked history</span><div className="mt-1 font-bold">{selected.trackedHistoryPercentile === null ? `${selected.valuationHistorySamples} samples` : `${selected.trackedHistoryPercentile.toFixed(0)}th pct • ${selected.valuationHistorySamples} samples`}</div></div>
                   </div>
                   <p className="mt-3 text-xs text-emerald-300/55">{selected.valuationNote}</p>
-                  {selected.valuationSourceUrl ? <a href={selected.valuationSourceUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-lime-300 underline decoration-lime-500/40 underline-offset-2 hover:text-lime-200">Official {selected.valuationProvider} source ↗</a> : null}
+                  {selected.valuationSourceUrl ? <a href={selected.valuationSourceUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-lime-300 underline decoration-lime-500/40 underline-offset-2 hover:text-lime-200">Official {selected.valuationProvider} source{selected.valuationProxyTicker ? ' (' + selected.valuationProxyTicker + ' valuation proxy)' : ''} ↗</a> : null}
                 </>
               ) : (
                 <p className="mt-2 text-xs text-emerald-300/55">{selected.valuationNote}</p>
