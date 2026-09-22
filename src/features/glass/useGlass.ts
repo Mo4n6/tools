@@ -82,7 +82,12 @@ export function useGlass(): GlassController {
   // is free to run those more than once.
   const sourceRef = useRef<LoadedImage | null>(null);
   // Held across runs so changing the scale does not re-download the weights.
-  const sessionRef = useRef<{ key: string; session: NeuralSession } | null>(null);
+  //
+  // Keyed by the URL string, or by the File object itself. Two revisions of a
+  // model commonly share a filename and byte count, and a fingerprint built
+  // from those would silently hand back the previous file's session and
+  // produce output from the wrong weights.
+  const sessionRef = useRef<{ key: string | File; session: NeuralSession } | null>(null);
   // Every object URL this hook has handed out, so none outlive the tab's need.
   const urlsRef = useRef<Set<string>>(new Set());
 
@@ -98,8 +103,13 @@ export function useGlass(): GlassController {
   }, []);
 
   const publish = useCallback(
-    async (image: RgbaImage, name: string, tier: TierId, scale: number, elapsedMs: number, backend: NeuralBackend | null) => {
+    async (runId: number, image: RgbaImage, name: string, tier: TierId, scale: number, elapsedMs: number, backend: NeuralBackend | null) => {
       const blob = await encodePng(image);
+      // Encoding a large PNG takes long enough for the operator to have cleared
+      // the tool or loaded another image. Installing the result now would
+      // resurrect a cleared one, or hang this output off the wrong source.
+      if (requestId.current !== runId) return;
+
       const url = trackUrl(URL.createObjectURL(blob));
 
       setState((previous) => {
@@ -155,6 +165,7 @@ export function useGlass(): GlassController {
       };
 
       void publish(
+        message.id,
         image,
         source.name,
         pendingTier.current ?? 'lanczos',
@@ -201,7 +212,20 @@ export function useGlass(): GlassController {
   const load = useCallback(
     async (file: File): Promise<void> => {
       requestId.current += 1;
+      const runId = requestId.current;
       sourceRef.current = null;
+
+      // Choosing a new source abandons whatever is running. Bumping the id only
+      // hides the outcome: without this the neural loop still walks every
+      // remaining tile, and the worker still holds a core, so the new image
+      // queues behind work nobody wants any more.
+      abortRef.current?.abort();
+      abortRef.current = null;
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        spawnWorker();
+      }
+
       setState((previous) => {
         releaseUrl(previous.source?.previewUrl);
         releaseUrl(previous.result?.url);
@@ -210,16 +234,21 @@ export function useGlass(): GlassController {
 
       try {
         const image = await decodeImage(file);
+        // Decodes finish out of order. A slower earlier file must not displace
+        // the selection the operator actually made last.
+        if (requestId.current !== runId) return;
+
         const previewUrl = trackUrl(URL.createObjectURL(file));
         const loaded: LoadedImage = { image, name: file.name, previewUrl, byteSize: file.size };
         sourceRef.current = loaded;
         setState({ ...IDLE, source: loaded });
       } catch (error) {
+        if (requestId.current !== runId) return;
         sourceRef.current = null;
         setState({ ...IDLE, phase: 'error', error: `Could not read that image: ${messageOf(error)}` });
       }
     },
-    [releaseUrl, trackUrl],
+    [releaseUrl, spawnWorker, trackUrl],
   );
 
   const guardSize = useCallback((source: LoadedImage, scale: number): string | null => {
@@ -289,7 +318,7 @@ export function useGlass(): GlassController {
       report('loading weights', null);
 
       try {
-        const key = weights.kind === 'url' ? weights.url : `${weights.file.name}:${weights.file.size}`;
+        const key: string | File = weights.kind === 'url' ? weights.url : weights.file;
         let held = sessionRef.current;
 
         if (held?.key !== key) {
@@ -325,7 +354,7 @@ export function useGlass(): GlassController {
           ? image
           : applyAlpha(image, upscaleLanczos(extractAlpha(source.image), scale));
 
-        await publish(finished, source.name, 'neural', scale, performance.now() - startedAt.current, held.session.backend);
+        await publish(runId, finished, source.name, 'neural', scale, performance.now() - startedAt.current, held.session.backend);
       } catch (error) {
         if (requestId.current !== runId) return;
         setState((previous) => ({ ...previous, phase: 'error', progress: null, error: messageOf(error) }));

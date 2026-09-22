@@ -106,6 +106,33 @@ export function axisWindow(
   return window;
 }
 
+/**
+ * Bytes the accumulator holds per output pixel: four float32 colour sums plus
+ * one float32 weight.
+ *
+ * Tiling bounds what the model holds at once, but not this. The accumulator is
+ * full-size by construction, and at 20 bytes a pixel it outgrows the tab long
+ * before the tiles do: a 12-megapixel photo through a 4x model wants 192
+ * megapixels of accumulator, which is 3.8 GB.
+ */
+export const CANVAS_BYTES_PER_PIXEL = 20;
+
+/**
+ * What the accumulator is allowed to claim.
+ *
+ * One gibibyte is already beyond generous for a browser tab; the point is to
+ * fail immediately with a number the operator can act on, rather than to get
+ * an opaque allocation error or take the tab down with it.
+ */
+export const CANVAS_BUDGET_BYTES = 1_073_741_824;
+
+export const MAX_CANVAS_PIXELS = Math.floor(CANVAS_BUDGET_BYTES / CANVAS_BYTES_PER_PIXEL);
+
+/** Bytes the accumulator for an output of this size would hold. */
+export function canvasBytes(width: number, height: number): number {
+  return width * height * CANVAS_BYTES_PER_PIXEL;
+}
+
 /** Accumulates weighted tile outputs before the final divide. */
 export interface Canvas {
   readonly width: number;
@@ -117,6 +144,15 @@ export interface Canvas {
 }
 
 export function createCanvas(width: number, height: number): Canvas {
+  const pixels = width * height;
+  if (pixels > MAX_CANVAS_PIXELS) {
+    throw new RangeError(
+      `An output of ${width}x${height} needs ${(canvasBytes(width, height) / 1024 ** 3).toFixed(1)} GB ` +
+        `to compose, past the ${(CANVAS_BUDGET_BYTES / 1024 ** 3).toFixed(0)} GB budget. ` +
+        `Use a smaller source image or a model with a lower factor.`,
+    );
+  }
+
   return {
     width,
     height,

@@ -173,10 +173,17 @@ export async function upscaleNeural(
     throw new Error('Model did not enlarge the tile it was given');
   }
 
-  const canvas = createCanvas(
-    Math.round(source.width * scale),
-    Math.round(source.height * scale),
-  );
+  // The model's factor is only known now, so this is the first moment the
+  // output size can be checked at all.
+  let canvas;
+  try {
+    canvas = createCanvas(Math.round(source.width * scale), Math.round(source.height * scale));
+  } catch (error) {
+    throw new RangeError(
+      `${source.width}x${source.height} through a ${scale}x model is too large. ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   accumulateTile(canvas, firstPatch, firstTile, scale);
   options.onProgress?.(1, tiles.length);
 
