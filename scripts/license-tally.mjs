@@ -53,36 +53,50 @@ const licenseOf = (pkg) => {
 };
 
 const root = readJson(join(repoRoot, 'package.json'));
-const seen = new Map();
+
+// Keyed by resolved directory, not by name. npm installs a package more than
+// once whenever two dependents need incompatible ranges, and those copies can
+// differ in licence and in what they pull in. Keying by name would drop every
+// copy after the first and, worse, never walk its dependencies at all.
+const visited = new Set();
+const found = new Map();
 const missing = new Set();
 const queue = Object.keys(root.dependencies ?? {}).map((name) => [name, repoRoot]);
 
 while (queue.length > 0) {
   const [name, fromDir] = queue.shift();
-  if (seen.has(name)) continue;
 
   const dir = resolvePackageDir(name, fromDir);
   if (dir === null) {
     missing.add(name);
     continue;
   }
+  if (visited.has(dir)) continue;
+  visited.add(dir);
 
   const pkg = readJson(join(dir, 'package.json'));
-  seen.set(name, licenseOf(pkg));
+  // Obligations attach to a package version, not to where it sits on disk, so
+  // the same version installed twice is one row while two versions are two.
+  found.set(`${pkg.name ?? name}@${pkg.version ?? '0.0.0'}`, licenseOf(pkg));
 
   for (const dep of Object.keys(pkg.dependencies ?? {})) {
-    if (!seen.has(dep)) queue.push([dep, dir]);
+    queue.push([dep, dir]);
   }
   // Optional dependencies ship when the platform matches, so they count too.
   for (const dep of Object.keys(pkg.optionalDependencies ?? {})) {
-    if (!seen.has(dep)) queue.push([dep, dir]);
+    queue.push([dep, dir]);
   }
 }
 
+/** Strip the version for display; a name at two versions shows once per licence. */
+const nameOf = (identifier) => identifier.slice(0, identifier.lastIndexOf('@'));
+
 const byLicense = new Map();
-for (const [name, license] of [...seen].sort(([a], [b]) => a.localeCompare(b))) {
+for (const [identifier, license] of [...found].sort(([a], [b]) => a.localeCompare(b))) {
   if (!byLicense.has(license)) byLicense.set(license, []);
-  byLicense.get(license).push(name);
+  const names = byLicense.get(license);
+  const name = nameOf(identifier);
+  if (!names.includes(name)) names.push(name);
 }
 
 const ordered = [...byLicense].sort(
@@ -93,7 +107,7 @@ if (process.argv.includes('--json')) {
   console.log(
     JSON.stringify(
       {
-        totalPackages: seen.size,
+        totalPackageVersions: found.size,
         unresolved: [...missing].sort(),
         licenses: Object.fromEntries(ordered),
       },
@@ -112,7 +126,7 @@ if (process.argv.includes('--json')) {
         : shown.join(', ');
     console.log(`| ${license} | ${names.length} | ${examples} |`);
   }
-  console.log(`\nTotal: ${seen.size} runtime packages.`);
+  console.log(`\nTotal: ${found.size} runtime package versions.`);
   if (missing.size > 0) {
     console.log(`\nUnresolved (not installed): ${[...missing].sort().join(', ')}`);
   }

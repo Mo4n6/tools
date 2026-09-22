@@ -65,7 +65,7 @@ Packages reachable from `dependencies` in `package.json`, including transitive a
 | LGPL-3.0 | 1 | lamejs |
 | MIT-0 | 1 | @csstools/color-helpers |
 
-Total: 159 runtime packages.
+Total: 160 runtime package versions, across 159 distinct names. `onnxruntime-common` is installed twice — 1.22.0-dev under `onnxruntime-web` and 1.21.0 under `onnxruntime-node` — and both are MIT. The generator counts each resolved copy rather than each name, because two copies of a package can differ in licence and in what they pull in.
 
 The `@img/sharp-*` platform packages are resolved per platform, so the exact set varies by machine; the counts above come from a Linux x64 install. See the note above for why they do not ship.
 

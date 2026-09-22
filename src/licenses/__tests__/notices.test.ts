@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   PROJECT_LICENSE_SPDX,
+  PROJECT_LICENSE_URL,
   PROJECT_REQUIRED_NOTICE,
 } from '../projectLicense';
 
@@ -55,6 +56,8 @@ describe('project licence notices', () => {
     const source = read(relative);
     expect(source).toContain(`SPDX-License-Identifier: ${PROJECT_LICENSE_SPDX}`);
     expect(source).toContain(`Required Notice: ${PROJECT_REQUIRED_NOTICE}`);
+    // A downloaded page travels without LICENSE beside it, same as a chunk.
+    expect(source).toContain(PROJECT_LICENSE_URL);
   });
 
   it('stamps the same notice onto built chunks and workers', () => {
@@ -63,6 +66,9 @@ describe('project licence notices', () => {
     const config = read('vite.config.ts');
     expect(config).toContain(`SPDX-License-Identifier: ${PROJECT_LICENSE_SPDX}`);
     expect(config).toContain(`Required Notice: ${PROJECT_REQUIRED_NOTICE}`);
+    // The Notices section wants the terms or their URL alongside the notice,
+    // and a chunk redistributed alone has no LICENSE next to it to point at.
+    expect(config).toContain(PROJECT_LICENSE_URL);
     // The worker pass is a separate Rollup output and was missed at first.
     expect(config).toMatch(/worker:\s*\{[\s\S]*?banner: CHUNK_BANNER/);
   });
