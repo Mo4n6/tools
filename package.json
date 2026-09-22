@@ -17,6 +17,7 @@
     "husk:corpus": "pwsh -NoProfile -File scripts/husk/generate-corpus.ps1",
     "husk:corpus:layered": "pwsh -NoProfile -File scripts/husk/generate-layered-corpus.ps1",
     "husk:oracle": "pwsh -NoProfile -File scripts/husk/generate-lexer-oracle.ps1",
+    "husk:local": "node scripts/husk/run-local-corpus.mjs",
     "check:browser-imports": "node scripts/check-browser-imports.mjs",
     "check:kokoro-chunk": "node scripts/check-kokoro-chunk.mjs",
     "check:deployed-assets": "node scripts/check-deployed-assets.mjs"

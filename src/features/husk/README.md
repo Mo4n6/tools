@@ -238,6 +238,60 @@ stage-2 URL, which is usually what the analyst came for. Indicators are
 deduplicated to the earliest layer they appeared in and reported defanged
 (`hxxp://evil[.]test`) so they can be pasted into a ticket safely.
 
+## What real samples corrected
+
+Four real Emotet droppers (from PSDecode's bundled test set) were run through
+Husk. The samples are not committed; `__tests__/realShapes.test.ts` reproduces
+the shapes with benign payloads. Three findings the synthetic corpus could not
+produce, because Invoke-Obfuscation always emits a launcher:
+
+- **A bare base64 blob is the most common real input.** Lifted out of a macro,
+  a scheduled-task action or an EDR command-line field, the `-enc` is already
+  stripped. Two of the four samples were exactly this, matched no recipe, and
+  Husk reported a **false clean** — `reliable: true`, no gaps, no indicators.
+  That is the single worst outcome the design admits. There is now a
+  `bare-base64` recipe, and both samples unwrap four layers.
+- **A run that matched nothing must say so** — but only when it did not
+  *understand* the input, not when the input was simply an ordinary script.
+  Conflating those either cries wolf on every benign script or hides a real
+  failure. The tokenizer separates them: source it read without diagnostics or
+  `Unknown` tokens is unremarkable; source it could not read is a gap.
+- **Emotet packs fallback C2s as an `@`-separated list.** `@` is legal in a
+  URL, so a greedy match swallowed the whole chain as one indicator. Splitting
+  on `@` followed by a scheme recovers all five, and hostnames without a dot
+  are now rejected as concatenation fragments.
+
+## Running against real samples
+
+The committed corpus proves specific transforms are undone. A local corpus
+answers a different question: over real, messy, unselected input, does Husk
+crash, hang, or report a clean result on a sample it never understood?
+
+```sh
+npm run husk:local -- /path/to/samples --limit 300
+```
+
+It reports crashes, near-budget runs, unwrap and indicator rates, the ranked
+unimplemented constructs, and — the number that matters — **false cleans**. It
+exits non-zero on any crash or false clean, so it can gate a release.
+
+**Samples are never committed here.** Point it at a directory outside the tree.
+Sources worth knowing, roughly in order of usefulness for this tool, since a
+deobfuscator mostly needs text rather than binaries:
+
+- **PSDecode** bundles four real Emotet droppers in a password-protected zip
+  (`infected`). Small, real, and what found the three faults above.
+- **Fa2y/Malicious-PowerShell-Dataset** — note the composition: the headline
+  `malicious_samples/` is mostly offensive-security tooling scraped from GitHub
+  (Empire, PowerSploit, nishang), which is red-team code rather than commodity
+  malspam. The `bazaar_out/`, `triage_out/` and `hybrid_analysis_out/`
+  directories are the sandbox-sourced ones and are far closer to the target.
+- **SigmaHQ/sigma** and **Atomic Red Team** carry real obfuscated command lines
+  as plain text, with no binary handling at all.
+- **malware-traffic-analysis.net** publishes real malspam with writeups, so you
+  get ground truth for what each sample does.
+- **MalwareBazaar**, **MalShare** and **Triage** for volume, via free API keys.
+
 ## Security properties
 
 Two are asserted by tests rather than assumed:

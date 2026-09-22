@@ -28,9 +28,41 @@ export function taintFrom(id: GapId): Taint {
 }
 
 /**
+ * Combine taint from an iterable of inputs.
+ *
+ * Prefer this over spreading into `union` whenever the count is unbounded: a
+ * PowerShell array built from a multi-megabyte blob has millions of elements,
+ * and `union(t, ...items.map(...))` overflows the stack on the spread itself.
+ */
+export function unionAll(taints: Iterable<Taint>): Taint {
+  let only: Taint | undefined;
+  let merged: Set<GapId> | undefined;
+
+  for (const t of taints) {
+    if (t.size === 0) continue;
+    if (merged) {
+      for (const id of t) merged.add(id);
+      continue;
+    }
+    if (only === undefined) {
+      only = t;
+      continue;
+    }
+    if (only === t) continue;
+    merged = new Set(only);
+    for (const id of t) merged.add(id);
+  }
+
+  if (merged) return merged;
+  return only ?? CLEAN;
+}
+
+/**
  * Combine taint from several inputs. Returns CLEAN when nothing is tainted,
  * and reuses an input's set when it is the only tainted one, so clean
  * evaluation allocates nothing.
+ *
+ * Only for a bounded, known-small argument count - see `unionAll`.
  */
 export function union(...taints: readonly Taint[]): Taint {
   let only: Taint | undefined;

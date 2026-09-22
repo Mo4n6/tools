@@ -22,6 +22,14 @@ interface Rule {
   readonly normalize?: (value: string) => string;
 }
 
+/**
+ * Cap on matches taken from one rule in one layer. A megabyte of hex yields
+ * tens of thousands of shapes that pass a pattern; past a few hundred they
+ * are noise, and collecting them all is what turns a large sample into a
+ * multi-second analysis.
+ */
+const MAX_MATCHES_PER_RULE = 500;
+
 /** Hosts that appear in obfuscation scaffolding rather than as targets. */
 const BENIGN_HOSTS = new Set([
   'microsoft.com',
@@ -39,12 +47,31 @@ const PATH_EXTENSIONS =
 const RULES: readonly Rule[] = [
   {
     kind: 'url',
-    pattern: /\b(?:https?|ftp):\/\/[^\s"'`<>()\]},;|]+/gi,
+    // '@' is legal in a URL (userinfo), but '@' followed by a scheme is a
+    // separator: Emotet packs its fallback URLs as
+    // http://a.test/x/@http://b.test/y/@... and matching greedily across
+    // those swallows the whole chain as one indicator.
+    // The length bound is load-bearing, not cosmetic: a negative lookahead
+    // inside an unbounded quantifier recurses per character, and real samples
+    // contain megabytes of unbroken base64 that the character class matches.
+    // That overflowed the stack. 2048 is far beyond any real URL.
+    pattern: /\b(?:https?|ftp):\/\/(?:(?!@(?:https?|ftp):\/\/)[^\s"'`<>()\]},;|]){1,2048}/gi,
     confidence: 'high',
-    normalize: (v) => v.replace(/[.,;:]+$/, ''),
+    // A trailing '@' is a list separator, not a path character. Real samples
+    // end their chain with one:
+    //   http://a.test/nh@http://b.test/dobgx@...@http://e.test/u8erijeq@
+    // A URL legitimately ending in '@' is possible but is not distinguishable
+    // from that, and does not occur in any observed sample, so the separator
+    // reading wins.
+    normalize: (v) => v.replace(/[.,;:@]+$/, ''),
     reject: (value) => {
       try {
-        return BENIGN_HOSTS.has(new URL(value).hostname.toLowerCase());
+        const host = new URL(value).hostname.toLowerCase();
+        if (BENIGN_HOSTS.has(host)) return true;
+        if (isIpAddress(host)) return false;
+        // A hostname with no dot is a fragment, not a destination - it appears
+        // when a layer still has the URL split across a concatenation.
+        return !host.includes('.');
       } catch {
         return false;
       }
@@ -64,20 +91,51 @@ const RULES: readonly Rule[] = [
   },
   {
     kind: 'email',
-    pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+    // Every quantifier is bounded, and that is the whole point. The
+    // unbounded form
+    //   /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/
+    // backtracks catastrophically: over a multi-megabyte unbroken run
+    // containing no '@' - which is exactly what a hex-encoded payload is -
+    // every start position consumes the rest of the file, fails to find an
+    // '@', then retries one character along. That is quadratic, and it hung
+    // a corpus run for an hour on a single 3MB sample.
+    //
+    // RFC 5321 bounds the local part at 64 characters and the domain at 255,
+    // so nothing real is lost by bounding them here.
+    pattern: /\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}\b/g,
     confidence: 'high',
   },
   {
     kind: 'domain',
     // Bare hostnames are noisy, so only well-known suspicious or explicit
     // multi-label names with a real TLD count, and only at medium confidence.
-    pattern: /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|ru|cn|top|xyz|info|biz|online|site|club|tk|ml|ga|cf|pw|cc|io|co|us|uk|de|fr|nl|pl|br|in|ir|su)\b/gi,
+    // The label repetition is bounded for the same reason as the email rule:
+    // a hostname has at most a handful of labels, and an unbounded '+' over a
+    // long run is a backtracking hazard.
+    pattern: /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){1,8}(?:com|net|org|ru|cn|top|xyz|info|biz|online|site|club|tk|ml|ga|cf|pw|cc|io|co|us|uk|de|fr|nl|pl|br|in|ir|su)\b/gi,
     confidence: 'medium',
     normalize: (v) => v.toLowerCase(),
     reject: (value, context) => {
       if (BENIGN_HOSTS.has(value.toLowerCase())) return true;
-      // Already captured as part of a URL.
-      return new RegExp(`https?://[^\\s]*${escapeRegExp(value)}`, 'i').test(context);
+
+      // A real hostname is at most 253 characters. Anything longer matched
+      // something else - a hex-encoded PE reads as dotted labels, and real
+      // samples do contain those.
+      if (value.length > 253) return true;
+
+      // Already captured as part of a URL. This is a plain substring search
+      // on purpose: building a RegExp out of matched text crashed on real
+      // input, and escaping is not a fix when the text is unbounded.
+      const haystack = context.toLowerCase();
+      const needle = value.toLowerCase();
+      let from = 0;
+      for (;;) {
+        const at = haystack.indexOf(needle, from);
+        if (at === -1) return false;
+        const before = haystack.slice(Math.max(0, at - 12), at);
+        if (/:\/\/[^\s]*$/.test(before)) return true;
+        from = at + 1;
+      }
     },
   },
   {
@@ -117,13 +175,36 @@ const RULES: readonly Rule[] = [
   },
   {
     kind: 'base64-blob',
-    // Long enough to be a payload rather than an encoded word.
-    pattern: /\b[A-Za-z0-9+/]{120,}={0,2}/g,
+    // Long enough to be a payload rather than an encoded word, and bounded
+    // above because it must be: an open-ended {120,} over the multi-megabyte
+    // unbroken base64 in real samples overflows V8's regex stack outright.
+    pattern: /\b[A-Za-z0-9+/]{120,4096}={0,2}/g,
     confidence: 'medium',
+    // Only the head is reported; the blob itself is in the layer view. This
+    // also makes chunks of one blob collapse to a single indicator instead of
+    // one per 4096 characters.
+    normalize: (v) => v.slice(0, 96),
   },
 ];
 
-const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * True for a literal IP host.
+ *
+ * Testing `[0-9a-f:]` alone is not enough: plenty of English words are pure
+ * hexadecimal - bad, face, dead, beef, cafe, add - so a concatenation
+ * fragment like `http://bad` would read as an address and slip past the
+ * hostname-fragment filter.
+ */
+function isIpAddress(host: string): boolean {
+  // IPv6 is bracketed by the URL parser and always contains a colon.
+  if (host.startsWith('[') && host.endsWith(']')) return host.includes(':');
+  if (host.includes(':')) return true;
+
+  const octets = host.split('.');
+  if (octets.length !== 4) return false;
+  return octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255);
+}
 
 /** The base64 prefix an MZ/PE header produces, whatever the byte alignment. */
 const PE_BASE64_PREFIXES = ['TVqQ', 'TVpQ', 'TVoA', 'TVro', 'TVpB'];
@@ -164,6 +245,7 @@ function contextAround(source: string, offset: number, span = 60): string {
  */
 export function extractIocs(trace: Trace): IocReport {
   const found = new Map<string, Ioc>();
+  const truncated = new Set<IocKind>();
 
   const add = (ioc: Ioc): void => {
     const key = `${ioc.kind}\u0000${ioc.value.toLowerCase()}`;
@@ -193,7 +275,16 @@ export function extractIocs(trace: Trace): IocReport {
 
     for (const rule of RULES) {
       rule.pattern.lastIndex = 0;
+      // A single rule must not be able to flood the report from one huge
+      // layer. Distinct indicators past this point are noise, not signal.
+      let matches = 0;
       for (const match of layer.source.matchAll(rule.pattern)) {
+        if ((matches += 1) > MAX_MATCHES_PER_RULE) {
+          // Truncation must be stated. A report silently cut at 500 looks
+          // identical to a sample that genuinely had 500 indicators.
+          truncated.add(rule.kind);
+          break;
+        }
         const raw = match[0];
         const value = rule.normalize ? rule.normalize(raw) : raw;
         if (value.length === 0) continue;
@@ -240,6 +331,16 @@ export function extractIocs(trace: Trace): IocReport {
     }
   }
 
+  for (const kind of truncated) {
+    trace.gaps.report({
+      kind: 'GAP',
+      signature: `${kind} indicators truncated`,
+      argTypes: [],
+      provenance: { layer: 0 },
+      detail: `more than ${MAX_MATCHES_PER_RULE} matches in one layer; the list is incomplete`,
+    });
+  }
+
   const indicators = [...found.values()].sort(compareIocs);
   const byKind = new Map<IocKind, Ioc[]>();
   for (const ioc of indicators) {
@@ -248,7 +349,7 @@ export function extractIocs(trace: Trace): IocReport {
     else byKind.set(ioc.kind, [ioc]);
   }
 
-  return { indicators, byKind, hasEmbeddedPe };
+  return { indicators, byKind, hasEmbeddedPe, truncatedKinds: [...truncated] };
 }
 
 /** High confidence first, then earliest layer, then value for stability. */

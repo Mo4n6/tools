@@ -20,8 +20,8 @@ import { CLEAN, type Taint, markOutput, taintFrom } from '../core/taint';
 import { toStringValue } from '../core/value';
 import { TokenKind } from '../lexer/tokenKind';
 import { tokenize } from '../lexer/tokenizer';
-import { parseExpression } from './parser';
-import { createContext, evaluate } from './evaluator';
+import { parseExpression, type InvokeAliases } from './parser';
+import { createContext, evaluate, type EvalContext } from './evaluator';
 import { base64ToBytes, decodeUtf16le, decodeUtf8, decompressAny, looksLikeText } from './decode';
 import { canonicalize } from './canonicalize';
 import { decodeCharArray } from './charArray';
@@ -36,6 +36,15 @@ export interface DeobfuscateOptions {
 }
 
 const DEFAULTS = { maxLayers: 24, timeBudgetMs: 5000 } as const;
+
+/**
+ * Largest parenthesised group constant folding will attempt.
+ *
+ * Folding re-parses the group's inner text, so without a cap the outermost
+ * group of a multi-megabyte layer is re-tokenised in full - once per group.
+ * No real obfuscated expression approaches this size.
+ */
+const MAX_FOLDABLE_GROUP = 64 * 1024;
 
 export interface DeobfuscateResult {
   readonly trace: Trace;
@@ -52,6 +61,36 @@ interface Recipe {
 }
 
 // --- Recipes --------------------------------------------------------------
+
+/**
+ * A bare base64 blob, with no launcher around it.
+ *
+ * Analysts paste these constantly - lifted out of a macro, a scheduled task
+ * action, or an EDR command-line field, with the `-enc` already stripped. Real
+ * Emotet droppers ship exactly this way. Without this recipe the input matches
+ * nothing, and a pipeline that unwraps nothing and records nothing reports a
+ * false clean, which is worse than any decoding error.
+ */
+const bareBase64: Recipe = {
+  name: 'bare-base64',
+  apply: async (source) => {
+    const trimmed = source.trim().replace(/^\uFEFF/, '');
+    // Long enough to be a payload, and essentially all base64.
+    if (trimmed.length < 64) return undefined;
+    if (!/^[A-Za-z0-9+/\s]+={0,2}$/.test(trimmed)) return undefined;
+
+    const bytes = base64ToBytes(trimmed);
+    if (bytes.length === 0) return undefined;
+
+    // PowerShell command lines are UTF-16LE; macros sometimes use UTF-8. Try
+    // the more likely one first and keep whichever yields script text.
+    for (const decode of [decodeUtf16le, decodeUtf8]) {
+      const text = decode(bytes);
+      if (looksLikeText(text) && text.trim().length > 0) return text;
+    }
+    return undefined;
+  },
+};
 
 /** powershell -EncodedCommand <base64>, in all its abbreviations. */
 const encodedCommand: Recipe = {
@@ -131,7 +170,13 @@ const charArray: Recipe = {
   apply: async (source) => decodeCharArray(source),
 };
 
-const RECIPES: readonly Recipe[] = [encodedCommand, compressed, base64Utf8, charArray];
+const RECIPES: readonly Recipe[] = [
+  encodedCommand,
+  bareBase64,
+  compressed,
+  base64Utf8,
+  charArray,
+];
 
 // --- Expression folding ---------------------------------------------------
 
@@ -171,6 +216,78 @@ function findInvocation(node: Expr): Expr | undefined {
 /** Names that mean Invoke-Expression, however they are spelled or computed. */
 const IEX_NAMES = /^(iex|invoke-expression)$/i;
 
+/** `$name = <expr>` at the start of a statement. */
+const ASSIGNMENT = /^\s*\$\{?([A-Za-z_][\w:]*)\}?\s*=\s*([\s\S]+)$/;
+
+/** `Set-Alias`/`sal`/`New-Alias <name> <value>`, with or without -Name/-Value. */
+const ALIAS_DEFINITION =
+  /\b(?:set-alias|new-alias|sal|nal)\b\s+(?:-name\s+)?([^\s;|]+)\s+(?:-value\s+)?([^\s;|]+)/i;
+
+/**
+ * Variables assigned in this layer, so a later statement can read them.
+ *
+ * Obfuscators split a name across statements - `$t0 = 'ZE95'.replace(...)`
+ * then `sal g $t0` - and without carrying the assignment forward the alias
+ * target is unresolvable.
+ */
+function collectVariables(source: string, trace: Trace, layer: number): EvalContext {
+  const ctx = createContext(trace, layer);
+
+  for (const statement of splitStatements(source)) {
+    const match = ASSIGNMENT.exec(statement.text);
+    if (!match) continue;
+
+    const [, name, expression] = match;
+    const parsed = parseExpression(expression);
+    if (parsed.expression.kind === 'unsupported') continue;
+
+    // Evaluating must not manufacture gaps: this is bookkeeping, and a failed
+    // assignment is not something the analyst needs in the queue.
+    const before = trace.gaps.size;
+    const value = evaluate(parsed.expression, ctx);
+    if (trace.gaps.size !== before) continue;
+
+    ctx.variables.set(name.toLowerCase(), value);
+  }
+
+  return ctx;
+}
+
+/**
+ * Aliases in this layer that resolve to Invoke-Expression.
+ *
+ * `sal g $t0` where `$t0` spells "IEx" makes every later `g <payload>` an
+ * invocation. Real MalwareBazaar samples use exactly this, and without it
+ * Husk sees no execution sink, decodes nothing, and - because the script
+ * tokenises cleanly - reports it as an unremarkable clean script.
+ */
+function collectInvokeAliases(source: string, trace: Trace, layer: number): Set<string> {
+  const aliases = new Set<string>();
+  if (!/\b(?:set-alias|new-alias|sal|nal)\b/i.test(source)) return aliases;
+
+  const ctx = collectVariables(source, trace, layer);
+
+  for (const statement of splitStatements(source)) {
+    const match = ALIAS_DEFINITION.exec(statement.text);
+    if (!match) continue;
+
+    const [, rawName, rawValue] = match;
+    const name = rawName.replace(/^['"]|['"]$/g, '').toLowerCase();
+    if (name.length === 0) continue;
+
+    let target = rawValue.replace(/^['"]|['"]$/g, '');
+    if (!IEX_NAMES.test(target)) {
+      const parsed = parseExpression(rawValue);
+      if (parsed.expression.kind === 'unsupported') continue;
+      target = toStringValue(evaluate(parsed.expression, ctx)).trim();
+    }
+
+    if (IEX_NAMES.test(target)) aliases.add(name);
+  }
+
+  return aliases;
+}
+
 /**
  * `<payload> | IEX` sends its payload into the invocation through the
  * pipeline rather than as an argument. This is one of the most common shapes
@@ -180,6 +297,7 @@ function foldPipedInvocation(
   source: string,
   trace: Trace,
   layer: number,
+  aliases: InvokeAliases,
 ): { text: string; taint: Taint } | undefined {
   const segments = splitPipeline(source);
   if (segments.length < 2) return undefined;
@@ -190,15 +308,15 @@ function foldPipedInvocation(
   // The tail may be `IEX`, `&'iex'`, `.('i'+'ex')` or a computed name.
   const tail = last.text.trim().replace(/^[&.]\s*/, '');
   let name = tail.replace(/^['"]|['"]$/g, '');
-  if (!IEX_NAMES.test(name)) {
-    const parsed = parseExpression(tail);
+  if (!IEX_NAMES.test(name) && !aliases.has(name.toLowerCase())) {
+    const parsed = parseExpression(tail, aliases);
     if (parsed.expression.kind === 'unsupported') return undefined;
     name = toStringValue(evaluate(parsed.expression, ctx)).trim();
   }
-  if (!IEX_NAMES.test(name)) return undefined;
+  if (!IEX_NAMES.test(name) && !aliases.has(name.toLowerCase())) return undefined;
 
   const payloadSource = source.slice(0, last.start).replace(/\|\s*$/, '');
-  const parsedPayload = parseExpression(payloadSource);
+  const parsedPayload = parseExpression(payloadSource, aliases);
   const value = evaluate(parsedPayload.expression, ctx);
   const text = toStringValue(value);
 
@@ -214,11 +332,12 @@ function foldInvocation(
   source: string,
   trace: Trace,
   layer: number,
+  aliases: InvokeAliases,
 ): { text: string; taint: Taint; rewritten?: boolean } | undefined {
   const statements = splitStatements(source);
   if (statements.length > 1) {
     for (const statement of statements) {
-      const folded = foldStatementInvocation(statement.text, trace, layer);
+      const folded = foldStatementInvocation(statement.text, trace, layer, aliases);
       if (!folded) continue;
 
       // A statement that yields a new script is the layer; one that only
@@ -232,15 +351,16 @@ function foldInvocation(
     }
     return undefined;
   }
-  return foldStatementInvocation(source, trace, layer);
+  return foldStatementInvocation(source, trace, layer, aliases);
 }
 
 function foldStatementInvocation(
   source: string,
   trace: Trace,
   layer: number,
+  aliases: InvokeAliases,
 ): { text: string; taint: Taint; rewritten?: boolean } | undefined {
-  const parsed = parseExpression(source);
+  const parsed = parseExpression(source, aliases);
   const invocation = findInvocation(parsed.expression);
   if (!invocation || invocation.kind !== 'invoke') return undefined;
 
@@ -275,7 +395,21 @@ function foldStatementInvocation(
  * This is what turns ('Wri'+'te-'+'Host') into Write-Host without needing the
  * surrounding statement to be understood.
  */
-function foldConstants(source: string, trace: Trace, layer: number): string | undefined {
+/**
+ * Fold every constant expression in the source, rewriting each to its value.
+ *
+ * This walks parenthesised groups and parses each one, so the work is
+ * quadratic in the nesting depth: 2000 nested parentheses means 2000 parses
+ * over shrinking-but-still-large text. The between-layer budget does not help,
+ * because this all happens inside one layer - so the deadline is enforced here
+ * too, and gives up rather than grinding.
+ */
+function foldConstants(
+  source: string,
+  trace: Trace,
+  layer: number,
+  deadline: number,
+): string | undefined {
   const tokens = tokenize(source).tokens;
   if (tokens.length === 0) return undefined;
 
@@ -286,6 +420,26 @@ function foldConstants(source: string, trace: Trace, layer: number): string | un
 
   // Walk parenthesised groups; each one that folds to a literal is replaced.
   for (let i = 0; i < tokens.length; i += 1) {
+    // Every iteration, not sampled. One iteration re-tokenises and re-parses
+    // the group's whole inner text, which on a multi-megabyte layer is
+    // hundreds of milliseconds - so sampling every 64 let a 5s budget run for
+    // minutes. Date.now() is free next to that.
+    {
+      if (Date.now() > deadline) {
+        const id = trace.gaps.report({
+          kind: 'GAP',
+          signature: 'constant folding hit the time budget',
+          argTypes: [],
+          provenance: { layer },
+          detail: 'expression nesting too deep to fold within the budget',
+        });
+        // Recording it is not enough - output that stopped short of being
+        // folded must stop reading as reliable.
+        trace.taintDeepest(taintFrom(id));
+        break;
+      }
+    }
+
     const token = tokens[i];
     if (token.text !== '(') continue;
 
@@ -313,6 +467,10 @@ function foldConstants(source: string, trace: Trace, layer: number): string | un
     if (close === -1) continue;
 
     const inner = source.slice(token.end, tokens[close].start);
+    // Folding an enormous group is never useful - the result would be a
+    // literal bigger than most samples - and it is what makes this loop
+    // quadratic on large layers.
+    if (inner.length > MAX_FOLDABLE_GROUP) continue;
     if (!/['"]|\bchar\b|\bf\b/i.test(inner)) continue;
 
     const parsed = parseExpression(inner);
@@ -387,7 +545,7 @@ export async function deobfuscate(
       break;
     }
 
-    const next = await unwrapOnce(current, trace, depth);
+    const next = await unwrapOnce(current, trace, depth, deadline);
     if (!next) {
       exhaustedLayers = false;
       // Stopping is only honest if it says so. If the residue still carries
@@ -406,6 +564,27 @@ export async function deobfuscate(
 
     trace.addLayer(next.text, next.origin, next.taint);
     current = next.text;
+  }
+
+  // A sample that produced no layers, no events and no gaps has either
+  // nothing to unwrap - a perfectly ordinary script - or something Husk did
+  // not understand. Those must not be conflated: calling the first unreliable
+  // would cry wolf on every benign script, and calling the second clean is
+  // the worst failure available.
+  //
+  // The tokenizer separates them. Source it read without complaint is a
+  // script with no obfuscation; source that produced diagnostics or Unknown
+  // tokens is something it could not read.
+  if (trace.layers.length === 1 && trace.gaps.size === 0 && !isReadableScript(source)) {
+    const id = trace.gaps.report({
+      kind: 'GAP',
+      signature: 'no rule matched this input',
+      argTypes: [],
+      provenance: { layer: 0 },
+      detail:
+        'nothing was decoded and no construct was recognised; the input may not be PowerShell, or may use an encoding Husk does not implement',
+    });
+    trace.taintDeepest(taintFrom(id));
   }
 
   if (exhaustedLayers) {
@@ -467,6 +646,18 @@ function recordResidue(source: string, trace: Trace, layer: number): void {
   }
 }
 
+/**
+ * True when the tokenizer read this source cleanly, meaning any lack of
+ * findings is a genuinely unremarkable script rather than a failure to parse.
+ */
+function isReadableScript(source: string): boolean {
+  if (source.trim().length === 0) return true;
+
+  const { tokens, diagnostics } = tokenize(source);
+  if (diagnostics.length > 0) return false;
+  return !tokens.some((t) => t.kind === TokenKind.Unknown);
+}
+
 interface Unwrapped {
   readonly text: string;
   readonly origin: Parameters<Trace['addLayer']>[1];
@@ -477,7 +668,10 @@ async function unwrapOnce(
   source: string,
   trace: Trace,
   layer: number,
+  deadline: number,
 ): Promise<Unwrapped | undefined> {
+  // Aliases are per layer: each decoded stage may define its own.
+  const aliases = collectInvokeAliases(source, trace, layer);
   for (const recipe of RECIPES) {
     const decoded = await recipe.apply(source);
     if (decoded && decoded !== source) {
@@ -500,7 +694,7 @@ async function unwrapOnce(
   }
 
   for (const statement of splitStatements(source)) {
-    const piped = foldPipedInvocation(statement.text, trace, layer);
+    const piped = foldPipedInvocation(statement.text, trace, layer, aliases);
     if (piped && piped.text !== source) {
       return {
         text: piped.text,
@@ -510,7 +704,7 @@ async function unwrapOnce(
     }
   }
 
-  const folded = foldInvocation(source, trace, layer);
+  const folded = foldInvocation(source, trace, layer, aliases);
   if (folded && folded.text !== source) {
     return {
       text: folded.text,
@@ -521,7 +715,7 @@ async function unwrapOnce(
     };
   }
 
-  const constants = foldConstants(source, trace, layer);
+  const constants = foldConstants(source, trace, layer, deadline);
   if (constants && constants !== source) {
     return {
       text: constants,

@@ -139,6 +139,12 @@ const HuskApp = (): JSX.Element => {
                     {result.reliable ? 'Fully resolved' : 'Incomplete — see fidelity'}
                   </span>
                 </div>
+                {result.iocs.truncatedKinds.length > 0 ? (
+                  <p className="mt-2 text-xs text-amber-300">
+                    Too many matches to list for:{' '}
+                    {result.iocs.truncatedKinds.join(', ')}. The indicator list is incomplete.
+                  </p>
+                ) : null}
                 {result.iocs.hasEmbeddedPe ? (
                   <p className="mt-2 text-xs text-rose-300">
                     An embedded PE (MZ header) was found in a decoded blob.

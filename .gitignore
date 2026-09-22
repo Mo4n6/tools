@@ -3,3 +3,10 @@ dist/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+
+# Ad-hoc analysis scripts run against local sample corpora. These point at
+# paths outside the tree and must never be committed - a stray `git add -A`
+# while one is in flight has already put one in history once.
+/*.mjs
+!/vite.config.mjs
+scratch*/
