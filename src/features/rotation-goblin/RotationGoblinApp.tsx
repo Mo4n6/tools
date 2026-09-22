@@ -150,7 +150,7 @@ const RotationGoblinApp = ():JSX.Element => {
         </div>
         <div className="mt-3 space-y-1 text-xs leading-relaxed text-emerald-300/45">
           <p>Relative RSI is RSI calculated on the ETF/SPY ratio. That helps distinguish a sector that is genuinely gaining on the S&amp;P 500 from one merely floating upward with the whole market.</p>
-          <p><strong className="text-emerald-200/80">Value is automated for equity/real-estate ETFs</strong> from official State Street, iShares, and VanEck sponsor data. Non-earnings assets intentionally show — instead of receiving fake equity multiples.</p>
+          <p><strong className="text-emerald-200/80">Value is automated for equity/real-estate ETFs</strong> from official State Street and iShares sponsor data; SMH uses SOXX as the labeled semiconductor valuation proxy. Non-earnings assets intentionally show — instead of receiving fake equity multiples.</p>
         </div>
       </section>
 
