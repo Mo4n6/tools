@@ -20,7 +20,7 @@ export type GeneratedTechnicalRow = {
 
 export const marketDataMeta = {
   "source": "Yahoo fallback",
-  "generatedAt": "2026-09-22T16:57:52Z",
+  "generatedAt": "2026-09-22T17:04:31Z",
   "benchmark": "SPY",
   "live": true,
   "note": "Technicals are automated. Rotation history uses automated sponsor valuation where applicable and technical-only scoring for non-earnings assets."
