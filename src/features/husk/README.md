@@ -261,6 +261,37 @@ produce, because Invoke-Obfuscation always emits a launcher:
   on `@` followed by a scheme recovers all five, and hostnames without a dot
   are now rejected as concatenation fragments.
 
+## Running against real samples
+
+The committed corpus proves specific transforms are undone. A local corpus
+answers a different question: over real, messy, unselected input, does Husk
+crash, hang, or report a clean result on a sample it never understood?
+
+```sh
+npm run husk:local -- /path/to/samples --limit 300
+```
+
+It reports crashes, near-budget runs, unwrap and indicator rates, the ranked
+unimplemented constructs, and — the number that matters — **false cleans**. It
+exits non-zero on any crash or false clean, so it can gate a release.
+
+**Samples are never committed here.** Point it at a directory outside the tree.
+Sources worth knowing, roughly in order of usefulness for this tool, since a
+deobfuscator mostly needs text rather than binaries:
+
+- **PSDecode** bundles four real Emotet droppers in a password-protected zip
+  (`infected`). Small, real, and what found the three faults above.
+- **Fa2y/Malicious-PowerShell-Dataset** — note the composition: the headline
+  `malicious_samples/` is mostly offensive-security tooling scraped from GitHub
+  (Empire, PowerSploit, nishang), which is red-team code rather than commodity
+  malspam. The `bazaar_out/`, `triage_out/` and `hybrid_analysis_out/`
+  directories are the sandbox-sourced ones and are far closer to the target.
+- **SigmaHQ/sigma** and **Atomic Red Team** carry real obfuscated command lines
+  as plain text, with no binary handling at all.
+- **malware-traffic-analysis.net** publishes real malspam with writeups, so you
+  get ground truth for what each sample does.
+- **MalwareBazaar**, **MalShare** and **Triage** for volume, via free API keys.
+
 ## Security properties
 
 Two are asserted by tests rather than assumed:
