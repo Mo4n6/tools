@@ -466,7 +466,7 @@ def stale_or_error_row(
 
 
 def main() -> None:
-    fetched: dict[str, dict[str, float | None]] = {}
+    fetched: dict[str, dict[str, Any]] = {}
     errors: dict[str, str] = {}
 
     def fetch_one(item: tuple[str, dict[str, Any]]) -> tuple[str, dict[str, Any]]:
