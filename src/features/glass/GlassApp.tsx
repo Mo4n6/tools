@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { GLASS_AUTHOR, GLASS_AUTHOR_URL, GLASS_COPYRIGHT, GLASS_SOURCE_URL } from './attribution';
 import { TIERS, tierById, type LocalTierId } from './pipeline';
+import { usablePresets } from './presets';
 import type { TierId } from './types';
 import { useGlass } from './useGlass';
 import { configuredWeightsUrl, describeBytes, isUsableWeightsUrl } from './weights';
@@ -23,14 +24,24 @@ const secondaryAction =
 const textField =
   'w-full rounded-md border border-emerald-500/40 bg-[#040a06] px-2 py-1.5 text-sm text-emerald-100 placeholder:text-emerald-300/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400';
 
-type WeightsMode = 'file' | 'url';
+type WeightsMode = 'preset' | 'file' | 'url';
+
+const WEIGHTS_MODE_LABELS: Record<WeightsMode, string> = {
+  preset: 'Known model',
+  file: 'Local file',
+  url: 'URL',
+};
 
 const GlassApp = (): JSX.Element => {
   const { state, load, runLocal, runNeural, cancel, clear } = useGlass();
 
   const [tierId, setTierId] = useState<TierId>('lanczos');
   const [scale, setScale] = useState(2);
-  const [weightsMode, setWeightsMode] = useState<WeightsMode>('file');
+  const presets = useMemo(() => usablePresets(), []);
+  const [weightsMode, setWeightsMode] = useState<WeightsMode>(() =>
+    presets.length > 0 ? 'preset' : 'file',
+  );
+  const [presetId, setPresetId] = useState(() => presets[0]?.id ?? '');
   const [weightsUrl, setWeightsUrl] = useState(() => configuredWeightsUrl(import.meta.env) ?? '');
   const [weightsFile, setWeightsFile] = useState<File | null>(null);
   const [split, setSplit] = useState(50);
@@ -48,8 +59,14 @@ const GlassApp = (): JSX.Element => {
 
   const busy = state.phase === 'running' || state.phase === 'decoding';
 
+  const selectedPreset = presets.find((candidate) => candidate.id === presetId) ?? null;
+
   const weightsReady =
-    weightsMode === 'file' ? weightsFile !== null : isUsableWeightsUrl(weightsUrl.trim());
+    weightsMode === 'preset'
+      ? selectedPreset !== null
+      : weightsMode === 'file'
+        ? weightsFile !== null
+        : isUsableWeightsUrl(weightsUrl.trim());
 
   const canRun =
     state.source !== null && !busy && (tierId !== 'neural' || weightsReady);
@@ -64,15 +81,22 @@ const GlassApp = (): JSX.Element => {
 
   const handleRun = useCallback(() => {
     if (tierId === 'neural') {
-      void runNeural(
-        weightsMode === 'file' && weightsFile
-          ? { kind: 'file', file: weightsFile }
-          : { kind: 'url', url: weightsUrl.trim() },
-      );
+      if (weightsMode === 'preset' && selectedPreset) {
+        // The digest travels with the URL; loadWeights refuses anything else.
+        void runNeural({
+          kind: 'url',
+          url: selectedPreset.url,
+          sha256: selectedPreset.sha256,
+        });
+      } else if (weightsMode === 'file' && weightsFile) {
+        void runNeural({ kind: 'file', file: weightsFile });
+      } else {
+        void runNeural({ kind: 'url', url: weightsUrl.trim() });
+      }
       return;
     }
     runLocal(tierId as LocalTierId, scale);
-  }, [runLocal, runNeural, scale, tierId, weightsFile, weightsMode, weightsUrl]);
+  }, [runLocal, runNeural, scale, selectedPreset, tierId, weightsFile, weightsMode, weightsUrl]);
 
   const growth = useMemo(() => {
     const source = state.source;
@@ -178,26 +202,58 @@ const GlassApp = (): JSX.Element => {
               <p className="mt-1 text-xs text-emerald-300/60">
                 Glass ships no model. Point it at an ONNX super-resolution network — an ESRGAN-family
                 export is the usual choice — and the factor comes from the model itself.
+                {presets.length === 0
+                  ? ' No known models are configured yet; add one with npm run glass:preset.'
+                  : null}
               </p>
 
               <div className="mt-3 flex gap-2 text-xs">
-                {(['file', 'url'] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => setWeightsMode(mode)}
-                    className={
-                      mode === weightsMode
-                        ? 'rounded-md border border-emerald-400 bg-emerald-500/20 px-2 py-1'
-                        : 'rounded-md border border-emerald-500/30 px-2 py-1 hover:border-emerald-400/60'
-                    }
-                  >
-                    {mode === 'file' ? 'Local file' : 'URL'}
-                  </button>
-                ))}
+                {(presets.length > 0 ? (['preset', 'file', 'url'] as const) : (['file', 'url'] as const)).map(
+                  (mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setWeightsMode(mode)}
+                      className={
+                        mode === weightsMode
+                          ? 'rounded-md border border-emerald-400 bg-emerald-500/20 px-2 py-1'
+                          : 'rounded-md border border-emerald-500/30 px-2 py-1 hover:border-emerald-400/60'
+                      }
+                    >
+                      {WEIGHTS_MODE_LABELS[mode]}
+                    </button>
+                  ),
+                )}
               </div>
 
-              {weightsMode === 'file' ? (
+              {weightsMode === 'preset' ? (
+                presets.length > 0 ? (
+                  <>
+                    <select
+                      value={presetId}
+                      onChange={(event) => setPresetId(event.target.value)}
+                      className={`mt-2 ${textField}`}
+                      aria-label="Known model"
+                    >
+                      {presets.map((preset) => (
+                        <option key={preset.id} value={preset.id}>
+                          {preset.label} — {preset.scale}x, {describeBytes(preset.bytes)}
+                        </option>
+                      ))}
+                    </select>
+                    {selectedPreset ? (
+                      <p className="mt-1 text-xs text-emerald-300/60">{selectedPreset.note}</p>
+                    ) : null}
+                    <p className="mt-1 text-xs text-emerald-300/40">
+                      Pinned to one revision and checked against a recorded SHA-256 before the model
+                      is loaded. Bytes that do not match are refused, so the host serving them does
+                      not have to be trusted.
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-2 text-xs text-emerald-300/40">No known models are configured.</p>
+                )
+              ) : weightsMode === 'file' ? (
                 <input
                   type="file"
                   accept=".onnx,application/octet-stream"
