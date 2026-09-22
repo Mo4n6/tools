@@ -1,27 +1,32 @@
 #!/usr/bin/env python3
-"""Validate Rotation Goblin's 10-year historical technical research dataset."""
+"""Validate Rotation Goblin's canonical technical history architecture."""
 
 from __future__ import annotations
 
 import datetime as dt
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "src/features/rotation-goblin/research/technical-history-10y.json"
+CANONICAL = ROOT / "src/features/rotation-goblin/technical-state-history.json"
+OUTCOMES = ROOT / "src/features/rotation-goblin/research/technical-outcomes-10y.json"
+CHART = ROOT / "src/features/rotation-goblin/chartHistory.generated.ts"
 
 EXPECTED_TICKERS = {
     "XLE","XLF","XLB","XLU","XLV","XLI","XLK","SMH","IWM","IYR",
     "EFA","EEM","GLD","TLT","PDBC","KMLM","UUP",
 }
+
 REQUIRED_FEATURES = {
-    "close","rsi14w","rsi14wDelta4w","relativeRsi14w","relativeRsi14wDelta4w",
-    "rel1mPct","rel3mPct","rel6mPct","rel12mPct","priceVs200dPct",
-    "sma200Slope20dPct","sma50Vs200Pct","goldenCross","daysSinceGoldenCross",
-    "drawdown52wPct","recoveryFrom52wLowPct","trend200d",
+    "close","return3mPct","rsi14w","rsi14wDelta4w","relativeRsi14w",
+    "relativeRsi14wDelta4w","rel1mPct","rel3mPct","rel6mPct","rel12mPct",
+    "priceVs200dPct","sma200Slope20dPct","sma50Vs200Pct","goldenCross",
+    "daysSinceGoldenCross","drawdown52wPct","recoveryFrom52wLowPct","trend200d",
 }
+
 REQUIRED_OUTCOMES = {
     "forwardAbs1mPct","forwardAbs3mPct","forwardAbs6mPct",
     "forwardRel1mPct","forwardRel3mPct","forwardRel6mPct",
@@ -38,73 +43,112 @@ def finite_or_none(value: Any) -> bool:
     return value is None or (isinstance(value, (int, float)) and math.isfinite(float(value)))
 
 
-def main() -> None:
-    payload = json.loads(DATA.read_text(encoding="utf-8"))
-    metadata = payload["metadata"]
-    series = payload["series"]
+def parse_chart_series() -> dict[str, list[dict[str, Any]]]:
+    content = CHART.read_text(encoding="utf-8")
+    match = re.search(
+        r"export const historicalChartSeries: Record<string, HistoricalChartPoint\[\]> = (\{.*\});",
+        content,
+        flags=re.DOTALL,
+    )
+    if not match:
+        raise RuntimeError("Could not parse generated chart history")
+    return json.loads(match.group(1))
 
-    require(metadata["benchmark"] == "SPY", "Benchmark must be SPY")
-    require(metadata["targetYears"] == 10, "Backfill target must remain 10 years")
-    require(metadata["featurePolicy"] == "point-in-time only; no valuation inputs", "Unexpected feature policy")
-    require(set(series) == EXPECTED_TICKERS, "Historical ticker universe mismatch")
+
+def main() -> None:
+    canonical = json.loads(CANONICAL.read_text(encoding="utf-8"))
+    outcomes = json.loads(OUTCOMES.read_text(encoding="utf-8"))
+    chart = parse_chart_series()
+
+    metadata = canonical["metadata"]
+    series = canonical["series"]
+    outcome_series = outcomes["series"]
+
+    require(metadata["schemaVersion"] == 2, "Canonical schema version must be 2")
+    require(metadata["benchmark"] == "SPY", "Canonical benchmark must be SPY")
+    require(metadata["frequency"] == "daily-completed-market-sessions", "Canonical frequency must be daily")
+    require("future" not in metadata["featurePolicy"].lower(), "Feature policy should not permit future labels")
+    require(set(series) == EXPECTED_TICKERS, "Canonical ticker universe mismatch")
+    require(set(outcome_series) == EXPECTED_TICKERS, "Outcome ticker universe mismatch")
+    require(set(chart) == EXPECTED_TICKERS, "Chart ticker universe mismatch")
 
     latest = dt.date.fromisoformat(metadata["latestCompletedSession"])
     today = dt.datetime.now(dt.timezone.utc).date()
-    require(0 <= (today - latest).days <= 5, "Historical dataset latest session is stale")
+    require(0 <= (today - latest).days <= 5, "Canonical latest completed session is stale")
 
-    coverage = metadata["coverage"]
-    total = 0
+    total_states = 0
+    total_labels = 0
+
     for ticker in sorted(EXPECTED_TICKERS):
         rows = series[ticker]
-        require(rows, f"{ticker}: no rows")
-        total += len(rows)
+        labels = outcome_series[ticker]
+        require(rows, f"{ticker}: missing canonical states")
+        require(labels, f"{ticker}: missing outcome labels")
+        total_states += len(rows)
+        total_labels += len(labels)
 
         dates = [row["date"] for row in rows]
-        require(dates == sorted(dates), f"{ticker}: rows not chronological")
-        require(len(dates) == len(set(dates)), f"{ticker}: duplicate dates")
-        require(coverage[ticker]["observations"] == len(rows), f"{ticker}: coverage count mismatch")
-        require(coverage[ticker]["firstObservation"] == rows[0]["date"], f"{ticker}: first coverage date mismatch")
-        require(coverage[ticker]["lastObservation"] == rows[-1]["date"], f"{ticker}: last coverage date mismatch")
+        require(dates == sorted(dates), f"{ticker}: canonical rows not chronological")
+        require(len(dates) == len(set(dates)), f"{ticker}: duplicate canonical dates")
+        require(dates[-1] == metadata["latestCompletedSession"], f"{ticker}: latest state differs from canonical session")
+        require(all("outcomes" not in row for row in rows), f"{ticker}: future outcomes leaked into canonical states")
 
-        # Most ETFs predate the target window. KMLM is younger and should
-        # simply use all available history after enough warmup.
-        if ticker != "KMLM":
-            require(len(rows) >= 450, f"{ticker}: unexpectedly short 10-year backfill ({len(rows)} rows)")
-        else:
-            require(len(rows) >= 250, f"KMLM: unexpectedly short available-history backfill ({len(rows)} rows)")
+        expected_min = 2200 if ticker != "KMLM" else 900
+        require(len(rows) >= expected_min, f"{ticker}: insufficient canonical history ({len(rows)} rows)")
 
+        coverage = metadata["coverage"][ticker]
+        require(coverage["observations"] == len(rows), f"{ticker}: coverage count mismatch")
+        require(coverage["firstObservation"] == rows[0]["date"], f"{ticker}: coverage first date mismatch")
+        require(coverage["lastObservation"] == rows[-1]["date"], f"{ticker}: coverage last date mismatch")
+
+        state_dates = set(dates)
         for row in rows:
             features = row["features"]
-            outcomes = row["outcomes"]
-            require(set(features) == REQUIRED_FEATURES, f"{ticker} {row['date']}: feature schema mismatch")
-            require(set(outcomes) == REQUIRED_OUTCOMES, f"{ticker} {row['date']}: outcome schema mismatch")
+            require(set(features) == REQUIRED_FEATURES, f"{ticker} {row['date']}: canonical feature schema mismatch")
             require(0 <= features["rsi14w"] <= 100, f"{ticker} {row['date']}: invalid RSI")
             require(0 <= features["relativeRsi14w"] <= 100, f"{ticker} {row['date']}: invalid relative RSI")
-            require(features["trend200d"] in {"bullish","neutral","bearish"}, f"{ticker}: invalid trend state")
+            require(features["trend200d"] in {"bullish","neutral","bearish"}, f"{ticker}: invalid 200D trend state")
             require(isinstance(features["goldenCross"], bool), f"{ticker}: goldenCross must be boolean")
-
+            require(-100 <= features["drawdown52wPct"] <= 0.05, f"{ticker}: invalid 52W drawdown")
+            require(features["recoveryFrom52wLowPct"] >= -0.01, f"{ticker}: invalid recovery from 52W low")
             for key, value in features.items():
                 if key in {"goldenCross","trend200d","daysSinceGoldenCross"}:
                     continue
                 require(finite_or_none(value), f"{ticker} {row['date']}: non-finite feature {key}")
 
-            for key, value in outcomes.items():
-                require(finite_or_none(value), f"{ticker} {row['date']}: non-finite outcome {key}")
+        label_dates = [row["date"] for row in labels]
+        require(label_dates == sorted(label_dates), f"{ticker}: outcome labels not chronological")
+        require(len(label_dates) == len(set(label_dates)), f"{ticker}: duplicate outcome dates")
+        require(all(date in state_dates for date in label_dates), f"{ticker}: outcome date absent from canonical history")
 
-            if features["daysSinceGoldenCross"] is not None:
-                require(features["goldenCross"], f"{ticker} {row['date']}: daysSinceGoldenCross set while cross is false")
-                require(features["daysSinceGoldenCross"] >= 1, f"{ticker}: invalid daysSinceGoldenCross")
-
+        seen_weeks: set[tuple[int, int]] = set()
         mature_cutoff = latest - dt.timedelta(days=220)
-        mature = [row for row in rows if dt.date.fromisoformat(row["date"]) <= mature_cutoff]
-        require(mature, f"{ticker}: no mature observations")
-        for row in mature:
-            require(row["outcomes"]["forwardRel6mPct"] is not None, f"{ticker} {row['date']}: missing mature 6M label")
+        for row in labels:
+            day = dt.date.fromisoformat(row["date"])
+            iso = day.isocalendar()
+            week_key = (iso.year, iso.week)
+            require(week_key not in seen_weeks, f"{ticker}: multiple outcome rows in one ISO week")
+            seen_weeks.add(week_key)
+            values = row["outcomes"]
+            require(set(values) == REQUIRED_OUTCOMES, f"{ticker} {row['date']}: outcome schema mismatch")
+            for key, value in values.items():
+                require(finite_or_none(value), f"{ticker} {row['date']}: non-finite outcome {key}")
+            if day <= mature_cutoff:
+                require(values["forwardRel6mPct"] is not None, f"{ticker} {row['date']}: mature 6M label missing")
 
-    print(f"Historical backfill integrity OK: {total} weekly point-in-time observations across {len(EXPECTED_TICKERS)} ETFs")
-    for ticker in sorted(EXPECTED_TICKERS):
-        info = coverage[ticker]
-        print(f"{ticker}: {info['observations']} rows, {info['firstObservation']} -> {info['lastObservation']} ({info['yearsApprox']}y)")
+        chart_rows = chart[ticker]
+        require(chart_rows, f"{ticker}: missing chart series")
+        require(chart_rows[-1]["date"] == rows[-1]["date"], f"{ticker}: chart latest point not sourced from canonical latest state")
+        require(all(point["date"] in state_dates for point in chart_rows), f"{ticker}: chart contains date outside canonical history")
+
+    print(
+        f"Canonical history integrity OK: {total_states} daily point-in-time states "
+        f"across {len(EXPECTED_TICKERS)} ETFs"
+    )
+    print(
+        f"Research outcome integrity OK: {total_labels} completed-week label rows; "
+        "future labels are physically separate from canonical inputs"
+    )
 
 
 if __name__ == "__main__":
