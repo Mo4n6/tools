@@ -7,6 +7,7 @@ on:
   pull_request:
     paths:
       - 'scripts/backfill-rotation-goblin-history.py'
+      - 'scripts/rotation_goblin_core.py'
       - 'scripts/validate-rotation-goblin-history.py'
       - 'src/features/rotation-goblin/chartHistory.generated.ts'
       - '.github/workflows/backfill-rotation-goblin-history.yml'
@@ -14,6 +15,7 @@ on:
     branches: ['main']
     paths:
       - 'scripts/backfill-rotation-goblin-history.py'
+      - 'scripts/rotation_goblin_core.py'
       - 'scripts/validate-rotation-goblin-history.py'
       - 'src/features/rotation-goblin/chartHistory.generated.ts'
       - '.github/workflows/backfill-rotation-goblin-history.yml'
@@ -24,7 +26,7 @@ permissions:
 jobs:
   backfill:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
@@ -36,7 +38,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Rebuild 10-year weekly history
+      - name: Rebuild 10-year canonical daily history
         run: python scripts/backfill-rotation-goblin-history.py
 
       - name: Validate historical dataset
@@ -58,13 +60,13 @@ jobs:
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
-          if [ -z "$(git status --porcelain -- src/features/rotation-goblin/research/technical-history-10y.json src/features/rotation-goblin/chartHistory.generated.ts)" ]; then
+          if [ -z "$(git status --porcelain -- src/features/rotation-goblin/technical-state-history.json src/features/rotation-goblin/research/technical-outcomes-10y.json src/features/rotation-goblin/chartHistory.generated.ts)" ]; then
             echo "Historical dataset unchanged."
             exit 0
           fi
 
           git config user.name "rotation-goblin-history-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add src/features/rotation-goblin/research/technical-history-10y.json src/features/rotation-goblin/chartHistory.generated.ts
-          git commit -m "Update Rotation Goblin historical backfill"
+          git add src/features/rotation-goblin/technical-state-history.json src/features/rotation-goblin/research/technical-outcomes-10y.json src/features/rotation-goblin/chartHistory.generated.ts
+          git commit -m "Update Rotation Goblin canonical history"
           git push
