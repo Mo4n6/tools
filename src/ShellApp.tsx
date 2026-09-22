@@ -91,6 +91,17 @@ const toolDefinitions: ToolDefinition[] = [
 
 const defaultToolPath = toolDefinitions[0]?.path ?? '/';
 
+/** Matches the fallback <title> in index.html, which is what loads first. */
+const SITE_NAME = 'Mo4n6 Tools';
+
+/**
+ * The tab title names the tool in view. index.html can only ship one static
+ * title, so without this every tool reads as whatever that title says — which
+ * is no help with six of them open in six tabs.
+ */
+export const titleForTool = (label: string | undefined): string =>
+  label ? `${label} — ${SITE_NAME}` : SITE_NAME;
+
 type SpaFallbackLocation = {
   pathname: string;
   search: string;
@@ -206,10 +217,14 @@ const ShellApp = (): JSX.Element => {
     [currentPath],
   );
 
+  useEffect(() => {
+    document.title = titleForTool(activeTool?.label);
+  }, [activeTool]);
+
   return (
     <div className="flex min-h-screen flex-col bg-[#050706] font-mono text-emerald-100 md:flex-row">
       <aside className="w-full border-b border-emerald-500/30 bg-[#07110a] p-4 shadow-[inset_0_-1px_0_rgba(16,185,129,0.25)] md:w-72 md:shrink-0 md:border-b-0 md:border-r md:shadow-[inset_-1px_0_0_rgba(16,185,129,0.25)]">
-        <h1 className="text-lg font-semibold text-emerald-200">Tools</h1>
+        <h1 className="text-lg font-semibold text-emerald-200">{SITE_NAME}</h1>
         <nav className="mt-4 flex gap-2 overflow-x-auto pb-1 md:block md:space-y-2 md:overflow-visible md:pb-0" aria-label="Tool Navigation">
           {toolDefinitions.map((tool) => {
             const isActive = tool.path === activeTool.path;

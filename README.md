@@ -1,88 +1,117 @@
 # Mo4n6 Tools
 
-A set of self-contained browser tools:
+Six browser tools that do their work in the tab you have open, rather than on
+someone else's machine. Deployed at **<https://mo4n6.github.io/tools/>**.
 
-- [Momoro Reader](https://mo4n6.github.io/tools/#/momoro-reader) — read and listen to documents
-- [Binaural Beats](https://mo4n6.github.io/tools/#/binaural-beats) — generated soundscapes for sleep, focus and calm
-- [Dead Letter](https://mo4n6.github.io/tools/#/dead-letter) — offline `.eml` and `.msg` viewer and header analysis
-- [Glass](https://mo4n6.github.io/tools/#/glass) — image upscaling: Lanczos, Scale2x, or your own ONNX model
-- [Husk](https://mo4n6.github.io/tools/#/husk) — deobfuscate malicious PowerShell and extract IOCs
-- [Rotation Goblin](https://mo4n6.github.io/tools/#/rotation-goblin) — sector rotation, RSI and relative-strength radar
+| Tool | What it does | Leaves the machine? |
+| --- | --- | --- |
+| [Momoro Reader](https://mo4n6.github.io/tools/#/momoro-reader) | Read and listen to documents | Downloads voice weights on first use |
+| [Binaural Beats](https://mo4n6.github.io/tools/#/binaural-beats) | Generated tones for sleep, focus and calm | No |
+| [Dead Letter](https://mo4n6.github.io/tools/#/dead-letter) | Offline `.eml` / `.msg` viewer and header analysis | No |
+| [Glass](https://mo4n6.github.io/tools/#/glass) | Image upscaling: Lanczos, Scale2x, or your own ONNX model | Only to fetch weights you choose |
+| [Husk](https://mo4n6.github.io/tools/#/husk) | Deobfuscate malicious PowerShell and extract IOCs | No |
+| [Rotation Goblin](https://mo4n6.github.io/tools/#/rotation-goblin) | Sector rotation, RSI and relative-strength radar | No — data ships with the build |
 
-Everything runs in the browser. Dead Letter also downloads as a single file you can run from your own disk with no network.
+Two of these handle hostile input — Dead Letter takes phishing mail, Husk takes
+live malware — which is why "runs locally" is a design constraint here and not a
+marketing line. Neither uploads a sample anywhere.
 
-Source-available, not open source. Free for individuals and small organisations, commercially licensable above that. See [Licence](#licence).
+The "leaves the machine" column is meant literally. Where a tool does reach the
+network, it is named below under that tool.
 
-## GitHub Pages deployment
+Source-available, not open source. Free for individuals and small organisations,
+commercially licensable above that. See [Licence](#licence).
 
-This repository deploys to GitHub Pages on every push to `main` using `.github/workflows/deploy-pages.yml`.
+## Running it
 
-Workflow runs:
+```
+npm install
+npm run dev          # http://localhost:5173
+```
 
-- `https://github.com/<your-github-username>/tts-reader-mvp/actions/workflows/deploy-pages.yml`
+Everything else you are likely to need:
 
-### Pages URL
+```
+npm test             # vitest
+npm run typecheck    # both tsconfig projects
+npm run ci:prebuild  # typecheck + merge-leftover guard
+npm run build        # production build into dist/
+npm run preview      # serve dist/ as it will be served
+```
 
-- `https://<your-github-username>.github.io/tts-reader-mvp/`
-- Built assets should resolve from `https://<your-github-username>.github.io/tts-reader-mvp/assets/...`
-- Tools shell route (hash-safe): `https://<host>/<base-path>#/momoro-reader`
-- Binaural Beats route: `https://<host>/<base-path>#/binaural-beats` or `https://<host>/tools/binaural-beats`
-- Dead Letter route: `https://<host>/<base-path>#/dead-letter` or `https://<host>/tools/dead-letter`
-- Glass route: `https://<host>/<base-path>#/glass` or `https://<host>/tools/glass`
-- Husk route: `https://<host>/<base-path>#/husk` or `https://<host>/tools/husk`
-- Rotation Goblin route: `https://<host>/<base-path>#/rotation-goblin` or `https://<host>/tools/rotation-goblin`
-- Dead Letter standalone file (also what the tab's download button serves): `https://<host>/<base-path>dead-letter.html`
-- Pretty route (with SPA 404 redirect fallback): `https://<host>/tools/momoro-reader?b64=<base64text>`
+Node 24 is what CI uses.
 
-### MVP scope supported on Pages
+### Repository layout
 
-### Base path configuration for Pages
+```
+src/
+  ShellApp.tsx          the tool switcher, routing and tab title
+  App.tsx               Momoro Reader
+  features/<tool>/      one directory per tool
+  tts/                  speech providers shared by Momoro Reader
+  licenses/             project licence constants and third-party manifests
+public/                 files copied verbatim into the build
+scripts/                generators, guards and maintenance helpers
+docs/                   design records and conventions
+```
 
-Set `VITE_BASE_PATH` at build time to the exact deploy subpath (must include app folder):
+### Adding a tool
 
-- `VITE_BASE_PATH=/tools/momoro-reader/`
-- or `VITE_BASE_PATH=/momoro-reader/`
+Add an entry to `toolDefinitions` in `src/ShellApp.tsx`; routing, the sidebar and
+the tab title follow from it. Give the tool's entry point the licence header the
+others carry — `npm test` fails if a registered tool is missing one. The
+conventions are written up in
+[Tools shell routing and UI conventions](docs/tools-shell-routing-and-ui.md).
 
-If `VITE_BASE_PATH` is not set, production builds fall back to `GITHUB_REPOSITORY` name (for example `/tts-reader-mvp/`).
+## Deployment
 
+Pushing to `main` deploys to GitHub Pages via
+[`deploy-pages.yml`](.github/workflows/deploy-pages.yml). The repository must
+have **Settings → Pages → Source** set to **GitHub Actions**.
 
-GitHub Pages is a static host, so the deployed MVP supports:
+Routes work two ways, because Pages is a static host:
 
-- Pasting text into the app
-- Uploading supported local files
-- Running local browser TTS playback
+- Hash route: `https://mo4n6.github.io/tools/#/husk`
+- Pretty route, via the SPA 404 fallback: `https://mo4n6.github.io/tools/husk`
+- Dead Letter's standalone file: `https://mo4n6.github.io/tools/dead-letter.html`
 
-### URL ingestion support
+The hash route is the one to link to. The pretty route depends on the 404
+fallback in `public/404.html`, and it happens to collide neatly with the base
+path here only because the repository is itself named `tools`.
 
-URL ingestion requires the separate extraction backend deployment (for example, a serverless or API host) and setting:
+### Base path
 
-- `VITE_ENABLE_URL_INGEST=true`
-- `VITE_EXTRACT_API_BASE_URL=<your-backend-base-url>`
+`VITE_BASE_PATH` sets the deploy subpath at build time, including a trailing
+slash. Unset, a production build falls back to the repository name from
+`GITHUB_REPOSITORY` — which is what the live deploy relies on, giving `/tools/`.
 
-For Pages-only deployment, keep URL ingestion disabled (`VITE_ENABLE_URL_INGEST=false`).
+### Build-time flags
 
-### Kokoro init on Pages (MVP reliability flag)
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `VITE_BASE_PATH` | repository name | Deploy subpath |
+| `VITE_ENABLE_URL_INGEST` | `false` | Momoro Reader URL ingestion; needs a backend |
+| `VITE_EXTRACT_API_BASE_URL` | — | That backend's base URL |
+| `VITE_SKIP_KOKORO_INIT_ON_PAGES` | `true` on Pages-style paths | Skip Kokoro init and use Web Speech |
+| `VITE_GLASS_WEIGHTS_URL` | — | Pre-fills the Glass weights field |
 
-- `VITE_SKIP_KOKORO_INIT_ON_PAGES` controls whether Pages deployments intentionally skip Kokoro initialization and use Web Speech mode.
-- Default behavior is enabled (`true`) for Pages-style base paths.
-- Set `VITE_SKIP_KOKORO_INIT_ON_PAGES=false` to re-enable Kokoro provider initialization attempts on Pages.
+The Pages build sets `VITE_ENABLE_URL_INGEST=false` and
+`VITE_SKIP_KOKORO_INIT_ON_PAGES=false`.
 
-### How to verify GPU is truly enabled
+## Notes on individual tools
 
-Quick checklist:
+### Momoro Reader
 
-- Build/run with `VITE_SKIP_KOKORO_INIT_ON_PAGES=false` so Kokoro init is not intentionally skipped by Pages config.
-- Confirm the browser supports WebGPU (`navigator.gpu` exists).
-- Clear any previously marked unstable profile state, then retry provider init.
+Two speech paths. The browser's built-in Web Speech voices need no download. The
+Kokoro path fetches `onnx-community/Kokoro-82M-ONNX` from Hugging Face on first
+use and runs it locally after that, on WebGPU where the browser offers an adapter
+and on WASM otherwise.
 
-## Repository settings required
+URL ingestion is the one feature here that needs a server: extracting an article
+from a URL requires a backend, so it is off unless you deploy one and set the two
+variables above.
 
-In GitHub repository settings:
-
-1. Go to **Settings → Pages**.
-2. Under **Build and deployment**, set **Source** to **GitHub Actions**.
-
-## Glass (image upscaling)
+### Glass
 
 Glass enlarges an image without sending it anywhere. It offers three methods
 rather than choosing one, because they do different things and only the person
@@ -98,7 +127,7 @@ The first two tiers need nothing but the page. Lanczos reconstructs the signal
 the source pixels encode; Pixel never blends, so the output palette is exactly
 the input palette.
 
-### Neural tier weights
+#### Neural tier weights
 
 Glass ships no model and contacts no inference service. There are three ways to
 give it one, and nothing is fetched until the operator picks:
@@ -111,16 +140,14 @@ Weights are cached in the browser after the first load. The scale factor is read
 back from the model's own output shape rather than configured, so a 2x and a 4x
 network both work unchanged.
 
-A build can also pre-fill the URL field with `VITE_GLASS_WEIGHTS_URL`.
+#### Adding a known model
 
-### Adding a known model
-
-A preset pins its URL to an immutable revision and records a SHA-256 of the
-exact bytes. Glass verifies that digest before the weights reach the runtime,
-on the network path and on the cache path alike, and refuses anything that does
-not match. The effect is that the host serving the file is infrastructure
-rather than a trusted party: a swap at the origin, an interfering middlebox or
-a poisoned cache entry fails the check instead of quietly executing.
+A preset pins its URL to an immutable revision and records a SHA-256 of the exact
+bytes. Glass verifies that digest before the weights reach the runtime, on the
+network path and on the cache path alike, and refuses anything that does not
+match. The effect is that the host serving the file is infrastructure rather than
+a trusted party: a swap at the origin, an interfering middlebox or a poisoned
+cache entry fails the check instead of quietly executing.
 
 Entries are produced by the helper rather than written by hand, because a wrong
 digest is indistinguishable from an attack:
@@ -130,25 +157,22 @@ npm run glass:preset -- https://huggingface.co/<repo>/resolve/<revision>/model.o
 ```
 
 It downloads the candidate, hashes it, loads the graph, runs a 64x64 RGB tile
-through it to confirm it really is a super-resolution model, reports the factor
-it inferred, and prints a record to paste into `WEIGHTS_PRESETS` in
-`src/features/glass/presets.ts`. Use a revision URL, not a branch: a branch
-moves, and a digest pinned to a moving target eventually fails for no reason
-anyone remembers.
+through it to confirm it really is a super-resolution model, reports the factor it
+inferred, and prints a record to paste into `WEIGHTS_PRESETS` in
+`src/features/glass/presets.ts`. Use a revision URL, not a branch: a branch moves,
+and a digest pinned to a moving target eventually fails for no reason anyone
+remembers.
 
 `WEIGHTS_PRESETS` ships empty. With no entries the UI says so and points at the
 helper, rather than offering a download that may 404 or may not be the model it
 claims to be.
 
-### What the neural tier adds to the deployment
+#### What the neural tier adds to the deployment
 
 The ONNX Runtime WebAssembly binary (~21 MB, served compressed) is emitted into
 `dist/assets` by the build and referenced by hash, so it deploys with the site
 instead of being fetched from a CDN at runtime. `npm run check:ort-asset` fails
 the build if that binary stops being emitted or stops being referenced.
-
-Note that this is a different posture from the Kokoro TTS path, which loads its
-runtime from jsDelivr at run time.
 
 Execution uses WebGPU where the browser offers an adapter and single-threaded
 WASM otherwise. Threads are not requested: they need `SharedArrayBuffer`, which
@@ -158,19 +182,38 @@ Large images are tiled with overlapping context and recombined through a
 raised-cosine window, so a photograph does not have to fit in GPU memory all at
 once and the tile seams do not show.
 
-## Static single-file tools
+### Husk
 
-Some tools ship as one self-contained HTML file rather than as a React view, so they can be
-downloaded and run from disk with no server and no network. `public/dead-letter.html` is the
-first of these: Vite copies `public/` verbatim, so the file served under the base path and the
-file the download button hands over are the same bytes.
+Husk emulates obfuscated PowerShell rather than running it: the computational
+half is evaluated for real, and anything that would touch the host is a logging
+stub. Each `Invoke-Expression` it unwraps becomes a layer, and IOCs are collected
+across every layer rather than only the last.
 
-The shell tab (`src/features/dead-letter/DeadLetterApp.tsx`) embeds that file in an iframe and
-links to it with a `download` attribute. The page carries its own Content-Security-Policy and
-its own copy of the shell palette; it deliberately links no site stylesheet, because that would
-break the `file://` copy. See [Tools shell routing and UI conventions](docs/tools-shell-routing-and-ui.md)
-for the full pattern.
+It reports what it could not deobfuscate instead of quietly returning a clean
+verdict. The design record, including where the ceiling is and why, is in
+[`docs/husk-spec.md`](docs/husk-spec.md).
 
+Never commit malware samples to this repository. Local corpora live outside the
+tree; the `husk:*` scripts expect them there.
+
+### Dead Letter
+
+Dead Letter ships as one self-contained HTML file rather than as a React view, so
+it can be downloaded and run from disk with no server and no network. Vite copies
+`public/` verbatim, so the file served under the base path and the file the
+download button hands over are the same bytes.
+
+The shell tab (`src/features/dead-letter/DeadLetterApp.tsx`) embeds that file in
+an iframe and links to it with a `download` attribute. The page carries its own
+Content-Security-Policy and its own copy of the shell palette; it deliberately
+links no site stylesheet, because that would break the `file://` copy.
+
+### Rotation Goblin
+
+Market data is generated ahead of time and committed, so the tool itself makes no
+requests. `update-rotation-goblin.yml` refreshes it on a weekday schedule and
+validates it before committing; the same workflow runs on pull requests that touch
+the tool, without the commit step.
 
 ## Licence
 
@@ -184,12 +227,16 @@ You are free to read, modify, and redistribute the code within those limits. The
 
 The licence asks for its `Required Notice:` line to travel with copies. It is in every tool's source header, in both served pages, and stamped onto each built JavaScript chunk by the build, so a redistributed build carries it without anyone having to remember. `npm test` fails if a tool loses it.
 
-Third-party code keeps its own licence and is **not** covered by the above. Two things to know: Husk's lexer tables are generated from the MIT-licensed PowerShell parser and carry Microsoft's copyright notice, and one shipped dependency is LGPL-3.0. See [`THIRD-PARTY.md`](THIRD-PARTY.md) for both, and for what the LGPL asks of anyone redistributing a build.
+Third-party code keeps its own licence and is **not** covered by the above. Two things to know: Husk's lexer tables are generated from the MIT-licensed PowerShell parser and carry Microsoft's copyright notice, and one shipped dependency is LGPL-3.0. See [`THIRD-PARTY.md`](THIRD-PARTY.md) for both, and for what the LGPL asks of anyone redistributing a build. Regenerate the dependency tally with `npm run licenses`.
 
 Model weights are separate again: Momoro Reader's speech weights are listed in [`docs/licenses/tts-manifest.json`](docs/licenses/tts-manifest.json), and Glass runs upscaling models you supply yourself, under whatever licence they came with.
 
 Contributions are welcome under the terms in [`CONTRIBUTING.md`](CONTRIBUTING.md). Project and tool names are trademarks — see [`TRADEMARK.md`](TRADEMARK.md).
 
+GitHub's sidebar shows this repository's licence as "Other", because PolyForm is not in the list GitHub can auto-detect. The machine-readable identifier is the `license` field in `package.json`.
+
 ## Additional docs
 
 - [Tools shell routing and UI conventions](docs/tools-shell-routing-and-ui.md)
+- [Husk design record](docs/husk-spec.md)
+- [Performance budgets](docs/perf-budgets.md)
