@@ -38,6 +38,7 @@ HISTORY = ROOT / "src/features/rotation-goblin/valuation-history.json"
 USER_AGENT = "RotationGoblin/1.0 (+https://github.com/Mo4n6/tools)"
 MIN_HISTORY_SAMPLES = 20
 MAX_HISTORY_SAMPLES = 1500
+MAX_STALE_DAYS = 10
 
 SSGA_BASE = "https://www.ssga.com/us/en/intermediary/etfs/"
 ISHARES_BASE = "https://www.ishares.com/us/products/"
@@ -92,10 +93,11 @@ FUND_CONFIG: dict[str, dict[str, Any]] = {
         "primaryMetric": "forward_pe",
     },
     "SMH": {
-        "provider": "VanEck",
-        "url": "https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/overview/",
-        "kind": "vaneck",
+        "provider": "iShares",
+        "url": ISHARES_BASE + "239705/ishares-semiconductor-etf",
+        "kind": "ishares",
         "primaryMetric": "pe",
+        "proxyTicker": "SOXX",
     },
     "IWM": {
         "provider": "iShares",
@@ -132,7 +134,7 @@ NOT_APPLICABLE = {
 }
 
 
-def http_get(url: str, attempts: int = 2) -> str:
+def http_get_bytes(url: str, attempts: int = 2) -> bytes:
     last_error: Exception | None = None
     for attempt in range(attempts):
         try:
@@ -143,28 +145,36 @@ def http_get(url: str, attempts: int = 2) -> str:
                     "--silent",
                     "--show-error",
                     "--location",
+                    "--max-redirs",
+                    "10",
                     "--connect-timeout",
                     "5",
                     "--max-time",
-                    "12",
+                    "20",
                     "--user-agent",
                     USER_AGENT,
                     "--header",
-                    "Accept: text/html,application/xhtml+xml",
+                    "Accept: */*",
                     "--header",
                     "Accept-Language: en-US,en;q=0.9",
                     url,
                 ],
                 check=True,
                 capture_output=True,
-                timeout=15,
+                timeout=25,
             )
-            return completed.stdout.decode("utf-8", errors="replace")
+            if not completed.stdout:
+                raise RuntimeError("empty response")
+            return completed.stdout
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             if attempt + 1 < attempts:
                 time.sleep(1)
     raise RuntimeError(f"Unable to fetch {url}: {last_error}")
+
+
+def http_get(url: str, attempts: int = 2) -> str:
+    return http_get_bytes(url, attempts=attempts).decode("utf-8", errors="replace")
 
 
 class TextExtractor(HTMLParser):
@@ -192,64 +202,73 @@ def plain_text(raw_html: str) -> str:
     parser = TextExtractor()
     parser.feed(raw_html)
     parser.close()
-    return re.sub(r"\\s+", " ", " ".join(parser.parts)).strip()
+    return re.sub(r"\s+", " ", " ".join(parser.parts)).strip()
 
 
-def number_after(text: str, label: str, max_chars: int = 1000) -> float | None:
+def decimal_after(text: str, label: str, max_chars: int = 1200) -> float | None:
+    """Return the first decimal-formatted value after a metric label.
+
+    Sponsor pages repeat labels and explanatory text. Requiring a decimal token
+    deliberately rejects footnote digits such as the "1" in "FY1" instead of
+    guessing. If a sponsor changes its markup/format, the parser fails closed.
+    """
     match = re.search(re.escape(label), text, flags=re.IGNORECASE)
     if not match:
         return None
     window = text[match.end():match.end() + max_chars]
-
-    # Sponsor pages sprinkle integer footnote markers around metric labels.
-    # Valuation multiples are published with decimal precision, so prefer the
-    # first decimal token and only fall back to an integer if necessary.
-    decimal = re.search(r"(?<![0-9])([0-9]{1,3}\\.[0-9]+)(?![0-9])", window)
-    number = decimal or re.search(r"(?<![0-9])([0-9]{1,3})(?![0-9])", window)
-    if not number:
+    decimal = re.search(r"(?<![0-9])([0-9]{1,4}\.[0-9]+)(?![0-9])", window)
+    if not decimal:
         return None
-    value = float(number.group(1))
+    value = float(decimal.group(1))
     return value if math.isfinite(value) and value > 0 else None
 
 
-def number_in_section(text: str, section: str, label: str, max_chars: int = 2500) -> float | None:
+def decimal_in_section(text: str, section: str, label: str, max_chars: int = 3000) -> float | None:
     section_match = re.search(re.escape(section), text, flags=re.IGNORECASE)
     if not section_match:
         return None
     section_text = text[section_match.end():section_match.end() + max_chars]
-    return number_after(section_text, label, max_chars=max_chars)
+    return decimal_after(section_text, label, max_chars=max_chars)
 
 
 def parse_ssga(raw_html: str) -> dict[str, float | None]:
     text = plain_text(raw_html)
     return {
-        "pb": number_in_section(text, "Fund Characteristics", "Price/Book Ratio"),
-        "forward_pe": number_in_section(text, "Fund Characteristics", "Price/Earnings Ratio FY1"),
-        "pe": number_in_section(text, "Index Characteristics", "Price/Earnings"),
-        "pcf": number_in_section(text, "Index Characteristics", "Price/Cash Flow"),
+        "pb": decimal_in_section(text, "Fund Characteristics", "Price/Book Ratio"),
+        "forward_pe": decimal_in_section(text, "Fund Characteristics", "Price/Earnings Ratio FY1"),
+        "pe": decimal_in_section(text, "Index Characteristics", "Price/Earnings"),
+        "pcf": decimal_in_section(text, "Index Characteristics", "Price/Cash Flow"),
     }
 
 
 def parse_ishares(raw_html: str) -> dict[str, float | None]:
     text = plain_text(raw_html)
     return {
-        "pb": number_in_section(text, "Portfolio Characteristics", "P/B Ratio"),
-        "pe": number_in_section(text, "Portfolio Characteristics", "P/E Ratio"),
-        "pcf": number_in_section(text, "Portfolio Characteristics", "P/CF Ratio"),
+        "pb": decimal_in_section(text, "Portfolio Characteristics", "P/B Ratio"),
+        "pe": decimal_in_section(text, "Portfolio Characteristics", "P/E Ratio"),
+        "pcf": decimal_in_section(text, "Portfolio Characteristics", "P/CF Ratio"),
         "forward_pe": None,
     }
 
 
-def parse_vaneck(raw_html: str) -> dict[str, float | None]:
-    text = plain_text(raw_html)
-    # VanEck exposes fund-data labels in the page body; unlike State Street,
-    # the metrics are trailing P/E and P/B rather than a forward FY1 multiple.
-    return {
-        "pb": number_after(text, "Price/Book Ratio", max_chars=1800),
-        "pe": number_after(text, "Price/Earnings Ratio", max_chars=1800),
-        "pcf": None,
-        "forward_pe": None,
-    }
+METRIC_RANGES: dict[str, tuple[float, float]] = {
+    "pb": (0.2, 30.0),
+    "forward_pe": (5.0, 100.0),
+    "pe": (5.0, 150.0),
+    "pcf": (3.0, 100.0),
+}
+
+
+def validate_parsed_metrics(ticker: str, values: dict[str, float | None], required: list[str]) -> None:
+    for metric in required:
+        value = values.get(metric)
+        if value is None:
+            raise RuntimeError(f"{ticker}: missing required valuation metric {metric}")
+        low, high = METRIC_RANGES[metric]
+        if not (low <= value <= high):
+            raise RuntimeError(
+                f"{ticker}: implausible {metric}={value}; expected {low} <= value <= {high}"
+            )
 
 
 def clamp(value: float) -> float:
@@ -319,27 +338,107 @@ def metric_label(metric: str) -> str:
     }.get(metric, metric)
 
 
+def load_previous_rows() -> dict[str, dict[str, Any]]:
+    if not OUT.exists():
+        return {}
+    content = OUT.read_text(encoding="utf-8")
+    match = re.search(
+        r"export const valuationRows: GeneratedValuationRow\[\] = (\[.*\]);",
+        content,
+        flags=re.DOTALL,
+    )
+    if not match:
+        return {}
+    try:
+        rows = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return {}
+    return {
+        str(row["ticker"]): row
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("ticker"), str)
+    }
+
+
+def previous_row_is_usable(row: dict[str, Any], today: dt.date) -> bool:
+    if row.get("status") not in {"automated", "stale"}:
+        return False
+    try:
+        as_of = dt.date.fromisoformat(str(row["asOf"]))
+        age = (today - as_of).days
+        primary = float(row["primaryMultiple"])
+        pb = float(row["priceToBook"])
+        value_score = float(row["valueScore"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if age < 0 or age > MAX_STALE_DAYS:
+        return False
+    if not (3.0 <= primary <= 150.0 and 0.2 <= pb <= 30.0 and 0.0 <= value_score <= 100.0):
+        return False
+    return True
+
+
+def stale_or_error_row(
+    ticker: str,
+    config: dict[str, Any],
+    previous_rows: dict[str, dict[str, Any]],
+    today: dt.date,
+    benchmark_pb: float | None,
+    error: str,
+) -> dict[str, Any]:
+    previous = previous_rows.get(ticker)
+    if previous and previous_row_is_usable(previous, today):
+        stale = dict(previous)
+        stale["status"] = "stale"
+        stale["note"] = (
+            f"Using last known good valuation from {previous['asOf']} because the current "
+            f"sponsor refresh failed: {error}"
+        )
+        return stale
+
+    return {
+        "ticker": ticker,
+        "status": "error",
+        "assetClass": "equity" if ticker != "IYR" else "real_estate",
+        "provider": config["provider"],
+        "sourceUrl": config["url"],
+        "proxyTicker": config.get("proxyTicker"),
+        "asOf": today.isoformat(),
+        "primaryMetric": metric_label(config["primaryMetric"]),
+        "primaryMultiple": None,
+        "benchmarkMultiple": None,
+        "primaryRelative": None,
+        "priceToBook": None,
+        "benchmarkPriceToBook": benchmark_pb,
+        "pbRelative": None,
+        "crossSectionScore": None,
+        "trackedHistoryPercentile": None,
+        "historySamples": 0,
+        "valueScore": None,
+        "note": error,
+    }
+
+
 def main() -> None:
     fetched: dict[str, dict[str, float | None]] = {}
     errors: dict[str, str] = {}
 
     def fetch_one(item: tuple[str, dict[str, Any]]) -> tuple[str, dict[str, float | None]]:
         ticker, config = item
+        kind = config["kind"]
+
         raw = http_get(config["url"])
-        if ticker in {"SPY", "IWM"}:
-            debug_text = plain_text(raw)
-            debug_label = "Price/Book Ratio" if ticker == "SPY" else "P/B Ratio"
-            debug_at = debug_text.find(debug_label)
-            if debug_at >= 0:
-                print(f"DEBUG_{ticker}: {debug_text[debug_at:debug_at + 900]}")
-        if config["kind"] == "ssga":
+        if kind == "ssga":
             values = parse_ssga(raw)
-        elif config["kind"] == "ishares":
+        elif kind == "ishares":
             values = parse_ishares(raw)
-        elif config["kind"] == "vaneck":
-            values = parse_vaneck(raw)
         else:
-            raise RuntimeError(f"Unsupported valuation source kind: {config['kind']}")
+            raise RuntimeError(f"Unsupported valuation source kind: {kind}")
+
+        required = ["pb", config["primaryMetric"]]
+        if ticker == "SPY":
+            required = ["pb", "forward_pe", "pe", "pcf"]
+        validate_parsed_metrics(ticker, values, required)
         return ticker, values
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
@@ -364,9 +463,11 @@ def main() -> None:
     if not spy.get("pb") or not spy.get("forward_pe") or not spy.get("pe") or not spy.get("pcf"):
         raise RuntimeError(f"SPY benchmark parsing incomplete: {spy}")
 
-    today = dt.datetime.now(dt.timezone.utc).date().isoformat()
+    today_date = dt.datetime.now(dt.timezone.utc).date()
+    today = today_date.isoformat()
     generated_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     history = load_history()
+    previous_rows = load_previous_rows()
     rows: list[dict[str, Any]] = []
 
     for ticker, config in FUND_CONFIG.items():
@@ -375,26 +476,16 @@ def main() -> None:
 
         values = fetched.get(ticker)
         if not values:
-            rows.append({
-                "ticker": ticker,
-                "status": "error",
-                "assetClass": "equity",
-                "provider": config["provider"],
-                "sourceUrl": config["url"],
-                "asOf": today,
-                "primaryMetric": metric_label(config["primaryMetric"]),
-                "primaryMultiple": None,
-                "benchmarkMultiple": None,
-                "primaryRelative": None,
-                "priceToBook": None,
-                "benchmarkPriceToBook": spy.get("pb"),
-                "pbRelative": None,
-                "crossSectionScore": None,
-                "trackedHistoryPercentile": None,
-                "historySamples": len(history.get(ticker, [])),
-                "valueScore": None,
-                "note": errors.get(ticker, "Valuation source unavailable."),
-            })
+            rows.append(
+                stale_or_error_row(
+                    ticker,
+                    config,
+                    previous_rows,
+                    today_date,
+                    spy.get("pb"),
+                    errors.get(ticker, "Valuation source unavailable."),
+                )
+            )
             continue
 
         metric = config["primaryMetric"]
@@ -404,26 +495,16 @@ def main() -> None:
         benchmark_pb = spy.get("pb")
 
         if primary is None or benchmark is None or pb is None or benchmark_pb is None:
-            rows.append({
-                "ticker": ticker,
-                "status": "error",
-                "assetClass": "equity" if ticker != "IYR" else "real_estate",
-                "provider": config["provider"],
-                "sourceUrl": config["url"],
-                "asOf": today,
-                "primaryMetric": metric_label(metric),
-                "primaryMultiple": primary,
-                "benchmarkMultiple": benchmark,
-                "primaryRelative": None,
-                "priceToBook": pb,
-                "benchmarkPriceToBook": benchmark_pb,
-                "pbRelative": None,
-                "crossSectionScore": None,
-                "trackedHistoryPercentile": None,
-                "historySamples": len(history.get(ticker, [])),
-                "valueScore": None,
-                "note": "Sponsor page loaded, but one or more valuation fields could not be parsed.",
-            })
+            rows.append(
+                stale_or_error_row(
+                    ticker,
+                    config,
+                    previous_rows,
+                    today_date,
+                    benchmark_pb,
+                    "Sponsor page loaded, but one or more valuation fields could not be parsed.",
+                )
+            )
             continue
 
         primary_relative = primary / benchmark
@@ -454,6 +535,7 @@ def main() -> None:
             "assetClass": "equity" if ticker != "IYR" else "real_estate",
             "provider": config["provider"],
             "sourceUrl": config["url"],
+            "proxyTicker": config.get("proxyTicker"),
             "asOf": today,
             "primaryMetric": metric_label(metric),
             "primaryMultiple": round(primary, 2),
@@ -467,7 +549,12 @@ def main() -> None:
             "historySamples": len(entries),
             "valueScore": round(value_score, 1),
             "note": (
-                "Value score blends the ETF's primary valuation multiple and P/B versus SPY. "
+                (
+                    f"Valuation proxy: {config['proxyTicker']} is used for the semiconductor complex because "
+                    "the SMH sponsor endpoint blocks automated CI access. "
+                    if config.get("proxyTicker") else ""
+                )
+                + "Value score blends the ETF's primary valuation multiple and P/B versus SPY. "
                 + (
                     f"Tracked-history percentile is active with {len(entries)} samples."
                     if tracked_percentile is not None
@@ -483,6 +570,7 @@ def main() -> None:
             "assetClass": "non_earnings",
             "provider": None,
             "sourceUrl": None,
+            "proxyTicker": None,
             "asOf": today,
             "primaryMetric": None,
             "primaryMultiple": None,
@@ -507,14 +595,15 @@ def main() -> None:
         "minimumHistorySamples": MIN_HISTORY_SAMPLES,
         "automatedTickers": sorted(ticker for ticker in FUND_CONFIG if ticker != "SPY"),
         "notApplicableTickers": sorted(NOT_APPLICABLE),
-        "providers": ["State Street", "iShares", "VanEck"],
+        "providers": ["State Street", "iShares"],
         "note": (
             "Equity/real-estate valuation is automated from official sponsor pages. "
+            "SMH uses SOXX as a clearly labeled semiconductor-sector valuation proxy. "
             "Non-earnings assets are intentionally not assigned P/E-style value scores."
         ),
     }
 
-    type_header = """export type ValuationStatus = 'automated' | 'not_applicable' | 'error';
+    type_header = """export type ValuationStatus = 'automated' | 'stale' | 'not_applicable' | 'error';
 
 export type GeneratedValuationRow = {
   ticker: string;
@@ -522,6 +611,7 @@ export type GeneratedValuationRow = {
   assetClass: 'equity' | 'real_estate' | 'non_earnings';
   provider: string | null;
   sourceUrl: string | null;
+  proxyTicker?: string | null;
   asOf: string;
   primaryMetric: string | null;
   primaryMultiple: number | null;

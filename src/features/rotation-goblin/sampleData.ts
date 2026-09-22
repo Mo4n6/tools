@@ -17,6 +17,7 @@ export type EtfRow = {
   pbRelative: number | null;
   valuationProvider: string | null;
   valuationSourceUrl: string | null;
+  valuationProxyTicker: string | null;
   valuationHistorySamples: number;
   trackedHistoryPercentile: number | null;
   valuationNote: string;
@@ -109,18 +110,20 @@ const phaseFor = (
   if (row.rsi14w <= 35 && row.relativeRsi <= 40) return 'Capitulation';
   if (row.relativeRsi < 38 && row.rel6m < 0 && row.rsi14w < 45) return 'Decay';
   if (row.relativeRsi >= 55 && row.rel3m > 0 && row.rsi14w >= 45 && row.rsi14w < 68) return 'Rotation';
-  if (row.rsi14w >= 65 && row.relativeRsi >= 60) return 'Momentum';
+  if (row.rsi14w >= 65 && row.relativeRsi >= 60 && row.rel3m > 0) return 'Momentum';
   if (valueScore !== null && valueScore >= 60 && row.rsiTrend !== 'down') return 'Accumulation';
   if (row.relativeRsi < 45 && row.rel6m < 0) return 'Decay';
-  return row.relativeRsi >= 55 ? 'Rotation' : 'Accumulation';
+  return row.relativeRsi >= 55 && row.rel3m > 0 ? 'Rotation' : 'Accumulation';
 };
 
 const noteFor = (phase:Phase,valueStatus:ValuationStatus):string => {
   const valuationClause = valueStatus === 'not_applicable'
     ? ' This asset uses technical/regime signals only because equity-style valuation multiples are not meaningful.'
-    : valueStatus === 'error'
-      ? ' Valuation data is temporarily unavailable, so the score is falling back to technical signals.'
-      : '';
+    : valueStatus === 'stale'
+      ? ' Valuation is using a recent last-known-good sponsor snapshot because the current refresh failed.'
+      : valueStatus === 'error'
+        ? ' Valuation data is temporarily unavailable, so the score is falling back to technical signals.'
+        : '';
 
   switch (phase) {
     case 'Capitulation': return 'Price is washed out, but the model wants evidence that selling pressure is actually ending before treating weakness as opportunity.' + valuationClause;
@@ -140,7 +143,7 @@ export const sampleEtfs: EtfRow[] = assetMeta.flatMap((meta) => {
   const valuation = valuationByTicker.get(meta.ticker);
   if (!technical || !valuation) return [];
 
-  const valueScore = valuation.status === 'automated' ? valuation.valueScore : null;
+  const valueScore = valuation.status === 'automated' || valuation.status === 'stale' ? valuation.valueScore : null;
   const rotationScore = rotationScoreFor(valueScore,technical.rsi14w,technical.relativeRsi,technical.rel6m);
   const contrarianScore = contrarianScoreFor(valueScore,technical.rsi14w,technical.drawdown52w);
   const momentumScore = Math.round(
@@ -162,6 +165,7 @@ export const sampleEtfs: EtfRow[] = assetMeta.flatMap((meta) => {
     pbRelative:valuation.pbRelative,
     valuationProvider:valuation.provider,
     valuationSourceUrl:valuation.sourceUrl,
+    valuationProxyTicker:valuation.proxyTicker ?? null,
     valuationHistorySamples:valuation.historySamples,
     trackedHistoryPercentile:valuation.trackedHistoryPercentile,
     valuationNote:valuation.note,

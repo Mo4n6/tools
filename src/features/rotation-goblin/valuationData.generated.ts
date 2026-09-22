@@ -1,4 +1,4 @@
-export type ValuationStatus = 'automated' | 'not_applicable' | 'error';
+export type ValuationStatus = 'automated' | 'stale' | 'not_applicable' | 'error';
 
 export type GeneratedValuationRow = {
   ticker: string;
@@ -6,6 +6,7 @@ export type GeneratedValuationRow = {
   assetClass: 'equity' | 'real_estate' | 'non_earnings';
   provider: string | null;
   sourceUrl: string | null;
+  proxyTicker?: string | null;
   asOf: string;
   primaryMetric: string | null;
   primaryMultiple: number | null;

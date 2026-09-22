@@ -136,7 +136,7 @@ const RotationGoblinApp = ():JSX.Element => {
         </div>
         <div className="mt-3 space-y-1 text-xs leading-relaxed text-emerald-300/45">
           <p>Relative RSI is RSI calculated on the ETF/SPY ratio. That helps distinguish a sector that is genuinely gaining on the S&amp;P 500 from one merely floating upward with the whole market.</p>
-          <p><strong className="text-emerald-200/80">Value is automated for equity/real-estate ETFs</strong> from official State Street and iShares sponsor pages. Non-earnings assets intentionally show — instead of receiving fake equity multiples.</p>
+          <p><strong className="text-emerald-200/80">Value is automated for equity/real-estate ETFs</strong> from official State Street, iShares, and VanEck sponsor data. Non-earnings assets intentionally show — instead of receiving fake equity multiples.</p>
         </div>
       </section>
 
@@ -151,9 +151,9 @@ const RotationGoblinApp = ():JSX.Element => {
             <div className="mt-3 rounded-lg border border-emerald-500/20 bg-black/20 p-4 text-sm leading-relaxed text-emerald-100">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="font-black text-emerald-200">Valuation layer</p>
-                <span className={`rounded border px-2 py-0.5 text-[10px] ${selected.valueStatus === 'automated' ? 'border-emerald-400/40 text-emerald-200' : selected.valueStatus === 'error' ? 'border-red-400/40 text-red-200' : 'border-zinc-500/40 text-zinc-400'}`}>{selected.valueStatus.replace('_',' ').toUpperCase()}</span>
+                <span className={`rounded border px-2 py-0.5 text-[10px] ${selected.valueStatus === 'automated' ? 'border-emerald-400/40 text-emerald-200' : selected.valueStatus === 'stale' ? 'border-amber-400/40 text-amber-200' : selected.valueStatus === 'error' ? 'border-red-400/40 text-red-200' : 'border-zinc-500/40 text-zinc-400'}`}>{selected.valueStatus.replace('_',' ').toUpperCase()}</span>
               </div>
-              {selected.valueStatus === 'automated' ? (
+              {selected.valueStatus === 'automated' || selected.valueStatus === 'stale' ? (
                 <>
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
                     <div><span className="text-emerald-300/45">{selected.valuationMetric}</span><div className="mt-1 font-bold">{selected.valuationMultiple?.toFixed(2)} vs SPY {selected.valuationBenchmarkMultiple?.toFixed(2)}</div></div>
@@ -162,7 +162,7 @@ const RotationGoblinApp = ():JSX.Element => {
                     <div><span className="text-emerald-300/45">Tracked history</span><div className="mt-1 font-bold">{selected.trackedHistoryPercentile === null ? `${selected.valuationHistorySamples} samples` : `${selected.trackedHistoryPercentile.toFixed(0)}th pct • ${selected.valuationHistorySamples} samples`}</div></div>
                   </div>
                   <p className="mt-3 text-xs text-emerald-300/55">{selected.valuationNote}</p>
-                  {selected.valuationSourceUrl ? <a href={selected.valuationSourceUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-lime-300 underline decoration-lime-500/40 underline-offset-2 hover:text-lime-200">Official {selected.valuationProvider} source ↗</a> : null}
+                  {selected.valuationSourceUrl ? <a href={selected.valuationSourceUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-lime-300 underline decoration-lime-500/40 underline-offset-2 hover:text-lime-200">Official {selected.valuationProvider} source{selected.valuationProxyTicker ? ' (' + selected.valuationProxyTicker + ' valuation proxy)' : ''} ↗</a> : null}
                 </>
               ) : (
                 <p className="mt-2 text-xs text-emerald-300/55">{selected.valuationNote}</p>

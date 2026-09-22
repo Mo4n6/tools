@@ -1,4 +1,5 @@
 name: Update Rotation Goblin market data
+# Fail closed on bad generated data.
 
 on:
   schedule:
@@ -10,12 +11,14 @@ on:
       - 'src/features/rotation-goblin/sampleData.ts'
       - 'scripts/update-rotation-goblin.py'
       - 'scripts/update-rotation-goblin-valuations.py'
+      - 'scripts/validate-rotation-goblin-data.py'
       - '.github/workflows/update-rotation-goblin.yml'
   pull_request:
     paths:
       - 'src/features/rotation-goblin/**'
       - 'scripts/update-rotation-goblin.py'
       - 'scripts/update-rotation-goblin-valuations.py'
+      - 'scripts/validate-rotation-goblin-data.py'
       - '.github/workflows/update-rotation-goblin.yml'
 
 permissions:
@@ -41,6 +44,9 @@ jobs:
 
       - name: Refresh technical indicators
         run: python scripts/update-rotation-goblin.py
+
+      - name: Validate generated market data
+        run: python scripts/validate-rotation-goblin-data.py
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
