@@ -95,9 +95,13 @@ for (const path of chosen) {
   perDir.set(dir, bucket);
   bucket.n += 1;
 
-  if ((done += 1) % 250 === 0) {
-    process.stderr.write(`  ...${done}/${chosen.length}\n`);
-  }
+  done += 1;
+  if (done % 250 === 0) process.stderr.write(`  ...${done}/${chosen.length}\n`);
+
+  // Named before the call, not after. A sample that hangs has to be
+  // identifiable from the log rather than inferred from a counter - which
+  // cost an hour of a stalled run to learn.
+  process.stderr.write(`[${done}] ${path}\n`);
 
   const started = Date.now();
   try {
