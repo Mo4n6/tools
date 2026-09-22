@@ -17,6 +17,7 @@ the score is based only on each ETF's current multiple relative to SPY.
 
 from __future__ import annotations
 
+import concurrent.futures
 import datetime as dt
 import html
 import json
@@ -116,7 +117,7 @@ NOT_APPLICABLE = {
 }
 
 
-def http_get(url: str, attempts: int = 3) -> str:
+def http_get(url: str, attempts: int = 2) -> str:
     last_error: Exception | None = None
     headers = {
         "User-Agent": USER_AGENT,
@@ -126,7 +127,7 @@ def http_get(url: str, attempts: int = 3) -> str:
     for attempt in range(attempts):
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=15) as response:
                 return response.read().decode("utf-8", errors="replace")
         except Exception as exc:  # noqa: BLE001
             last_error = exc
@@ -253,15 +254,26 @@ def main() -> None:
     fetched: dict[str, dict[str, float | None]] = {}
     errors: dict[str, str] = {}
 
-    for ticker, config in FUND_CONFIG.items():
-        try:
-            raw = http_get(config["url"])
-            values = parse_ssga(raw) if config["kind"] == "ssga" else parse_ishares(raw)
-            fetched[ticker] = values
-            print(f"{ticker}: {values}")
-        except Exception as exc:  # noqa: BLE001
-            errors[ticker] = str(exc)
-            print(f"{ticker}: ERROR {exc}")
+    def fetch_one(item: tuple[str, dict[str, Any]]) -> tuple[str, dict[str, float | None]]:
+        ticker, config = item
+        raw = http_get(config["url"])
+        values = parse_ssga(raw) if config["kind"] == "ssga" else parse_ishares(raw)
+        return ticker, values
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        future_to_item = {
+            pool.submit(fetch_one, item): item
+            for item in FUND_CONFIG.items()
+        }
+        for future in concurrent.futures.as_completed(future_to_item):
+            ticker, _config = future_to_item[future]
+            try:
+                resolved_ticker, values = future.result()
+                fetched[resolved_ticker] = values
+                print(f"{resolved_ticker}: {values}")
+            except Exception as exc:  # noqa: BLE001
+                errors[ticker] = str(exc)
+                print(f"{ticker}: ERROR {exc}")
 
     if "SPY" not in fetched:
         raise RuntimeError(f"SPY valuation benchmark could not be fetched: {errors.get('SPY', 'unknown error')}")
