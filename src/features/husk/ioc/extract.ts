@@ -45,15 +45,21 @@ const RULES: readonly Rule[] = [
     // those swallows the whole chain as one indicator.
     pattern: /\b(?:https?|ftp):\/\/(?:(?!@(?:https?|ftp):\/\/)[^\s"'`<>()\]},;|])+/gi,
     confidence: 'high',
+    // A trailing '@' is a list separator, not a path character. Real samples
+    // end their chain with one:
+    //   http://a.test/nh@http://b.test/dobgx@...@http://e.test/u8erijeq@
+    // A URL legitimately ending in '@' is possible but is not distinguishable
+    // from that, and does not occur in any observed sample, so the separator
+    // reading wins.
     normalize: (v) => v.replace(/[.,;:@]+$/, ''),
     reject: (value) => {
       try {
         const host = new URL(value).hostname.toLowerCase();
         if (BENIGN_HOSTS.has(host)) return true;
-        // A hostname with no dot is a fragment, not a destination - these
-        // appear when an intermediate layer has the URL split across a
-        // concatenation. 'localhost' and bare IPs are the exceptions.
-        return !host.includes('.') && host !== 'localhost' && !/^\[?[0-9a-f:]+\]?$/i.test(host);
+        if (isIpAddress(host)) return false;
+        // A hostname with no dot is a fragment, not a destination - it appears
+        // when a layer still has the URL split across a concatenation.
+        return !host.includes('.');
       } catch {
         return false;
       }
@@ -149,6 +155,24 @@ const RULES: readonly Rule[] = [
   },
 ];
 
+
+/**
+ * True for a literal IP host.
+ *
+ * Testing `[0-9a-f:]` alone is not enough: plenty of English words are pure
+ * hexadecimal - bad, face, dead, beef, cafe, add - so a concatenation
+ * fragment like `http://bad` would read as an address and slip past the
+ * hostname-fragment filter.
+ */
+function isIpAddress(host: string): boolean {
+  // IPv6 is bracketed by the URL parser and always contains a colon.
+  if (host.startsWith('[') && host.endsWith(']')) return host.includes(':');
+  if (host.includes(':')) return true;
+
+  const octets = host.split('.');
+  if (octets.length !== 4) return false;
+  return octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255);
+}
 
 /** The base64 prefix an MZ/PE header produces, whatever the byte alignment. */
 const PE_BASE64_PREFIXES = ['TVqQ', 'TVpQ', 'TVoA', 'TVro', 'TVpB'];

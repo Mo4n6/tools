@@ -165,3 +165,51 @@ describe('aliased Invoke-Expression', () => {
     expect(result.layers.some((l) => l.origin.via === 'invoke')).toBe(false);
   });
 });
+
+describe('hex-word hostnames are not mistaken for IP addresses', () => {
+  // Many English words are pure hexadecimal, so a '[0-9a-f:]' test let
+  // concatenation fragments like 'http://bad' pass as literal addresses and
+  // defeat the hostname-fragment filter entirely.
+  it.each(['bad', 'face', 'dead', 'beef', 'cafe', 'add'])(
+    'rejects the fragment http://%s',
+    async (word) => {
+      const urls = (await analyze(`$a = 'http://${word}' + 'host.test/x'`)).iocs.indicators
+        .filter((i) => i.kind === 'url')
+        .map((i) => i.value);
+      expect(urls).not.toContain(`http://${word}`);
+    },
+  );
+
+  it('still keeps a real IPv4 host', async () => {
+    const urls = (await analyze(`$u = 'http://198.51.100.7/a'`)).iocs.indicators
+      .filter((i) => i.kind === 'url')
+      .map((i) => i.value);
+    expect(urls).toContain('http://198.51.100.7/a');
+  });
+
+  // An out-of-range quad is not an IP, but it is still a dotted host and so
+  // still a destination worth reporting as a URL. What it must not do is
+  // claim to be an IP indicator.
+  it('does not report an out-of-range quad as an IP indicator', async () => {
+    const ips = (await analyze(`$u = 'http://999.1.1.1/a'`)).iocs.indicators
+      .filter((i) => i.kind === 'ipv4')
+      .map((i) => i.value);
+    expect(ips).not.toContain('999.1.1.1');
+  });
+
+  it('still keeps a bracketed IPv6 host', async () => {
+    const urls = (await analyze(`$u = 'http://[2001:db8::1]/a'`)).iocs.indicators
+      .filter((i) => i.kind === 'url')
+      .map((i) => i.value);
+    expect(urls.some((u) => u.includes('2001:db8'))).toBe(true);
+  });
+
+  // localhost is in BENIGN_HOSTS on purpose: in a sample it is scaffolding,
+  // not a destination.
+  it('filters localhost as scaffolding rather than a destination', async () => {
+    const urls = (await analyze(`$u = 'http://localhost:8080/a'`)).iocs.indicators
+      .filter((i) => i.kind === 'url')
+      .map((i) => i.value);
+    expect(urls).toHaveLength(0);
+  });
+});
