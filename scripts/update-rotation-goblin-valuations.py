@@ -301,6 +301,12 @@ def main() -> None:
     def fetch_one(item: tuple[str, dict[str, Any]]) -> tuple[str, dict[str, float | None]]:
         ticker, config = item
         raw = http_get(config["url"])
+        if ticker in {"SPY", "IWM"}:
+            debug_text = plain_text(raw)
+            debug_label = "Price/Book Ratio" if ticker == "SPY" else "P/B Ratio"
+            debug_at = debug_text.find(debug_label)
+            if debug_at >= 0:
+                print(f"DEBUG_{ticker}: {debug_text[debug_at:debug_at + 900]}")
         values = parse_ssga(raw) if config["kind"] == "ssga" else parse_ishares(raw)
         return ticker, values
 
