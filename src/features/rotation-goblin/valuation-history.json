@@ -2,89 +2,97 @@
   "XLE": [
     {
       "date": "2026-09-22",
-      "crossScore": 67.5,
-      "primaryRelative": 1.0,
-      "pbRelative": 0.4
+      "crossScore": 95.13,
+      "primaryRelative": 0.575,
+      "pbRelative": 0.4694
     }
   ],
   "XLF": [
     {
       "date": "2026-09-22",
-      "crossScore": 67.5,
-      "primaryRelative": 1.0,
-      "pbRelative": 0.4
+      "crossScore": 85.05,
+      "primaryRelative": 0.73,
+      "pbRelative": 0.4416
     }
   ],
   "XLB": [
     {
       "date": "2026-09-22",
-      "crossScore": 67.5,
-      "primaryRelative": 1.0,
-      "pbRelative": 0.4
+      "crossScore": 80.8,
+      "primaryRelative": 0.7919,
+      "pbRelative": 0.5065
     }
   ],
   "XLU": [
     {
       "date": "2026-09-22",
-      "crossScore": 67.5,
-      "primaryRelative": 1.0,
-      "pbRelative": 0.4
+      "crossScore": 81.09,
+      "primaryRelative": 0.791,
+      "pbRelative": 0.384
     }
   ],
   "XLV": [
     {
       "date": "2026-09-22",
-      "crossScore": 57.0,
-      "primaryRelative": 1.0,
-      "pbRelative": 0.8
+      "crossScore": 57.9,
+      "primaryRelative": 0.9404,
+      "pbRelative": 0.885
     }
   ],
   "XLI": [
     {
       "date": "2026-09-22",
-      "crossScore": 43.0,
-      "primaryRelative": 1.0,
-      "pbRelative": 1.2
+      "crossScore": 31.72,
+      "primaryRelative": 1.1513,
+      "pbRelative": 1.2412
     }
   ],
   "IWM": [
     {
       "date": "2026-09-22",
-      "crossScore": 85.7,
-      "primaryRelative": 0.72,
-      "pbRelative": 0.4
+      "crossScore": 85.65,
+      "primaryRelative": 0.7208,
+      "pbRelative": 0.3915
     }
   ],
   "IYR": [
     {
       "date": "2026-09-22",
-      "crossScore": 74.72,
-      "primaryRelative": 0.8889,
-      "pbRelative": 0.4
+      "crossScore": 73.83,
+      "primaryRelative": 0.9025,
+      "pbRelative": 0.4564
     }
   ],
   "EFA": [
     {
       "date": "2026-09-22",
-      "crossScore": 83.1,
-      "primaryRelative": 0.76,
-      "pbRelative": 0.4
+      "crossScore": 83.41,
+      "primaryRelative": 0.7552,
+      "pbRelative": 0.4397
     }
   ],
   "EEM": [
     {
       "date": "2026-09-22",
-      "crossScore": 83.1,
-      "primaryRelative": 0.76,
-      "pbRelative": 0.4
+      "crossScore": 81.47,
+      "primaryRelative": 0.7805,
+      "pbRelative": 0.5083
     }
   ],
   "XLK": [
     {
       "date": "2026-09-22",
-      "crossScore": 32.5,
-      "primaryRelative": 1.0,
-      "pbRelative": 2.4
+      "crossScore": 14.98,
+      "primaryRelative": 1.2696,
+      "pbRelative": 2.3006
+    }
+  ],
+  "SMH": [
+    {
+      "date": "2026-09-22",
+      "crossScore": 0.0,
+      "primaryRelative": 2.5801,
+      "pbRelative": 2.0408
     }
   ]
 }

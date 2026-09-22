@@ -20,7 +20,7 @@ export type GeneratedTechnicalRow = {
 
 export const marketDataMeta = {
   "source": "Yahoo fallback",
-  "generatedAt": "2026-09-22T16:39:15Z",
+  "generatedAt": "2026-09-22T16:57:52Z",
   "benchmark": "SPY",
   "live": true,
   "note": "Technicals are automated. Rotation history uses automated sponsor valuation where applicable and technical-only scoring for non-earnings assets."
@@ -28,385 +28,385 @@ export const marketDataMeta = {
 
 export const benchmarkSnapshot = {
   "ticker": "SPY",
-  "price": 772.97,
-  "asOf": "2026-09-22",
-  "ret3m": 5.63,
-  "ret12m": 17.72,
+  "price": 773.5,
+  "asOf": "2026-09-21",
+  "ret3m": 4.17,
+  "ret12m": 18.38,
   "above200d": true
 } as const;
 
 export const technicalRows: GeneratedTechnicalRow[] = [
   {
     "ticker": "XLE",
-    "price": 62.55,
-    "asOf": "2026-09-22",
-    "rsi14w": 60.4,
+    "price": 62.46,
+    "asOf": "2026-09-21",
+    "rsi14w": 60.2,
     "rsiTrend": "down",
-    "relativeRsi": 52.8,
-    "relativeTrend": "flat",
-    "ret3m": 15.54,
-    "rel1m": -2.3,
-    "rel3m": 9.38,
-    "rel6m": -10.34,
-    "rel12m": 24.53,
-    "drawdown52w": -4.56,
+    "relativeRsi": 52.6,
+    "relativeTrend": "down",
+    "ret3m": 16.23,
+    "rel1m": -3.07,
+    "rel3m": 11.57,
+    "rel6m": -10.4,
+    "rel12m": 22.01,
+    "drawdown52w": -4.7,
     "above200d": true,
     "history": [
       {
-        "month": "09-22",
-        "value": 52
+        "month": "09-21",
+        "value": 60
       }
     ]
   },
   {
     "ticker": "XLF",
-    "price": 54.8899,
-    "asOf": "2026-09-22",
-    "rsi14w": 50.9,
+    "price": 55.9,
+    "asOf": "2026-09-21",
+    "rsi14w": 56.2,
     "rsiTrend": "down",
-    "relativeRsi": 37.6,
+    "relativeRsi": 41.4,
     "relativeTrend": "down",
-    "ret3m": 2.23,
-    "rel1m": -5.3,
-    "rel3m": -3.22,
-    "rel6m": -5.35,
-    "rel12m": -12.41,
-    "drawdown52w": -5.94,
+    "ret3m": 4.47,
+    "rel1m": -3.12,
+    "rel3m": 0.28,
+    "rel6m": -3.82,
+    "rel12m": -11.1,
+    "drawdown52w": -4.2,
     "above200d": true,
     "history": [
       {
-        "month": "09-22",
-        "value": 41
-      }
-    ]
-  },
-  {
-    "ticker": "XLB",
-    "price": 50.225,
-    "asOf": "2026-09-22",
-    "rsi14w": 48.2,
-    "rsiTrend": "down",
-    "relativeRsi": 38.6,
-    "relativeTrend": "down",
-    "ret3m": -0.81,
-    "rel1m": -6.88,
-    "rel3m": -6.1,
-    "rel6m": -10.15,
-    "rel12m": -3.9,
-    "drawdown52w": -5.99,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-22",
-        "value": 37
-      }
-    ]
-  },
-  {
-    "ticker": "XLU",
-    "price": 40.765,
-    "asOf": "2026-09-22",
-    "rsi14w": 36.4,
-    "rsiTrend": "down",
-    "relativeRsi": 32.5,
-    "relativeTrend": "down",
-    "ret3m": -8.89,
-    "rel1m": -5.12,
-    "rel3m": -13.74,
-    "rel6m": -22.15,
-    "rel12m": -15.58,
-    "drawdown52w": -12.81,
-    "above200d": false,
-    "history": [
-      {
-        "month": "09-22",
-        "value": 22
-      }
-    ]
-  },
-  {
-    "ticker": "XLV",
-    "price": 170.1,
-    "asOf": "2026-09-22",
-    "rsi14w": 63.4,
-    "rsiTrend": "down",
-    "relativeRsi": 53.0,
-    "relativeTrend": "down",
-    "ret3m": 12.2,
-    "rel1m": -3.37,
-    "rel3m": 6.22,
-    "rel6m": -0.06,
-    "rel12m": 7.5,
-    "drawdown52w": -2.81,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-22",
-        "value": 55
-      }
-    ]
-  },
-  {
-    "ticker": "XLI",
-    "price": 169.89,
-    "asOf": "2026-09-22",
-    "rsi14w": 44.3,
-    "rsiTrend": "down",
-    "relativeRsi": 31.5,
-    "relativeTrend": "down",
-    "ret3m": -4.38,
-    "rel1m": -6.61,
-    "rel3m": -9.48,
-    "rel6m": -11.65,
-    "rel12m": -4.28,
-    "drawdown52w": -8.67,
-    "above200d": false,
-    "history": [
-      {
-        "month": "09-22",
-        "value": 23
-      }
-    ]
-  },
-  {
-    "ticker": "XLK",
-    "price": 195.33,
-    "asOf": "2026-09-22",
-    "rsi14w": 67.1,
-    "rsiTrend": "up",
-    "relativeRsi": 64.3,
-    "relativeTrend": "up",
-    "ret3m": 6.17,
-    "rel1m": 5.42,
-    "rel3m": 0.51,
-    "rel6m": 20.61,
-    "rel12m": 19.74,
-    "drawdown52w": -1.22,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-22",
-        "value": 66
-      }
-    ]
-  },
-  {
-    "ticker": "SMH",
-    "price": 602.46,
-    "asOf": "2026-09-22",
-    "rsi14w": 61.8,
-    "rsiTrend": "up",
-    "relativeRsi": 58.7,
-    "relativeTrend": "up",
-    "ret3m": -3.15,
-    "rel1m": 6.23,
-    "rel3m": -8.31,
-    "rel6m": 29.86,
-    "rel12m": 62.61,
-    "drawdown52w": -9.93,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-22",
-        "value": 79
-      }
-    ]
-  },
-  {
-    "ticker": "IWM",
-    "price": 286.795,
-    "asOf": "2026-09-22",
-    "rsi14w": 52.6,
-    "rsiTrend": "down",
-    "relativeRsi": 38.0,
-    "relativeTrend": "down",
-    "ret3m": -2.63,
-    "rel1m": -5.27,
-    "rel3m": -7.82,
-    "rel6m": -1.74,
-    "rel12m": 1.28,
-    "drawdown52w": -5.75,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-22",
-        "value": 51
-      }
-    ]
-  },
-  {
-    "ticker": "IYR",
-    "price": 98.94,
-    "asOf": "2026-09-22",
-    "rsi14w": 45.4,
-    "rsiTrend": "down",
-    "relativeRsi": 37.0,
-    "relativeTrend": "down",
-    "ret3m": -3.22,
-    "rel1m": -5.95,
-    "rel3m": -8.38,
-    "rel6m": -10.21,
-    "rel12m": -10.43,
-    "drawdown52w": -7.07,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-22",
-        "value": 36
-      }
-    ]
-  },
-  {
-    "ticker": "EFA",
-    "price": 106.045,
-    "asOf": "2026-09-22",
-    "rsi14w": 56.7,
-    "rsiTrend": "down",
-    "relativeRsi": 40.7,
-    "relativeTrend": "down",
-    "ret3m": 3.5,
-    "rel1m": -3.19,
-    "rel3m": -2.02,
-    "rel6m": -5.18,
-    "rel12m": 0.18,
-    "drawdown52w": -2.54,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-22",
-        "value": 52
-      }
-    ]
-  },
-  {
-    "ticker": "EEM",
-    "price": 68.71,
-    "asOf": "2026-09-22",
-    "rsi14w": 60.2,
-    "rsiTrend": "flat",
-    "relativeRsi": 53.2,
-    "relativeTrend": "up",
-    "ret3m": 2.29,
-    "rel1m": 1.16,
-    "rel3m": -3.16,
-    "rel6m": 1.67,
-    "rel12m": 12.26,
-    "drawdown52w": -3.51,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-22",
-        "value": 66
-      }
-    ]
-  },
-  {
-    "ticker": "GLD",
-    "price": 396.81,
-    "asOf": "2026-09-22",
-    "rsi14w": 48.2,
-    "rsiTrend": "down",
-    "relativeRsi": 39.7,
-    "relativeTrend": "down",
-    "ret3m": 5.17,
-    "rel1m": -7.38,
-    "rel3m": -0.44,
-    "rel6m": -17.15,
-    "rel12m": -0.62,
-    "drawdown52w": -19.98,
-    "above200d": false,
-    "history": [
-      {
-        "month": "09-22",
-        "value": 17
-      }
-    ]
-  },
-  {
-    "ticker": "TLT",
-    "price": 81.565,
-    "asOf": "2026-09-22",
-    "rsi14w": 41.7,
-    "rsiTrend": "down",
-    "relativeRsi": 32.1,
-    "relativeTrend": "flat",
-    "ret3m": -4.28,
-    "rel1m": -1.39,
-    "rel3m": -9.38,
-    "rel6m": -18.49,
-    "rel12m": -18.6,
-    "drawdown52w": -7.78,
-    "above200d": false,
-    "history": [
-      {
-        "month": "09-22",
-        "value": 7
-      }
-    ]
-  },
-  {
-    "ticker": "PDBC",
-    "price": 19.455,
-    "asOf": "2026-09-22",
-    "rsi14w": 66.3,
-    "rsiTrend": "up",
-    "relativeRsi": 56.8,
-    "relativeTrend": "up",
-    "ret3m": 20.24,
-    "rel1m": 3.08,
-    "rel3m": 13.83,
-    "rel6m": -1.07,
-    "rel12m": 29.47,
-    "drawdown52w": -3.21,
-    "above200d": true,
-    "history": [
-      {
-        "month": "09-22",
+        "month": "09-21",
         "value": 54
       }
     ]
   },
   {
-    "ticker": "KMLM",
-    "price": 30.78,
-    "asOf": "2026-09-22",
-    "rsi14w": 66.1,
-    "rsiTrend": "up",
-    "relativeRsi": 52.6,
-    "relativeTrend": "up",
-    "ret3m": 10.88,
-    "rel1m": 3.63,
-    "rel3m": 4.97,
-    "rel6m": -5.06,
-    "rel12m": 1.62,
-    "drawdown52w": -1.06,
+    "ticker": "XLB",
+    "price": 49.71,
+    "asOf": "2026-09-21",
+    "rsi14w": 45.9,
+    "rsiTrend": "down",
+    "relativeRsi": 37.1,
+    "relativeTrend": "down",
+    "ret3m": -3.26,
+    "rel1m": -6.31,
+    "rel3m": -7.13,
+    "rel6m": -10.59,
+    "rel12m": -5.46,
+    "drawdown52w": -6.95,
+    "above200d": false,
+    "history": [
+      {
+        "month": "09-21",
+        "value": 38
+      }
+    ]
+  },
+  {
+    "ticker": "XLU",
+    "price": 40.66,
+    "asOf": "2026-09-21",
+    "rsi14w": 36.0,
+    "rsiTrend": "down",
+    "relativeRsi": 32.2,
+    "relativeTrend": "down",
+    "ret3m": -8.41,
+    "rel1m": -7.97,
+    "rel3m": -12.08,
+    "rel6m": -22.44,
+    "rel12m": -15.74,
+    "drawdown52w": -13.03,
+    "above200d": false,
+    "history": [
+      {
+        "month": "09-21",
+        "value": 26
+      }
+    ]
+  },
+  {
+    "ticker": "XLV",
+    "price": 169.01,
+    "asOf": "2026-09-21",
+    "rsi14w": 62.4,
+    "rsiTrend": "down",
+    "relativeRsi": 51.7,
+    "relativeTrend": "down",
+    "ret3m": 13.06,
+    "rel1m": -3.21,
+    "rel3m": 8.53,
+    "rel6m": -1.78,
+    "rel12m": 6.07,
+    "drawdown52w": -3.43,
     "above200d": true,
     "history": [
       {
-        "month": "09-22",
-        "value": 46
+        "month": "09-21",
+        "value": 53
+      }
+    ]
+  },
+  {
+    "ticker": "XLI",
+    "price": 169.98,
+    "asOf": "2026-09-21",
+    "rsi14w": 44.4,
+    "rsiTrend": "down",
+    "relativeRsi": 31.5,
+    "relativeTrend": "down",
+    "ret3m": -6.25,
+    "rel1m": -6.76,
+    "rel3m": -10.0,
+    "rel6m": -11.59,
+    "rel12m": -4.53,
+    "drawdown52w": -8.62,
+    "above200d": false,
+    "history": [
+      {
+        "month": "09-21",
+        "value": 20
+      }
+    ]
+  },
+  {
+    "ticker": "XLK",
+    "price": 194.85,
+    "asOf": "2026-09-21",
+    "rsi14w": 66.8,
+    "rsiTrend": "up",
+    "relativeRsi": 63.8,
+    "relativeTrend": "up",
+    "ret3m": 1.52,
+    "rel1m": 4.78,
+    "rel3m": -2.54,
+    "rel6m": 20.59,
+    "rel12m": 19.98,
+    "drawdown52w": -1.46,
+    "above200d": true,
+    "history": [
+      {
+        "month": "09-21",
+        "value": 61
+      }
+    ]
+  },
+  {
+    "ticker": "SMH",
+    "price": 596.03,
+    "asOf": "2026-09-21",
+    "rsi14w": 60.9,
+    "rsiTrend": "up",
+    "relativeRsi": 57.5,
+    "relativeTrend": "up",
+    "ret3m": -10.9,
+    "rel1m": 4.18,
+    "rel3m": -14.46,
+    "rel6m": 29.24,
+    "rel12m": 59.33,
+    "drawdown52w": -10.9,
+    "above200d": true,
+    "history": [
+      {
+        "month": "09-21",
+        "value": 55
+      }
+    ]
+  },
+  {
+    "ticker": "IWM",
+    "price": 285.58,
+    "asOf": "2026-09-21",
+    "rsi14w": 51.6,
+    "rsiTrend": "down",
+    "relativeRsi": 36.9,
+    "relativeTrend": "down",
+    "ret3m": -3.98,
+    "rel1m": -5.4,
+    "rel3m": -7.82,
+    "rel6m": -1.15,
+    "rel12m": -0.47,
+    "drawdown52w": -6.15,
+    "above200d": true,
+    "history": [
+      {
+        "month": "09-21",
+        "value": 50
+      }
+    ]
+  },
+  {
+    "ticker": "IYR",
+    "price": 98.9,
+    "asOf": "2026-09-21",
+    "rsi14w": 45.3,
+    "rsiTrend": "down",
+    "relativeRsi": 36.8,
+    "relativeTrend": "down",
+    "ret3m": -1.95,
+    "rel1m": -6.48,
+    "rel3m": -5.87,
+    "rel6m": -10.62,
+    "rel12m": -11.47,
+    "drawdown52w": -7.11,
+    "above200d": true,
+    "history": [
+      {
+        "month": "09-21",
+        "value": 35
+      }
+    ]
+  },
+  {
+    "ticker": "EFA",
+    "price": 106.13,
+    "asOf": "2026-09-21",
+    "rsi14w": 56.9,
+    "rsiTrend": "down",
+    "relativeRsi": 40.7,
+    "relativeTrend": "down",
+    "ret3m": 1.48,
+    "rel1m": -2.77,
+    "rel3m": -2.58,
+    "rel6m": -3.9,
+    "rel12m": -0.69,
+    "drawdown52w": -2.46,
+    "above200d": true,
+    "history": [
+      {
+        "month": "09-21",
+        "value": 53
+      }
+    ]
+  },
+  {
+    "ticker": "EEM",
+    "price": 68.83,
+    "asOf": "2026-09-21",
+    "rsi14w": 60.4,
+    "rsiTrend": "flat",
+    "relativeRsi": 53.4,
+    "relativeTrend": "up",
+    "ret3m": -3.34,
+    "rel1m": 1.61,
+    "rel3m": -7.21,
+    "rel6m": 3.74,
+    "rel12m": 11.57,
+    "drawdown52w": -3.34,
+    "above200d": true,
+    "history": [
+      {
+        "month": "09-21",
+        "value": 67
+      }
+    ]
+  },
+  {
+    "ticker": "GLD",
+    "price": 398.38,
+    "asOf": "2026-09-21",
+    "rsi14w": 48.8,
+    "rsiTrend": "down",
+    "relativeRsi": 40.1,
+    "relativeTrend": "down",
+    "ret3m": 3.59,
+    "rel1m": -5.65,
+    "rel3m": -0.56,
+    "rel6m": -19.6,
+    "rel12m": 0.27,
+    "drawdown52w": -19.67,
+    "above200d": false,
+    "history": [
+      {
+        "month": "09-21",
+        "value": 18
+      }
+    ]
+  },
+  {
+    "ticker": "TLT",
+    "price": 81.8,
+    "asOf": "2026-09-21",
+    "rsi14w": 42.9,
+    "rsiTrend": "flat",
+    "relativeRsi": 32.4,
+    "relativeTrend": "flat",
+    "ret3m": -3.88,
+    "rel1m": -1.92,
+    "rel3m": -7.73,
+    "rel6m": -18.63,
+    "rel12m": -18.98,
+    "drawdown52w": -7.52,
+    "above200d": false,
+    "history": [
+      {
+        "month": "09-21",
+        "value": 8
+      }
+    ]
+  },
+  {
+    "ticker": "PDBC",
+    "price": 19.44,
+    "asOf": "2026-09-21",
+    "rsi14w": 66.1,
+    "rsiTrend": "up",
+    "relativeRsi": 56.7,
+    "relativeTrend": "up",
+    "ret3m": 18.83,
+    "rel1m": 3.07,
+    "rel3m": 14.07,
+    "rel6m": -6.42,
+    "rel12m": 27.54,
+    "drawdown52w": -3.28,
+    "above200d": true,
+    "history": [
+      {
+        "month": "09-21",
+        "value": 49
+      }
+    ]
+  },
+  {
+    "ticker": "KMLM",
+    "price": 30.69,
+    "asOf": "2026-09-21",
+    "rsi14w": 65.2,
+    "rsiTrend": "up",
+    "relativeRsi": 52.0,
+    "relativeTrend": "up",
+    "ret3m": 9.69,
+    "rel1m": 3.22,
+    "rel3m": 5.3,
+    "rel6m": -8.46,
+    "rel12m": 0.68,
+    "drawdown52w": -1.35,
+    "above200d": true,
+    "history": [
+      {
+        "month": "09-21",
+        "value": 42
       }
     ]
   },
   {
     "ticker": "UUP",
-    "price": 28.525,
-    "asOf": "2026-09-22",
-    "rsi14w": 62.0,
+    "price": 28.48,
+    "asOf": "2026-09-21",
+    "rsi14w": 61.2,
     "rsiTrend": "up",
-    "relativeRsi": 42.6,
-    "relativeTrend": "up",
-    "ret3m": 0.26,
-    "rel1m": 1.03,
-    "rel3m": -5.08,
-    "rel6m": -12.69,
-    "rel12m": -8.64,
-    "drawdown52w": -0.26,
+    "relativeRsi": 42.1,
+    "relativeTrend": "flat",
+    "ret3m": 0.42,
+    "rel1m": 0.36,
+    "rel3m": -3.6,
+    "rel6m": -14.16,
+    "rel12m": -9.04,
+    "drawdown52w": -0.42,
     "above200d": true,
     "history": [
       {
-        "month": "09-22",
-        "value": 30
+        "month": "09-21",
+        "value": 28
       }
     ]
   }
