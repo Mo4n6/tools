@@ -191,6 +191,15 @@ export const sampleEtfs: EtfRow[] = assetMeta.flatMap((meta) => {
   }];
 });
 
+const valuationSourceDates = valuationRows
+  .filter((row) => row.status === 'automated' || row.status === 'stale')
+  .map((row) => row.asOf)
+  .filter(Boolean)
+  .sort();
+
+const oldestValuationSourceAsOf = valuationSourceDates[0] ?? null;
+const newestValuationSourceAsOf = valuationSourceDates[valuationSourceDates.length - 1] ?? null;
+
 const technical = (ticker:string) => technicalByTicker.get(ticker);
 
 const directional = (value:number,upLabel:string,downLabel:string):{value:string;tone:'good'|'warn'|'bad'} => {
@@ -258,4 +267,8 @@ export const dataMeta = {
   technicals: marketDataMeta,
   valuations: valuationDataMeta,
   pipeline: pipelineStatus,
+  technicalSessionAsOf: benchmarkSnapshot.asOf,
+  oldestValuationSourceAsOf,
+  newestValuationSourceAsOf,
+  staleValuationTickers: valuationRows.filter((row) => row.status === 'stale').map((row) => row.ticker),
 };

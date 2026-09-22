@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Refresh Rotation Goblin technical market data.
 
-No API key is required. The script tries Stooq first and Yahoo's chart endpoint
-as a fallback. It calculates technical indicators locally and writes a typed
+No API key is required. Yahoo adjusted-close history is the primary technical
+source; Stooq is retained as an independent fallback/cross-check when available. It calculates technical indicators locally and writes a typed
 TypeScript data module consumed by the static Vite app.
 
 Rotation-score history consumes the latest generated valuation score where
@@ -119,12 +119,42 @@ def fetch_yahoo(ticker: str, start: dt.date, end: dt.date) -> list[tuple[dt.date
 
 
 def fetch_history(ticker: str, start: dt.date, end: dt.date) -> tuple[list[tuple[dt.date, float]], str]:
+    yahoo_rows: list[tuple[dt.date, float]] | None = None
+    stooq_rows: list[tuple[dt.date, float]] | None = None
     errors: list[str] = []
-    for provider, fn in (("Stooq", fetch_stooq), ("Yahoo fallback", fetch_yahoo)):
-        try:
-            return fn(ticker, start, end), provider
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"{provider}: {exc}")
+
+    try:
+        yahoo_rows = fetch_yahoo(ticker, start, end)
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"Yahoo: {exc}")
+
+    try:
+        stooq_rows = fetch_stooq(ticker, start, end)
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"Stooq: {exc}")
+
+    if yahoo_rows is not None:
+        provider = "Yahoo primary"
+        if stooq_rows is not None:
+            yahoo_last = dict(yahoo_rows)
+            stooq_last = dict(stooq_rows)
+            common_dates = sorted(set(yahoo_last) & set(stooq_last))
+            if common_dates:
+                day = common_dates[-1]
+                y = yahoo_last[day]
+                s = stooq_last[day]
+                difference = abs(y - s) / max(abs(y), 1e-9)
+                if difference > 0.015:
+                    raise RuntimeError(
+                        f"{ticker}: Yahoo/Stooq latest-close cross-check failed on {day}: "
+                        f"Yahoo={y:.4f}, Stooq={s:.4f}, diff={difference:.2%}"
+                    )
+                provider = "Yahoo primary + Stooq cross-check"
+        return yahoo_rows, provider
+
+    if stooq_rows is not None:
+        return stooq_rows, "Stooq fallback"
+
     raise RuntimeError(f"All providers failed for {ticker}: {' | '.join(errors)}")
 
 

@@ -25,6 +25,7 @@ EXPECTED_NA = {"GLD","TLT","PDBC","KMLM","UUP"}
 
 MAX_TECH_AGE_DAYS = 5
 MAX_STALE_VALUATION_DAYS = 10
+MAX_AUTOMATED_VALUATION_SOURCE_AGE_DAYS = 10
 
 
 def extract_json_assignment(path: Path, name: str) -> Any:
@@ -95,7 +96,8 @@ def validate_valuations(today: dt.date) -> list[dict[str, Any]]:
         require(status in {"automated","stale"}, f"{ticker}: valuation unavailable ({status}): {row.get('note')}")
         age = date_age(row["asOf"], today)
         require(age >= 0, f"{ticker}: valuation date is in the future")
-        require(age <= (0 if status == "automated" else MAX_STALE_VALUATION_DAYS), f"{ticker}: valuation snapshot too stale")
+        max_age = MAX_AUTOMATED_VALUATION_SOURCE_AGE_DAYS if status == "automated" else MAX_STALE_VALUATION_DAYS
+        require(age <= max_age, f"{ticker}: valuation source snapshot too stale ({age} days)")
 
         primary = row.get("primaryMultiple")
         benchmark = row.get("benchmarkMultiple")
