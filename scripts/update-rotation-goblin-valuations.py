@@ -26,6 +26,7 @@ import re
 import subprocess
 import time
 import urllib.request
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -153,11 +154,32 @@ def http_get(url: str, attempts: int = 2) -> str:
     raise RuntimeError(f"Unable to fetch {url}: {last_error}")
 
 
+class TextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() in {"script", "style", "svg"}:
+            self.skip_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in {"script", "style", "svg"} and self.skip_depth > 0:
+            self.skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self.skip_depth == 0:
+            stripped = data.strip()
+            if stripped:
+                self.parts.append(stripped)
+
+
 def plain_text(raw_html: str) -> str:
-    text = re.sub(r"(?is)<(script|style).*?>.*?</\\1>", " ", raw_html)
-    text = re.sub(r"(?s)<[^>]+>", " ", text)
-    text = html.unescape(text)
-    return re.sub(r"\\s+", " ", text).strip()
+    parser = TextExtractor()
+    parser.feed(raw_html)
+    parser.close()
+    return re.sub(r"\\s+", " ", " ".join(parser.parts)).strip()
 
 
 def number_after(text: str, label: str, max_chars: int = 1000) -> float | None:
