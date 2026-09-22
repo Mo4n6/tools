@@ -1,14 +1,25 @@
+import { benchmarkSnapshot, marketDataMeta, technicalRows } from './marketData.generated';
+
 export type Phase = 'Capitulation' | 'Accumulation' | 'Rotation' | 'Momentum' | 'Crowded' | 'Decay';
+export type Trend = 'up' | 'flat' | 'down';
 
 export type EtfRow = {
   ticker: string;
   theme: string;
   valueScore: number;
+  valueStatus: 'manual';
+  price: number | null;
+  asOf: string;
   rsi14w: number;
-  rsiTrend: 'up' | 'flat' | 'down';
+  rsiTrend: Trend;
   relativeRsi: number;
-  relativeTrend: 'up' | 'flat' | 'down';
+  relativeTrend: Trend;
+  rel1m: number;
+  rel3m: number;
   rel6m: number;
+  rel12m: number;
+  drawdown52w: number;
+  above200d: boolean;
   phase: Phase;
   rotationScore: number;
   contrarianScore: number;
@@ -17,29 +28,157 @@ export type EtfRow = {
   history: { month: string; value: number }[];
 };
 
+type AssetMeta = {
+  ticker: string;
+  theme: string;
+  valueScore: number;
+};
+
+const assetMeta: AssetMeta[] = [
+  { ticker:'XLE', theme:'Energy', valueScore:89 },
+  { ticker:'XLF', theme:'Financials', valueScore:76 },
+  { ticker:'XLB', theme:'Materials', valueScore:78 },
+  { ticker:'XLU', theme:'Utilities', valueScore:72 },
+  { ticker:'XLV', theme:'Health Care', valueScore:63 },
+  { ticker:'XLI', theme:'Industrials', valueScore:31 },
+  { ticker:'IWM', theme:'U.S. Small Caps', valueScore:74 },
+  { ticker:'IYR', theme:'U.S. Real Estate', valueScore:82 },
+  { ticker:'EFA', theme:'Developed ex-U.S.', valueScore:69 },
+  { ticker:'EEM', theme:'Emerging Markets', valueScore:71 },
+  { ticker:'GLD', theme:'Gold', valueScore:44 },
+  { ticker:'TLT', theme:'Long Treasuries', valueScore:68 },
+  { ticker:'PDBC', theme:'Broad Commodities', valueScore:58 },
+  { ticker:'KMLM', theme:'Managed Futures', valueScore:50 },
+  { ticker:'UUP', theme:'U.S. Dollar', valueScore:46 },
+];
+
+const clamp = (value:number):number => Math.max(0,Math.min(100,value));
+const rsiSweetSpot = (rsi:number):number => clamp(100 - Math.abs(rsi - 58) * 4);
+const momentumRsiScore = (rsi:number):number => clamp((rsi - 35) * 2.25);
+const relativeRsiScore = (rsi:number):number => clamp((rsi - 35) * 2.5);
+const relativePerformanceScore = (rel6m:number):number => clamp(50 + rel6m * 3);
+const oversoldScore = (rsi:number):number => clamp((50 - rsi) * 3);
+const drawdownScore = (drawdown52w:number):number => clamp(Math.abs(Math.min(0,drawdown52w)) * 4);
+
+const phaseFor = (valueScore:number,row:(typeof technicalRows)[number]):Phase => {
+  if (valueScore < 40 && row.rsi14w >= 70 && row.relativeRsi >= 65) return 'Crowded';
+  if (row.rsi14w <= 35 && row.relativeRsi <= 40) return 'Capitulation';
+  if (row.relativeRsi < 38 && row.rel6m < 0 && row.rsi14w < 45) return 'Decay';
+  if (row.relativeRsi >= 55 && row.rel3m > 0 && row.rsi14w >= 45 && row.rsi14w < 68) return 'Rotation';
+  if (row.rsi14w >= 65 && row.relativeRsi >= 60) return 'Momentum';
+  if (valueScore >= 60 && row.rsiTrend !== 'down') return 'Accumulation';
+  if (row.relativeRsi < 45 && row.rel6m < 0) return 'Decay';
+  return row.relativeRsi >= 55 ? 'Rotation' : 'Accumulation';
+};
+
+const noteFor = (phase:Phase):string => {
+  switch (phase) {
+    case 'Capitulation': return 'Price is washed out, but the model wants evidence that selling pressure is actually ending before treating weakness as opportunity.';
+    case 'Accumulation': return 'Valuation is supportive and momentum is repairing, but relative outperformance is not fully confirmed yet.';
+    case 'Rotation': return 'Relative strength has turned constructive while valuation still offers some support — the setup this radar is designed to surface.';
+    case 'Momentum': return 'Absolute and relative trends are strong. The easy re-rating may already be underway, so valuation matters more.';
+    case 'Crowded': return 'Momentum is strong but the manual valuation snapshot is rich, increasing chase risk.';
+    case 'Decay': return 'Relative momentum is deteriorating. Cheapness alone is not enough until trend repair appears.';
+  }
+};
+
+const technicalByTicker = new Map(technicalRows.map((row) => [row.ticker,row]));
+
+export const sampleEtfs: EtfRow[] = assetMeta.flatMap((meta) => {
+  const technical = technicalByTicker.get(meta.ticker);
+  if (!technical) return [];
+
+  const rotationScore = Math.round(
+    meta.valueScore * 0.30 +
+    rsiSweetSpot(technical.rsi14w) * 0.15 +
+    relativeRsiScore(technical.relativeRsi) * 0.30 +
+    relativePerformanceScore(technical.rel6m) * 0.25
+  );
+  const contrarianScore = Math.round(
+    meta.valueScore * 0.45 +
+    oversoldScore(technical.rsi14w) * 0.30 +
+    drawdownScore(technical.drawdown52w) * 0.25
+  );
+  const momentumScore = Math.round(
+    momentumRsiScore(technical.rsi14w) * 0.35 +
+    relativeRsiScore(technical.relativeRsi) * 0.40 +
+    relativePerformanceScore(technical.rel6m) * 0.25
+  );
+  const phase = phaseFor(meta.valueScore,technical);
+
+  return [{
+    ...meta,
+    valueStatus:'manual' as const,
+    price:technical.price,
+    asOf:technical.asOf,
+    rsi14w:technical.rsi14w,
+    rsiTrend:technical.rsiTrend,
+    relativeRsi:technical.relativeRsi,
+    relativeTrend:technical.relativeTrend,
+    rel1m:technical.rel1m,
+    rel3m:technical.rel3m,
+    rel6m:technical.rel6m,
+    rel12m:technical.rel12m,
+    drawdown52w:technical.drawdown52w,
+    above200d:technical.above200d,
+    phase,
+    rotationScore,
+    contrarianScore,
+    momentumScore,
+    note:noteFor(phase),
+    history:technical.history,
+  }];
+});
+
+const technical = (ticker:string) => technicalByTicker.get(ticker);
+
+const directional = (value:number,upLabel:string,downLabel:string):{value:string;tone:'good'|'warn'|'bad'} => {
+  if (value >= 2) return { value:upLabel, tone:'good' };
+  if (value <= -2) return { value:downLabel, tone:'bad' };
+  return { value:'MIXED', tone:'warn' };
+};
+
+const commodity = technical('PDBC');
+const dollar = technical('UUP');
+const bonds = technical('TLT');
+const smallCaps = technical('IWM');
+const gold = technical('GLD');
+
+const spyRiskOn = benchmarkSnapshot.above200d && benchmarkSnapshot.ret3m > 0;
+const spyRiskOff = !benchmarkSnapshot.above200d && benchmarkSnapshot.ret3m < 0;
+
 export const regimeCards = [
-  { label: 'SPY trend', value: 'RISK-ON', tone: 'good', note: 'Broad market firm' },
-  { label: 'Commodities', value: 'RISING', tone: 'good', note: 'Physical assets improving' },
-  { label: 'USD', value: 'MIXED', tone: 'warn', note: 'No clean breakout' },
-  { label: 'Bonds', value: 'WEAK', tone: 'bad', note: 'Duration under pressure' },
-  { label: 'Inflation', value: 'STICKY', tone: 'warn', note: 'Disinflation uneven' },
-  { label: 'Reorder pressure', value: 'HIGH', tone: 'good', note: 'Fragmentation / bottlenecks' },
+  {
+    label:'SPY trend',
+    value:spyRiskOn ? 'RISK-ON' : spyRiskOff ? 'RISK-OFF' : 'MIXED',
+    tone:spyRiskOn ? 'good' : spyRiskOff ? 'bad' : 'warn',
+    note:`${benchmarkSnapshot.ret3m >= 0 ? '+' : ''}${benchmarkSnapshot.ret3m.toFixed(1)}% / 3M • ${benchmarkSnapshot.above200d ? 'above' : 'below'} 200D`,
+  },
+  {
+    label:'Commodities',
+    ...directional(commodity?.ret3m ?? 0,'RISING','FALLING'),
+    note:`${commodity?.ret3m && commodity.ret3m > 0 ? '+' : ''}${(commodity?.ret3m ?? 0).toFixed(1)}% / 3M`,
+  },
+  {
+    label:'USD',
+    ...directional(dollar?.ret3m ?? 0,'RISING','FALLING'),
+    note:`${dollar?.ret3m && dollar.ret3m > 0 ? '+' : ''}${(dollar?.ret3m ?? 0).toFixed(1)}% / 3M`,
+  },
+  {
+    label:'Bonds',
+    ...directional(bonds?.ret3m ?? 0,'STRONG','WEAK'),
+    note:`${bonds?.ret3m && bonds.ret3m > 0 ? '+' : ''}${(bonds?.ret3m ?? 0).toFixed(1)}% / 3M`,
+  },
+  {
+    label:'Small caps vs SPY',
+    ...directional(smallCaps?.rel3m ?? 0,'OUTPERFORM','LAGGING'),
+    note:`${smallCaps?.rel3m && smallCaps.rel3m > 0 ? '+' : ''}${(smallCaps?.rel3m ?? 0).toFixed(1)}% relative / 3M`,
+  },
+  {
+    label:'Gold vs SPY',
+    ...directional(gold?.rel3m ?? 0,'OUTPERFORM','LAGGING'),
+    note:`${gold?.rel3m && gold.rel3m > 0 ? '+' : ''}${(gold?.rel3m ?? 0).toFixed(1)}% relative / 3M`,
+  },
 ] as const;
 
-export const sampleEtfs: EtfRow[] = [
-  { ticker:'XLE', theme:'Energy', valueScore:89, rsi14w:47, rsiTrend:'up', relativeRsi:54, relativeTrend:'up', rel6m:8.1, phase:'Accumulation', rotationScore:78, contrarianScore:91, momentumScore:55, note:'Deep value with improving momentum, but the model still wants stronger relative confirmation.', history:[['Jan',42],['Feb',45],['Mar',49],['Apr',55],['May',62],['Jun',68],['Jul',72],['Aug',75],['Sep',78]].map(([month,value])=>({month:String(month),value:Number(value)})) },
-  { ticker:'XLB', theme:'Materials', valueScore:78, rsi14w:57, rsiTrend:'up', relativeRsi:62, relativeTrend:'up', rel6m:6.4, phase:'Rotation', rotationScore:88, contrarianScore:74, momentumScore:71, note:'Cheap enough to matter while ETF/SPY momentum has already turned constructive.', history:[['Jan',39],['Feb',43],['Mar',48],['Apr',56],['May',65],['Jun',73],['Jul',80],['Aug',85],['Sep',88]].map(([month,value])=>({month:String(month),value:Number(value)})) },
-  { ticker:'XLF', theme:'Financials', valueScore:76, rsi14w:52, rsiTrend:'up', relativeRsi:55, relativeTrend:'up', rel6m:3.3, phase:'Rotation', rotationScore:81, contrarianScore:70, momentumScore:64, note:'Valuation remains supportive and relative momentum has crossed into a constructive zone.', history:[['Jan',52],['Feb',54],['Mar',57],['Apr',61],['May',66],['Jun',71],['Jul',76],['Aug',79],['Sep',81]].map(([month,value])=>({month:String(month),value:Number(value)})) },
-  { ticker:'XLU', theme:'Utilities', valueScore:72, rsi14w:61, rsiTrend:'up', relativeRsi:58, relativeTrend:'up', rel6m:4.8, phase:'Rotation', rotationScore:82, contrarianScore:61, momentumScore:69, note:'Defensive valuation plus improving relative strength puts utilities into the active rotation bucket.', history:[['Jan',48],['Feb',51],['Mar',55],['Apr',60],['May',67],['Jun',72],['Jul',77],['Aug',79],['Sep',82]].map(([month,value])=>({month:String(month),value:Number(value)})) },
-  { ticker:'XLV', theme:'Health Care', valueScore:63, rsi14w:39, rsiTrend:'up', relativeRsi:42, relativeTrend:'flat', rel6m:-2.1, phase:'Accumulation', rotationScore:66, contrarianScore:77, momentumScore:38, note:'Still lagging SPY, but absolute momentum is repairing from a weak base.', history:[['Jan',51],['Feb',48],['Mar',46],['Apr',49],['May',53],['Jun',57],['Jul',60],['Aug',63],['Sep',66]].map(([month,value])=>({month:String(month),value:Number(value)})) },
-  { ticker:'XLI', theme:'Industrials', valueScore:31, rsi14w:73, rsiTrend:'flat', relativeRsi:75, relativeTrend:'up', rel6m:15.2, phase:'Crowded', rotationScore:48, contrarianScore:18, momentumScore:90, note:'Strong trend, but valuation is rich and relative momentum is already extended.', history:[['Jan',75],['Feb',72],['Mar',67],['Apr',63],['May',60],['Jun',56],['Jul',52],['Aug',49],['Sep',48]].map(([month,value])=>({month:String(month),value:Number(value)})) },
-  { ticker:'IWM', theme:'U.S. Small Caps', valueScore:74, rsi14w:56, rsiTrend:'up', relativeRsi:64, relativeTrend:'up', rel6m:7.3, phase:'Rotation', rotationScore:84, contrarianScore:68, momentumScore:72, note:'Domestic risk appetite and relative momentum are improving while valuation remains supportive.', history:[['Jan',43],['Feb',46],['Mar',50],['Apr',58],['May',65],['Jun',71],['Jul',77],['Aug',82],['Sep',84]].map(([month,value])=>({month:String(month),value:Number(value)})) },
-  { ticker:'IYR', theme:'U.S. Real Estate', valueScore:82, rsi14w:31, rsiTrend:'up', relativeRsi:34, relativeTrend:'flat', rel6m:-8.6, phase:'Capitulation', rotationScore:44, contrarianScore:89, momentumScore:22, note:'Very cheap and washed out, but relative strength has not yet confirmed a durable turn.', history:[['Jan',57],['Feb',52],['Mar',48],['Apr',43],['May',39],['Jun',37],['Jul',39],['Aug',41],['Sep',44]].map(([month,value])=>({month:String(month),value:Number(value)})) },
-  { ticker:'EFA', theme:'Developed ex-U.S.', valueScore:69, rsi14w:54, rsiTrend:'up', relativeRsi:57, relativeTrend:'up', rel6m:3.9, phase:'Rotation', rotationScore:79, contrarianScore:62, momentumScore:67, note:'International developed markets are beginning to outperform enough to register as rotation.', history:[['Jan',50],['Feb',53],['Mar',56],['Apr',61],['May',66],['Jun',70],['Jul',73],['Aug',76],['Sep',79]].map(([month,value])=>({month:String(month),value:Number(value)})) },
-  { ticker:'EEM', theme:'Emerging Markets', valueScore:71, rsi14w:49, rsiTrend:'up', relativeRsi:51, relativeTrend:'up', rel6m:1.8, phase:'Accumulation', rotationScore:71, contrarianScore:73, momentumScore:54, note:'Valuation is supportive and relative strength is improving, but the breakout is not decisive yet.', history:[['Jan',47],['Feb',49],['Mar',51],['Apr',55],['May',59],['Jun',63],['Jul',66],['Aug',69],['Sep',71]].map(([month,value])=>({month:String(month),value:Number(value)})) },
-  { ticker:'GLD', theme:'Gold', valueScore:44, rsi14w:69, rsiTrend:'up', relativeRsi:72, relativeTrend:'up', rel6m:12.4, phase:'Momentum', rotationScore:72, contrarianScore:31, momentumScore:91, note:'Strong absolute and relative trend; no longer a bargain, but the trend remains intact.', history:[['Jan',51],['Feb',55],['Mar',60],['Apr',64],['May',67],['Jun',70],['Jul',73],['Aug',74],['Sep',72]].map(([month,value])=>({month:String(month),value:Number(value)})) },
-  { ticker:'TLT', theme:'Long Treasuries', valueScore:68, rsi14w:34, rsiTrend:'down', relativeRsi:29, relativeTrend:'down', rel6m:-10.7, phase:'Decay', rotationScore:29, contrarianScore:62, momentumScore:15, note:'Cheapness is not enough: relative momentum continues to deteriorate.', history:[['Jan',53],['Feb',49],['Mar',46],['Apr',42],['May',38],['Jun',35],['Jul',33],['Aug',31],['Sep',29]].map(([month,value])=>({month:String(month),value:Number(value)})) },
-  { ticker:'PDBC', theme:'Broad Commodities', valueScore:58, rsi14w:64, rsiTrend:'up', relativeRsi:67, relativeTrend:'up', rel6m:9.6, phase:'Momentum', rotationScore:78, contrarianScore:44, momentumScore:86, note:'Commodities are displaying confirmed relative strength, though valuation is less direct than for equity sectors.', history:[['Jan',46],['Feb',50],['Mar',56],['Apr',62],['May',68],['Jun',72],['Jul',76],['Aug',79],['Sep',78]].map(([month,value])=>({month:String(month),value:Number(value)})) },
-  { ticker:'KMLM', theme:'Managed Futures', valueScore:50, rsi14w:59, rsiTrend:'up', relativeRsi:63, relativeTrend:'up', rel6m:5.2, phase:'Momentum', rotationScore:70, contrarianScore:40, momentumScore:80, note:'Trend-following exposure is working and remains useful as a regime diversifier rather than a valuation trade.', history:[['Jan',48],['Feb',52],['Mar',57],['Apr',61],['May',66],['Jun',69],['Jul',72],['Aug',71],['Sep',70]].map(([month,value])=>({month:String(month),value:Number(value)})) },
-  { ticker:'UUP', theme:'U.S. Dollar', valueScore:46, rsi14w:48, rsiTrend:'flat', relativeRsi:49, relativeTrend:'flat', rel6m:0.5, phase:'Accumulation', rotationScore:55, contrarianScore:50, momentumScore:48, note:'The dollar is not sending a clean directional signal, so the model keeps it neutral.', history:[['Jan',52],['Feb',51],['Mar',50],['Apr',52],['May',53],['Jun',54],['Jul',55],['Aug',55],['Sep',55]].map(([month,value])=>({month:String(month),value:Number(value)})) },
-];
+export const dataMeta = marketDataMeta;

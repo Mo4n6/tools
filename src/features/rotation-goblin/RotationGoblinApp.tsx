@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { type EtfRow, type Phase, regimeCards, sampleEtfs } from './sampleData';
+import { dataMeta, type EtfRow, type Phase, regimeCards, sampleEtfs } from './sampleData';
 
 const phases: Phase[] = ['Capitulation','Accumulation','Rotation','Momentum','Crowded','Decay'];
 
@@ -82,7 +82,10 @@ const RotationGoblinApp = ():JSX.Element => {
             <h1 className="text-4xl font-black tracking-tight text-emerald-100 md:text-6xl">Rotation Goblin 👹</h1>
             <p className="mt-2 max-w-3xl text-emerald-300/75">Sniffing around the market for sectors the herd forgot about — then checking whether money has actually started rotating back in.</p>
           </div>
-          <div className="rounded-md border border-emerald-500/20 bg-black/20 px-3 py-2 text-xs text-emerald-300/60">MVP • illustrative sample data</div>
+          <div className="flex flex-col items-start gap-1 rounded-md border border-emerald-500/20 bg-black/20 px-3 py-2 text-xs text-emerald-300/60">
+            <span className={dataMeta.live ? 'text-emerald-300' : 'text-amber-300'}>{dataMeta.live ? 'LIVE TECHNICALS' : 'SEED TECHNICALS'} • {dataMeta.source}</span>
+            <span>{new Date(dataMeta.generatedAt).toLocaleString()}</span>
+          </div>
         </div>
       </section>
 
@@ -120,14 +123,17 @@ const RotationGoblinApp = ():JSX.Element => {
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[1050px] border-collapse text-sm">
             <thead><tr className="border-b border-emerald-500/20 text-left text-xs uppercase tracking-wider text-emerald-300/55">
-              {([['ticker','ETF'],['theme','Theme'],['valueScore','Value'],['rsi14w','RSI 14W'],['relativeRsi','Relative RSI'],['rel6m','6M vs SPY'],['phase','Phase'],['rotationScore','Rotation'],['contrarianScore','Contrarian'],['momentumScore','Momentum']] as [keyof EtfRow,string][]).map(([key,label]) => <th key={key} className="cursor-pointer px-3 py-3 hover:text-emerald-100" onClick={()=>sortBy(key)}>{label}{sortKey===key ? (sortDirection===-1?' ↓':' ↑') : ''}</th>)}
+              {([['ticker','ETF'],['theme','Theme'],['valueScore','Value*'],['rsi14w','RSI 14W'],['relativeRsi','Relative RSI'],['rel6m','6M vs SPY'],['phase','Phase'],['rotationScore','Rotation'],['contrarianScore','Contrarian'],['momentumScore','Momentum']] as [keyof EtfRow,string][]).map(([key,label]) => <th key={key} className="cursor-pointer px-3 py-3 hover:text-emerald-100" onClick={()=>sortBy(key)}>{label}{sortKey===key ? (sortDirection===-1?' ↓':' ↑') : ''}</th>)}
             </tr></thead>
             <tbody>{rows.map((row) => <tr key={row.ticker} onClick={()=>setSelectedTicker(row.ticker)} className={`cursor-pointer border-b border-emerald-500/10 transition hover:bg-emerald-500/5 ${selected?.ticker===row.ticker?'bg-emerald-500/5':''}`}>
               <td className="px-3 py-3 font-bold text-emerald-100">{row.ticker}</td><td className="px-3 py-3 text-emerald-300/75">{row.theme}</td><td className={`px-3 py-3 font-bold ${scoreClass(row.valueScore)}`}>{row.valueScore}</td><td className="px-3 py-3">{Math.round(row.rsi14w)} {trend(row.rsiTrend)}</td><td className="px-3 py-3">{Math.round(row.relativeRsi)} {trend(row.relativeTrend)}</td><td className={`px-3 py-3 font-semibold ${row.rel6m>=0?'text-emerald-300':'text-red-300'}`}>{pct(row.rel6m)}</td><td className="px-3 py-3"><span className={`rounded-full border px-2 py-1 text-xs font-bold ${phaseMeta[row.phase].color}`}>{row.phase}</span></td><td className={`px-3 py-3 font-bold ${scoreClass(row.rotationScore)}`}>{row.rotationScore}</td><td className={`px-3 py-3 font-bold ${scoreClass(row.contrarianScore)}`}>{row.contrarianScore}</td><td className={`px-3 py-3 font-bold ${scoreClass(row.momentumScore)}`}>{row.momentumScore}</td>
             </tr>)}</tbody>
           </table>
         </div>
-        <p className="mt-3 text-xs leading-relaxed text-emerald-300/45">Relative RSI is RSI calculated on the ETF/SPY ratio. That helps distinguish a sector that is genuinely gaining on the S&P 500 from one merely floating upward with the whole market.</p>
+        <div className="mt-3 space-y-1 text-xs leading-relaxed text-emerald-300/45">
+          <p>Relative RSI is RSI calculated on the ETF/SPY ratio. That helps distinguish a sector that is genuinely gaining on the S&amp;P 500 from one merely floating upward with the whole market.</p>
+          <p><strong className="text-amber-200/80">Value* is still a manual snapshot.</strong> Price, RSI, relative RSI, relative returns, drawdown, and trend state are automated by the market-data workflow.</p>
+        </div>
       </section>
 
       {selected ? <section className="rounded-xl border border-emerald-500/25 bg-[#07110a] p-5">
@@ -135,20 +141,20 @@ const RotationGoblinApp = ():JSX.Element => {
         <div className="mt-4 grid gap-4 xl:grid-cols-2">
           <div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {[['Value',selected.valueScore],['RSI 14W',Math.round(selected.rsi14w)],['Relative RSI',Math.round(selected.relativeRsi)],['6M vs SPY',pct(selected.rel6m)],['Rotation',selected.rotationScore],['Contrarian',selected.contrarianScore]].map(([label,value]) => <div key={label} className="rounded-lg border border-emerald-500/15 bg-black/20 p-3"><p className="text-xs text-emerald-300/45">{label}</p><p className="mt-1 text-xl font-black text-emerald-100">{value}</p></div>)}
+              {[['Price',selected.price === null ? '—' : `${selected.price.toFixed(2)}`],['Value*',selected.valueScore],['RSI 14W',Math.round(selected.rsi14w)],['Relative RSI',Math.round(selected.relativeRsi)],['1M vs SPY',pct(selected.rel1m)],['3M vs SPY',pct(selected.rel3m)],['6M vs SPY',pct(selected.rel6m)],['12M vs SPY',pct(selected.rel12m)],['Rotation',selected.rotationScore]].map(([label,value]) => <div key={label} className="rounded-lg border border-emerald-500/15 bg-black/20 p-3"><p className="text-xs text-emerald-300/45">{label}</p><p className="mt-1 text-xl font-black text-emerald-100">{value}</p></div>)}
             </div>
             <div className="mt-3 rounded-lg border border-emerald-500/20 bg-black/20 p-4 text-sm leading-relaxed text-emerald-100"><p className="font-black text-lime-300">{phaseMeta[selected.phase].action}</p><p className="mt-2">{selected.note}</p><p className="mt-3 text-emerald-300/60"><strong className="text-emerald-200">Why:</strong> {phaseMeta[selected.phase].description}</p></div>
           </div>
-          <div className="rounded-lg border border-emerald-500/15 bg-black/20 p-3"><div className="flex items-center justify-between gap-3"><strong className="text-sm text-emerald-100">Rotation score history</strong><span className="text-[11px] text-emerald-300/40">Illustrative MVP data</span></div><RotationChart row={selected} /></div>
+          <div className="rounded-lg border border-emerald-500/15 bg-black/20 p-3"><div className="flex items-center justify-between gap-3"><strong className="text-sm text-emerald-100">Rotation score history</strong><span className="text-[11px] text-emerald-300/40">{dataMeta.live ? 'persisted by daily workflow' : 'starts after first live refresh'}</span></div><RotationChart row={selected} /></div>
         </div>
       </section> : null}
 
       <section className="rounded-xl border border-emerald-500/25 bg-[#07110a] p-5">
         <p className="text-xs font-semibold tracking-[0.2em] text-lime-300">MVP METHODOLOGY</p><h2 className="mt-1 text-2xl font-bold text-emerald-100">What V1 actually scores</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {[['Value','Historical valuation percentile + relative discount/premium to SPY.'],['Momentum','14-week RSI, 3/6/12-month performance, and trend persistence.'],['Relative Strength','ETF/SPY ratio plus RSI calculated on that ratio.'],['Phase','Rules designed to surface the shift from hated → stabilizing → being repriced.']].map(([title,body]) => <div key={title} className="rounded-lg border border-emerald-500/15 bg-black/20 p-4"><strong className="text-emerald-100">{title}</strong><p className="mt-2 text-sm leading-relaxed text-emerald-300/55">{body}</p></div>)}
+          {[['Value','Manual valuation snapshot for now. This is deliberately labeled until a reliable fundamentals feed is wired in.'],['Momentum','14-week RSI, 3/6/12-month performance, and trend persistence.'],['Relative Strength','ETF/SPY ratio plus RSI calculated on that ratio.'],['Phase','Rules designed to surface the shift from hated → stabilizing → being repriced.']].map(([title,body]) => <div key={title} className="rounded-lg border border-emerald-500/15 bg-black/20 p-4"><strong className="text-emerald-100">{title}</strong><p className="mt-2 text-sm leading-relaxed text-emerald-300/55">{body}</p></div>)}
         </div>
-        <p className="mt-4 text-xs leading-relaxed text-emerald-300/45"><strong>Important:</strong> the current numbers are sample/illustrative values so the UX and phase logic can be tested first. The next iteration should replace them with a scheduled data pipeline and keep this UI unchanged.</p>
+        <p className="mt-4 text-xs leading-relaxed text-emerald-300/45"><strong>Data status:</strong> {dataMeta.note} The scheduled workflow runs after U.S. market hours on weekdays and preserves score history in the repo.</p>
       </section>
     </div>
   );
