@@ -17,6 +17,7 @@ export type EtfRow = {
   pbRelative: number | null;
   valuationProvider: string | null;
   valuationSourceUrl: string | null;
+  valuationProxyTicker: string | null;
   valuationHistorySamples: number;
   trackedHistoryPercentile: number | null;
   valuationNote: string;
@@ -164,6 +165,7 @@ export const sampleEtfs: EtfRow[] = assetMeta.flatMap((meta) => {
     pbRelative:valuation.pbRelative,
     valuationProvider:valuation.provider,
     valuationSourceUrl:valuation.sourceUrl,
+    valuationProxyTicker:valuation.proxyTicker ?? null,
     valuationHistorySamples:valuation.historySamples,
     trackedHistoryPercentile:valuation.trackedHistoryPercentile,
     valuationNote:valuation.note,
