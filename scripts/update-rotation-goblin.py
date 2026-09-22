@@ -31,7 +31,7 @@ from rotation_goblin_core import (
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "src/features/rotation-goblin/marketData.generated.ts"
 CANONICAL = ROOT / "src/features/rotation-goblin/technical-state-history.json"
-CHART_OUT = ROOT / "src/features/rotation-goblin/chartHistory.generated.ts"
+CHART_DIR = ROOT / "public/rotation-goblin/history"
 
 TICKERS = [
     "SPY", "XLE", "XLF", "XLB", "XLU", "XLV", "XLI", "XLK", "SMH", "IWM",
@@ -244,30 +244,28 @@ def chart_series_from_canonical(
     return result
 
 
-def write_chart_module(
+def write_chart_files(
     series: dict[str, list[dict[str, Any]]],
     generated_at: str,
     latest_session: str,
 ) -> None:
-    header = """export type HistoricalChartPoint = {
-  date: string;
-  rsi14w: number;
-  relativeRsi14w: number;
-  priceVs200dPct: number;
-  sma50Vs200Pct: number;
-};
-
-"""
+    CHART_DIR.mkdir(parents=True, exist_ok=True)
     meta = {
         "generatedAt": generated_at,
         "latestCanonicalSession": latest_session,
         "frequency": "completed-weeks-plus-latest-daily-session",
         "benchmark": "SPY",
+        "tickers": sorted(series),
     }
-    output = header
-    output += "export const chartHistoryMeta = " + json.dumps(meta, indent=2) + " as const;\n\n"
-    output += "export const historicalChartSeries: Record<string, HistoricalChartPoint[]> = " + json.dumps(series, separators=(",", ":")) + ";\n"
-    CHART_OUT.write_text(output, encoding="utf-8")
+    (CHART_DIR / "meta.json").write_text(
+        json.dumps(meta, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    for ticker, points in series.items():
+        (CHART_DIR / f"{ticker}.json").write_text(
+            json.dumps(points, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
 
 
 def pct_return(values: list[float], sessions: int) -> float:
@@ -417,11 +415,11 @@ export type GeneratedTechnicalRow = {
     OUT.write_text(output, encoding="utf-8")
 
     chart_series = chart_series_from_canonical(series, now_utc)
-    write_chart_module(chart_series, generated_at, latest_session.isoformat())
+    write_chart_files(chart_series, generated_at, latest_session.isoformat())
 
     print(f"Wrote {CANONICAL.relative_to(ROOT)}")
     print(f"Wrote {OUT.relative_to(ROOT)}")
-    print(f"Wrote {CHART_OUT.relative_to(ROOT)}")
+    print(f"Wrote {CHART_DIR.relative_to(ROOT)}/<ticker>.json")
 
 
 if __name__ == "__main__":

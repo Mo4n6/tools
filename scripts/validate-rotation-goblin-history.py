@@ -13,7 +13,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL = ROOT / "src/features/rotation-goblin/technical-state-history.json"
 OUTCOMES = ROOT / "src/features/rotation-goblin/research/technical-outcomes-10y.json"
-CHART = ROOT / "src/features/rotation-goblin/chartHistory.generated.ts"
+CHART_DIR = ROOT / "public/rotation-goblin/history"
 
 EXPECTED_TICKERS = {
     "XLE","XLF","XLB","XLU","XLV","XLI","XLK","SMH","IWM","IYR",
@@ -43,22 +43,22 @@ def finite_or_none(value: Any) -> bool:
     return value is None or (isinstance(value, (int, float)) and math.isfinite(float(value)))
 
 
-def parse_chart_series() -> dict[str, list[dict[str, Any]]]:
-    content = CHART.read_text(encoding="utf-8")
-    match = re.search(
-        r"export const historicalChartSeries: Record<string, HistoricalChartPoint\[\]> = (\{.*\});",
-        content,
-        flags=re.DOTALL,
-    )
-    if not match:
-        raise RuntimeError("Could not parse generated chart history")
-    return json.loads(match.group(1))
+def load_chart_series() -> dict[str, list[dict[str, Any]]]:
+    if not CHART_DIR.exists():
+        raise RuntimeError("Chart history directory is missing")
+    result: dict[str, list[dict[str, Any]]] = {}
+    for ticker in EXPECTED_TICKERS:
+        path = CHART_DIR / f"{ticker}.json"
+        if not path.exists():
+            raise RuntimeError(f"{ticker}: chart history file missing")
+        result[ticker] = json.loads(path.read_text(encoding="utf-8"))
+    return result
 
 
 def main() -> None:
     canonical = json.loads(CANONICAL.read_text(encoding="utf-8"))
     outcomes = json.loads(OUTCOMES.read_text(encoding="utf-8"))
-    chart = parse_chart_series()
+    chart = load_chart_series()
 
     metadata = canonical["metadata"]
     series = canonical["series"]

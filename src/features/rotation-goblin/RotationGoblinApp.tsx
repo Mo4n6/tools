@@ -4,8 +4,7 @@
 //
 // Not investment advice.
 
-import { useMemo, useState } from 'react';
-import { historicalChartSeries } from './chartHistory.generated';
+import { useEffect, useMemo, useState } from 'react';
 import { dataMeta, type EtfRow, type Phase, sampleEtfs } from './sampleData';
 
 const phases: Phase[] = ['Capitulation','Accumulation','Rotation','Momentum','Crowded','Decay'];
@@ -46,9 +45,38 @@ const businessDaysSince = (dateText:string|null):number => {
 const pct = (value:number):string => `${value > 0 ? '+' : ''}${value.toFixed(1)}%`;
 const trend = (value:EtfRow['rsiTrend']):string => value === 'up' ? '↑' : value === 'down' ? '↓' : '→';
 
+type HistoricalChartPoint = {
+  date: string;
+  rsi14w: number;
+  relativeRsi14w: number;
+  priceVs200dPct: number;
+  sma50Vs200Pct: number;
+};
+
 const RotationChart = ({ row }:{ row:EtfRow }):JSX.Element => {
   const [rangeYears,setRangeYears] = useState<1|3|5|10>(5);
-  const historical = historicalChartSeries[row.ticker] ?? [];
+  const [historical,setHistorical] = useState<HistoricalChartPoint[]>([]);
+  const [chartError,setChartError] = useState<string|null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setHistorical([]);
+    setChartError(null);
+    const base = import.meta.env.BASE_URL || '/';
+    const url = `${base}rotation-goblin/history/${encodeURIComponent(row.ticker)}.json`;
+    fetch(url,{ signal:controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json() as Promise<HistoricalChartPoint[]>;
+      })
+      .then((points) => setHistorical(points))
+      .catch((error:unknown) => {
+        if (controller.signal.aborted) return;
+        setChartError(error instanceof Error ? error.message : 'Unable to load chart history');
+      });
+    return () => controller.abort();
+  },[row.ticker]);
+
   const latestDate = historical.length ? new Date(`${historical[historical.length - 1].date}T00:00:00Z`) : new Date();
   const cutoff = new Date(latestDate);
   cutoff.setUTCFullYear(cutoff.getUTCFullYear() - rangeYears);
@@ -77,7 +105,7 @@ const RotationChart = ({ row }:{ row:EtfRow }):JSX.Element => {
           {([1,3,5,10] as const).map((years)=><button key={years} type="button" onClick={()=>setRangeYears(years)} className={`rounded border px-2 py-1 text-[10px] font-bold ${rangeYears===years?'border-lime-400/50 bg-lime-500/10 text-lime-200':'border-emerald-500/20 text-emerald-300/45 hover:text-emerald-100'}`}>{years}Y</button>)}
         </div>
       </div>
-      {visible.length > 1 ? (
+      {chartError ? <div className="flex h-60 items-center justify-center text-sm text-red-200/80">Historical chart unavailable: {chartError}</div> : visible.length > 1 ? (
         <svg viewBox={`0 0 ${width} ${height}`} className="h-60 w-full" role="img" aria-label={`${row.ticker} 14-week RSI and relative RSI history`}>
           {[30,50,70].map((level) => {
             const y = yFor(level);
@@ -89,7 +117,7 @@ const RotationChart = ({ row }:{ row:EtfRow }):JSX.Element => {
           <circle cx={xFor(visible.length-1)} cy={yFor(visible[visible.length-1].rsi14w)} r="3.5" fill="#bef264"><title>{`${visible[visible.length-1].date} • RSI ${visible[visible.length-1].rsi14w.toFixed(1)}`}</title></circle>
           <circle cx={xFor(visible.length-1)} cy={yFor(visible[visible.length-1].relativeRsi14w)} r="3.5" fill="#7dd3fc"><title>{`${visible[visible.length-1].date} • Relative RSI ${visible[visible.length-1].relativeRsi14w.toFixed(1)}`}</title></circle>
         </svg>
-      ) : <div className="flex h-60 items-center justify-center text-sm text-amber-200/70">Historical chart data is being generated.</div>}
+      ) : <div className="flex h-60 items-center justify-center text-sm text-amber-200/70">Loading historical chart…</div>}
       <p className="mt-1 text-[11px] text-emerald-300/40">{visible.length} observations shown • derived from the canonical technical-state history</p>
     </div>
   );
