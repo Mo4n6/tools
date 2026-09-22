@@ -6,6 +6,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { dataMeta, type EtfRow, type Phase, sampleEtfs } from './sampleData';
+import { PipelineStatusCard } from './PipelineStatusCard';
 
 const phases: Phase[] = ['Capitulation','Accumulation','Rotation','Momentum','Crowded','Decay'];
 
@@ -57,11 +58,13 @@ const RotationChart = ({ row }:{ row:EtfRow }):JSX.Element => {
   const [rangeYears,setRangeYears] = useState<1|3|5|10>(5);
   const [historical,setHistorical] = useState<HistoricalChartPoint[]>([]);
   const [chartError,setChartError] = useState<string|null>(null);
+  const [chartLoading,setChartLoading] = useState(true);
 
   useEffect(() => {
     const controller = new AbortController();
     setHistorical([]);
     setChartError(null);
+    setChartLoading(true);
     const base = import.meta.env.BASE_URL || '/';
     const url = `${base}rotation-goblin/history/${encodeURIComponent(row.ticker)}.json`;
     fetch(url,{ signal:controller.signal })
@@ -69,11 +72,18 @@ const RotationChart = ({ row }:{ row:EtfRow }):JSX.Element => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.json() as Promise<HistoricalChartPoint[]>;
       })
-      .then((points) => setHistorical(points))
+      .then((points) => {
+        if (controller.signal.aborted) return;
+        if (!Array.isArray(points) || points.some((point) => !point || typeof point.date !== 'string' || !Number.isFinite(Date.parse(point.date)) || !Number.isFinite(point.rsi14w) || !Number.isFinite(point.relativeRsi14w))) {
+          throw new Error('Invalid historical chart data');
+        }
+        setHistorical(points);
+      })
       .catch((error:unknown) => {
         if (controller.signal.aborted) return;
         setChartError(error instanceof Error ? error.message : 'Unable to load chart history');
-      });
+      })
+      .finally(() => { if (!controller.signal.aborted) setChartLoading(false); });
     return () => controller.abort();
   },[row.ticker]);
 
@@ -117,7 +127,7 @@ const RotationChart = ({ row }:{ row:EtfRow }):JSX.Element => {
           <circle cx={xFor(visible.length-1)} cy={yFor(visible[visible.length-1].rsi14w)} r="3.5" fill="#bef264"><title>{`${visible[visible.length-1].date} • RSI ${visible[visible.length-1].rsi14w.toFixed(1)}`}</title></circle>
           <circle cx={xFor(visible.length-1)} cy={yFor(visible[visible.length-1].relativeRsi14w)} r="3.5" fill="#7dd3fc"><title>{`${visible[visible.length-1].date} • Relative RSI ${visible[visible.length-1].relativeRsi14w.toFixed(1)}`}</title></circle>
         </svg>
-      ) : <div className="flex h-60 items-center justify-center text-sm text-amber-200/70">Loading historical chart…</div>}
+      ) : <div className="flex h-60 items-center justify-center text-sm text-amber-200/70">{chartLoading ? 'Loading historical chart…' : 'Not enough historical observations for this range.'}</div>}
       <p className="mt-1 text-[11px] text-emerald-300/40">{visible.length} observations shown • derived from the canonical technical-state history</p>
     </div>
   );
@@ -170,10 +180,13 @@ const RotationGoblinApp = ():JSX.Element => {
   return (
     <div className="mx-auto max-w-[1500px] space-y-5 text-zinc-100">
       <section className="overflow-hidden rounded-xl border border-emerald-500/30 bg-gradient-to-br from-[#07110a] via-[#09130d] to-[#050706] p-6 shadow-[0_0_30px_rgba(16,185,129,0.1)]">
-        <p className="text-xs font-semibold tracking-[0.24em] text-lime-300">SECTOR ROTATION RADAR</p>
-        <div className="mt-2">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold tracking-[0.24em] text-lime-300">SECTOR ROTATION RADAR</p>
           <h1 className="text-4xl font-black tracking-tight text-emerald-100 md:text-6xl">Rotation Goblin 👹</h1>
           <p className="mt-2 max-w-3xl text-emerald-300/75">Sniffing around the market for sectors the herd forgot about — then checking whether money has actually started rotating back in.</p>
+        </div>
+        <PipelineStatusCard healthy={dataHealthy} reason={freshnessReason} />
         </div>
       </section>
 

@@ -46,6 +46,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.ref || 'main' }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -72,6 +74,9 @@ jobs:
 
       - name: Verify generated data typechecks
         run: npm run typecheck
+
+      - name: Test dashboard status card
+        run: npx vitest run src/features/rotation-goblin/__tests__/status.test.tsx
 
       - name: Verify production build
         if: github.event_name == 'pull_request'

@@ -37,6 +37,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.ref || 'main' }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
