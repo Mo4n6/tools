@@ -9,7 +9,6 @@ on:
       - 'scripts/backfill-rotation-goblin-history.py'
       - 'scripts/rotation_goblin_core.py'
       - 'scripts/validate-rotation-goblin-history.py'
-      - 'src/features/rotation-goblin/chartHistory.generated.ts'
       - '.github/workflows/backfill-rotation-goblin-history.yml'
   push:
     branches: ['main']
@@ -17,7 +16,6 @@ on:
       - 'scripts/backfill-rotation-goblin-history.py'
       - 'scripts/rotation_goblin_core.py'
       - 'scripts/validate-rotation-goblin-history.py'
-      - 'src/features/rotation-goblin/chartHistory.generated.ts'
       - '.github/workflows/backfill-rotation-goblin-history.yml'
 
 permissions:
@@ -61,14 +59,14 @@ jobs:
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
-          if [ -z "$(git status --porcelain -- src/features/rotation-goblin/technical-state-history.json src/features/rotation-goblin/research/technical-outcomes-10y.json src/features/rotation-goblin/chartHistory.generated.ts)" ]; then
+          if [ -z "$(git status --porcelain -- src/features/rotation-goblin/technical-state-history.json src/features/rotation-goblin/research/technical-outcomes-10y.json public/rotation-goblin/history)" ]; then
             echo "Historical dataset unchanged."
             exit 0
           fi
 
           git config user.name "rotation-goblin-history-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add src/features/rotation-goblin/technical-state-history.json src/features/rotation-goblin/research/technical-outcomes-10y.json src/features/rotation-goblin/chartHistory.generated.ts
+          git add src/features/rotation-goblin/technical-state-history.json src/features/rotation-goblin/research/technical-outcomes-10y.json public/rotation-goblin/history
           git commit -m "Update Rotation Goblin canonical history"
           for attempt in 1 2 3 4; do
             git fetch origin main
