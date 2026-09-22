@@ -3,6 +3,7 @@ import MomoroReaderApp from './App';
 import BinauralBeatsApp from './features/binaural-beats/BinauralBeatsApp';
 import DeadLetterApp from './features/dead-letter/DeadLetterApp';
 import HuskApp from './features/husk/HuskApp';
+import RotationGoblinApp from './features/rotation-goblin/RotationGoblinApp';
 
 type ToolDefinition = {
   path: string;
@@ -49,6 +50,13 @@ const toolDefinitions: ToolDefinition[] = [
     label: 'Husk',
     description: 'Deobfuscate malicious PowerShell and extract IOCs, offline.',
     render: () => <HuskApp />,
+    available: true,
+  },
+  {
+    path: '/rotation-goblin',
+    label: 'Rotation Goblin',
+    description: 'Sector rotation, RSI, and relative-strength radar.',
+    render: () => <RotationGoblinApp />,
     available: true,
   },
   {
