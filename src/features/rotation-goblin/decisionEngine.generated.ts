@@ -19,7 +19,7 @@ export type DecisionEngineRow = {
 
 export const decisionEngineMeta = {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-22T19:59:02Z",
+  "generatedAt": "2026-09-22T20:00:10Z",
   "asOf": "2026-09-21",
   "benchmark": "SPY",
   "trainingStart": "2016-09-23",
@@ -41,14 +41,14 @@ export const decisionEngineMeta = {
     "trendStructure": 0.527021,
     "momentumState": 0.049826,
     "relativePerformance": 0.0,
-    "drawdownRecovery": 0.423153
+    "drawdownRecovery": 0.423154
   },
   "componentWeights": {
     "relativeMomentum": 0.09,
-    "trendStructure": 0.443915,
+    "trendStructure": 0.443914,
     "momentumState": 0.094878,
     "relativePerformance": 0.045,
-    "drawdownRecovery": 0.326207
+    "drawdownRecovery": 0.326208
   },
   "componentLabels": {
     "relativeMomentum": "Relative Momentum",
@@ -102,11 +102,11 @@ export const decisionEngineMeta = {
     "foldCount": 5,
     "componentSummary": {
       "relativeMomentum": {
-        "averageTopBottomMonthlyRelativeSpreadPct": -0.0427,
+        "averageTopBottomMonthlyRelativeSpreadPct": -0.0397,
         "positiveFoldShare": 0.4,
-        "averagePredictionTargetCorrelation": 0.0073,
+        "averagePredictionTargetCorrelation": 0.0074,
         "foldSpreads": [
-          0.296,
+          0.3114,
           -0.3584,
           -0.2893,
           0.201,
@@ -128,7 +128,7 @@ export const decisionEngineMeta = {
       "momentumState": {
         "averageTopBottomMonthlyRelativeSpreadPct": 0.2435,
         "positiveFoldShare": 0.4,
-        "averagePredictionTargetCorrelation": 0.014,
+        "averagePredictionTargetCorrelation": 0.0139,
         "foldSpreads": [
           -0.2989,
           0.9658,
@@ -170,16 +170,16 @@ export const decisionEngineRows: DecisionEngineRow[] = [
   {
     "ticker": "PDBC",
     "asOf": "2026-09-21",
-    "decisionScore": 89.7,
+    "decisionScore": 89.6,
     "signal": "STRONG",
     "componentScores": {
-      "relativeMomentum": 45.5,
+      "relativeMomentum": 44.8,
       "trendStructure": 94.0,
       "momentumState": 92.3,
       "relativePerformance": 79.3,
       "drawdownRecovery": 96.8
     },
-    "historicalEdgeMonthlyPct": 0.31
+    "historicalEdgeMonthlyPct": 0.309
   },
   {
     "ticker": "XLK",
@@ -196,6 +196,20 @@ export const decisionEngineRows: DecisionEngineRow[] = [
     "historicalEdgeMonthlyPct": 0.326
   },
   {
+    "ticker": "XLE",
+    "asOf": "2026-09-21",
+    "decisionScore": 82.3,
+    "signal": "STRONG",
+    "componentScores": {
+      "relativeMomentum": 82.8,
+      "trendStructure": 93.0,
+      "momentumState": 51.6,
+      "relativePerformance": 30.5,
+      "drawdownRecovery": 83.6
+    },
+    "historicalEdgeMonthlyPct": 0.183
+  },
+  {
     "ticker": "SMH",
     "asOf": "2026-09-21",
     "decisionScore": 82.2,
@@ -210,26 +224,12 @@ export const decisionEngineRows: DecisionEngineRow[] = [
     "historicalEdgeMonthlyPct": 0.254
   },
   {
-    "ticker": "XLE",
-    "asOf": "2026-09-21",
-    "decisionScore": 82.2,
-    "signal": "STRONG",
-    "componentScores": {
-      "relativeMomentum": 81.9,
-      "trendStructure": 93.0,
-      "momentumState": 51.6,
-      "relativePerformance": 30.5,
-      "drawdownRecovery": 83.6
-    },
-    "historicalEdgeMonthlyPct": 0.183
-  },
-  {
     "ticker": "EEM",
     "asOf": "2026-09-21",
-    "decisionScore": 74.1,
+    "decisionScore": 74.0,
     "signal": "CONSTRUCTIVE",
     "componentScores": {
-      "relativeMomentum": 38.5,
+      "relativeMomentum": 37.8,
       "trendStructure": 81.6,
       "momentumState": 64.2,
       "relativePerformance": 75.9,
@@ -240,10 +240,10 @@ export const decisionEngineRows: DecisionEngineRow[] = [
   {
     "ticker": "XLV",
     "asOf": "2026-09-21",
-    "decisionScore": 63.7,
+    "decisionScore": 63.8,
     "signal": "CONSTRUCTIVE",
     "componentScores": {
-      "relativeMomentum": 86.1,
+      "relativeMomentum": 87.0,
       "trendStructure": 61.5,
       "momentumState": 93.2,
       "relativePerformance": 47.4,
@@ -257,10 +257,10 @@ export const decisionEngineRows: DecisionEngineRow[] = [
     "decisionScore": 62.1,
     "signal": "CONSTRUCTIVE",
     "componentScores": {
-      "relativeMomentum": 74.6,
+      "relativeMomentum": 74.7,
       "trendStructure": 76.8,
       "momentumState": 61.0,
-      "relativePerformance": 37.2,
+      "relativePerformance": 36.6,
       "drawdownRecovery": 42.5
     },
     "historicalEdgeMonthlyPct": -0.164
@@ -285,10 +285,10 @@ export const decisionEngineRows: DecisionEngineRow[] = [
     "decisionScore": 58.7,
     "signal": "WATCH",
     "componentScores": {
-      "relativeMomentum": 75.2,
+      "relativeMomentum": 75.1,
       "trendStructure": 56.0,
       "momentumState": 91.2,
-      "relativePerformance": 6.8,
+      "relativePerformance": 6.9,
       "drawdownRecovery": 55.4
     },
     "historicalEdgeMonthlyPct": -0.223
@@ -299,7 +299,7 @@ export const decisionEngineRows: DecisionEngineRow[] = [
     "decisionScore": 57.3,
     "signal": "WATCH",
     "componentScores": {
-      "relativeMomentum": 79.1,
+      "relativeMomentum": 79.2,
       "trendStructure": 45.9,
       "momentumState": 36.0,
       "relativePerformance": 26.8,
@@ -310,10 +310,10 @@ export const decisionEngineRows: DecisionEngineRow[] = [
   {
     "ticker": "KMLM",
     "asOf": "2026-09-21",
-    "decisionScore": 54.6,
+    "decisionScore": 54.7,
     "signal": "WATCH",
     "componentScores": {
-      "relativeMomentum": 36.9,
+      "relativeMomentum": 37.5,
       "trendStructure": 59.8,
       "momentumState": 32.6,
       "relativePerformance": 71.1,
@@ -355,7 +355,7 @@ export const decisionEngineRows: DecisionEngineRow[] = [
     "decisionScore": 30.8,
     "signal": "WEAK",
     "componentScores": {
-      "relativeMomentum": 74.6,
+      "relativeMomentum": 74.7,
       "trendStructure": 20.2,
       "momentumState": 24.3,
       "relativePerformance": 19.8,
@@ -369,7 +369,7 @@ export const decisionEngineRows: DecisionEngineRow[] = [
     "decisionScore": 28.1,
     "signal": "AVOID",
     "componentScores": {
-      "relativeMomentum": 83.9,
+      "relativeMomentum": 84.0,
       "trendStructure": 22.9,
       "momentumState": 24.3,
       "relativePerformance": 12.0,
@@ -383,7 +383,7 @@ export const decisionEngineRows: DecisionEngineRow[] = [
     "decisionScore": 23.5,
     "signal": "AVOID",
     "componentScores": {
-      "relativeMomentum": 88.2,
+      "relativeMomentum": 88.1,
       "trendStructure": 25.4,
       "momentumState": 17.1,
       "relativePerformance": 34.2,
@@ -397,7 +397,7 @@ export const decisionEngineRows: DecisionEngineRow[] = [
     "decisionScore": 14.9,
     "signal": "AVOID",
     "componentScores": {
-      "relativeMomentum": 64.4,
+      "relativeMomentum": 64.5,
       "trendStructure": 0.6,
       "momentumState": 4.2,
       "relativePerformance": 28.0,
