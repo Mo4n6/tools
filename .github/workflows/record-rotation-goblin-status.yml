@@ -1,0 +1,113 @@
+name: Record Rotation Goblin pipeline status
+
+on:
+  workflow_run:
+    workflows:
+      - Update Rotation Goblin market data
+    types:
+      - completed
+
+permissions:
+  contents: write
+
+jobs:
+  record:
+    if: github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Record refresh result
+        env:
+          RG_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RG_RUN_ID: ${{ github.event.workflow_run.id }}
+          RG_RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RG_EVENT: ${{ github.event.workflow_run.event }}
+          RG_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RG_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RG_STARTED_AT: ${{ github.event.workflow_run.run_started_at }}
+          RG_COMPLETED_AT: ${{ github.event.workflow_run.updated_at }}
+        run: |
+          python - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("src/features/rotation-goblin/pipelineStatus.generated.ts")
+          conclusion = os.environ.get("RG_CONCLUSION") or "unknown"
+          run_id = int(os.environ["RG_RUN_ID"]) if os.environ.get("RG_RUN_ID") else None
+          run_url = os.environ.get("RG_RUN_URL") or None
+          event = os.environ.get("RG_EVENT") or "unknown"
+          head_sha = os.environ.get("RG_HEAD_SHA") or ""
+          branch = os.environ.get("RG_HEAD_BRANCH") or ""
+          started_at = os.environ.get("RG_STARTED_AT") or None
+          completed_at = os.environ.get("RG_COMPLETED_AT") or None
+          recorded_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+          def ts(value):
+              if value is None:
+                  return "null"
+              return json.dumps(value)
+
+          content = """export type PipelineConclusion =
+            | 'success'
+            | 'failure'
+            | 'cancelled'
+            | 'timed_out'
+            | 'action_required'
+            | 'neutral'
+            | 'skipped'
+            | 'unknown';
+
+          export const pipelineStatus = {
+            workflow: 'Update Rotation Goblin market data',
+            conclusion: %s as PipelineConclusion,
+            runId: %s as number | null,
+            runUrl: %s as string | null,
+            event: %s,
+            headSha: %s,
+            branch: %s,
+            startedAt: %s as string | null,
+            completedAt: %s as string | null,
+            recordedAt: %s,
+            note: %s,
+          } as const;
+          """ % (
+              ts(conclusion),
+              "null" if run_id is None else str(run_id),
+              ts(run_url),
+              ts(event),
+              ts(head_sha),
+              ts(branch),
+              ts(started_at),
+              ts(completed_at),
+              ts(recorded_at),
+              ts(
+                  "Latest market-data workflow completed successfully."
+                  if conclusion == "success"
+                  else "Latest market-data workflow did not complete successfully. Dashboard data remains the last committed snapshot and should be treated as stale until a successful refresh."
+              ),
+          )
+          path.write_text(content, encoding="utf-8")
+          PY
+
+      - name: Commit status marker
+        shell: bash
+        run: |
+          if git diff --quiet -- src/features/rotation-goblin/pipelineStatus.generated.ts; then
+            echo "Pipeline status is unchanged."
+            exit 0
+          fi
+
+          git config user.name "rotation-goblin-status-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/features/rotation-goblin/pipelineStatus.generated.ts
+          git commit -m "Record Rotation Goblin pipeline status"
+          git push

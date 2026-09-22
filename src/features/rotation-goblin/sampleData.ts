@@ -1,5 +1,6 @@
 import { benchmarkSnapshot, marketDataMeta, technicalRows } from './marketData.generated';
 import { valuationDataMeta, valuationRows, type ValuationStatus } from './valuationData.generated';
+import { pipelineStatus } from './pipelineStatus.generated';
 
 export type Phase = 'Capitulation' | 'Accumulation' | 'Rotation' | 'Momentum' | 'Crowded' | 'Decay';
 export type Trend = 'up' | 'flat' | 'down';
@@ -256,4 +257,5 @@ export const regimeCards = [
 export const dataMeta = {
   technicals: marketDataMeta,
   valuations: valuationDataMeta,
+  pipeline: pipelineStatus,
 };
