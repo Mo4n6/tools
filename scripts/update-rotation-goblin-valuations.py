@@ -23,6 +23,7 @@ import html
 import json
 import math
 import re
+import subprocess
 import time
 import urllib.request
 from pathlib import Path
@@ -119,20 +120,36 @@ NOT_APPLICABLE = {
 
 def http_get(url: str, attempts: int = 2) -> str:
     last_error: Exception | None = None
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
     for attempt in range(attempts):
         try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=15) as response:
-                return response.read().decode("utf-8", errors="replace")
+            completed = subprocess.run(
+                [
+                    "curl",
+                    "--fail",
+                    "--silent",
+                    "--show-error",
+                    "--location",
+                    "--connect-timeout",
+                    "5",
+                    "--max-time",
+                    "12",
+                    "--user-agent",
+                    USER_AGENT,
+                    "--header",
+                    "Accept: text/html,application/xhtml+xml",
+                    "--header",
+                    "Accept-Language: en-US,en;q=0.9",
+                    url,
+                ],
+                check=True,
+                capture_output=True,
+                timeout=15,
+            )
+            return completed.stdout.decode("utf-8", errors="replace")
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             if attempt + 1 < attempts:
-                time.sleep(2 ** attempt)
+                time.sleep(1)
     raise RuntimeError(f"Unable to fetch {url}: {last_error}")
 
 
