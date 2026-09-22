@@ -1,4 +1,4 @@
-export type ValuationStatus = 'automated' | 'not_applicable' | 'error';
+export type ValuationStatus = 'automated' | 'stale' | 'not_applicable' | 'error';
 
 export type GeneratedValuationRow = {
   ticker: string;
