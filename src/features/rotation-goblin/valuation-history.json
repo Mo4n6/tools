@@ -1,12 +1,90 @@
 {
-  "XLE": [{"date":"2026-09-22","crossScore":93.05,"primaryRelative":0.6044,"pbRelative":0.5048}],
-  "XLF": [{"date":"2026-09-22","crossScore":83.44,"primaryRelative":0.7547,"pbRelative":0.4626}],
-  "XLB": [{"date":"2026-09-22","crossScore":77.45,"primaryRelative":0.8226,"pbRelative":0.5451}],
-  "XLU": [{"date":"2026-09-22","crossScore":77.58,"primaryRelative":0.8449,"pbRelative":0.4165}],
-  "XLV": [{"date":"2026-09-22","crossScore":57.58,"primaryRelative":0.9402,"pbRelative":0.8944}],
-  "XLI": [{"date":"2026-09-22","crossScore":29.64,"primaryRelative":1.1665,"pbRelative":1.2726}],
-  "IWM": [{"date":"2026-09-22","crossScore":84.57,"primaryRelative":0.7374,"pbRelative":0.4050}],
-  "IYR": [{"date":"2026-09-22","crossScore":71.09,"primaryRelative":0.9448,"pbRelative":0.4779}],
-  "EFA": [{"date":"2026-09-22","crossScore":82.34,"primaryRelative":0.7716,"pbRelative":0.4549}],
-  "EEM": [{"date":"2026-09-22","crossScore":81.22,"primaryRelative":0.7801,"pbRelative":0.5163}]
+  "XLE": [
+    {
+      "date": "2026-09-22",
+      "crossScore": 67.5,
+      "primaryRelative": 1.0,
+      "pbRelative": 0.4
+    }
+  ],
+  "XLF": [
+    {
+      "date": "2026-09-22",
+      "crossScore": 67.5,
+      "primaryRelative": 1.0,
+      "pbRelative": 0.4
+    }
+  ],
+  "XLB": [
+    {
+      "date": "2026-09-22",
+      "crossScore": 67.5,
+      "primaryRelative": 1.0,
+      "pbRelative": 0.4
+    }
+  ],
+  "XLU": [
+    {
+      "date": "2026-09-22",
+      "crossScore": 67.5,
+      "primaryRelative": 1.0,
+      "pbRelative": 0.4
+    }
+  ],
+  "XLV": [
+    {
+      "date": "2026-09-22",
+      "crossScore": 57.0,
+      "primaryRelative": 1.0,
+      "pbRelative": 0.8
+    }
+  ],
+  "XLI": [
+    {
+      "date": "2026-09-22",
+      "crossScore": 43.0,
+      "primaryRelative": 1.0,
+      "pbRelative": 1.2
+    }
+  ],
+  "IWM": [
+    {
+      "date": "2026-09-22",
+      "crossScore": 85.7,
+      "primaryRelative": 0.72,
+      "pbRelative": 0.4
+    }
+  ],
+  "IYR": [
+    {
+      "date": "2026-09-22",
+      "crossScore": 74.72,
+      "primaryRelative": 0.8889,
+      "pbRelative": 0.4
+    }
+  ],
+  "EFA": [
+    {
+      "date": "2026-09-22",
+      "crossScore": 83.1,
+      "primaryRelative": 0.76,
+      "pbRelative": 0.4
+    }
+  ],
+  "EEM": [
+    {
+      "date": "2026-09-22",
+      "crossScore": 83.1,
+      "primaryRelative": 0.76,
+      "pbRelative": 0.4
+    }
+  ],
+  "XLK": [
+    {
+      "date": "2026-09-22",
+      "crossScore": 32.5,
+      "primaryRelative": 1.0,
+      "pbRelative": 2.4
+    }
+  ]
 }
