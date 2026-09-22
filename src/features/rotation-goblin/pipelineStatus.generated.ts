@@ -10,14 +10,14 @@ export type PipelineConclusion =
 
 export const pipelineStatus = {
   workflow: 'Update Rotation Goblin market data',
-  conclusion: "failure" as PipelineConclusion,
-  runId: 35767074662 as number | null,
-  runUrl: "https://github.com/Mo4n6/tools/actions/runs/35767074662" as string | null,
+  conclusion: "success" as PipelineConclusion,
+  runId: 35768851772 as number | null,
+  runUrl: "https://github.com/Mo4n6/tools/actions/runs/35768851772" as string | null,
   event: "push",
-  headSha: "9382be8bacee11de661113fd1be9f3c8bca73176",
+  headSha: "40de34382103bb9ef2e2d669f78ddecfe733d3f3",
   branch: "main",
-  startedAt: "2026-09-22T18:25:40Z" as string | null,
-  completedAt: "2026-09-22T18:26:05Z" as string | null,
-  recordedAt: "2026-09-22T18:26:14Z",
-  note: "Latest market-data workflow did not complete successfully. Dashboard data remains the last committed snapshot and should be treated as stale until a successful refresh.",
+  startedAt: "2026-09-22T18:41:33Z" as string | null,
+  completedAt: "2026-09-22T18:42:22Z" as string | null,
+  recordedAt: "2026-09-22T18:42:30Z",
+  note: "Latest market-data workflow completed successfully.",
 } as const;
