@@ -167,15 +167,26 @@ Entries are produced by the helper rather than written by hand, because a wrong
 digest is indistinguishable from an attack:
 
 ```
-npm run glass:preset -- https://huggingface.co/<repo>/resolve/<revision>/model.onnx
+npm run glass:preset -- <url> [expected-sha256] [<url> [expected-sha256] ...]
 ```
 
-It downloads the candidate, hashes it, loads the graph, runs a 64x64 RGB tile
-through it to confirm it really is a super-resolution model, reports the factor it
-inferred, and prints a record to paste into `WEIGHTS_PRESETS` in
-`src/features/glass/presets.ts`. Use a revision URL, not a branch: a branch moves,
-and a digest pinned to a moving target eventually fails for no reason anyone
-remembers.
+It downloads each candidate, hashes it, loads the graph, runs a 64x64 RGB tile
+through it to confirm it really is a super-resolution model that can be tiled,
+reports the factor it inferred, and prints records to paste into
+`WEIGHTS_PRESETS` in `src/features/glass/presets.ts`.
+
+A bare 64-character hex argument is read as the expected digest of the URL before
+it. It is checked rather than trusted: if a digest transcribed from a model card
+disagrees with the bytes, the script prints both and emits no record for that
+model. Shipping a mismatched digest fails in the browser as though the download
+had been tampered with, which is an alarming way to find a typo.
+
+A model with a fixed input size is the other thing the probe catches. It loads
+and hashes perfectly well, and then cannot be tiled, which is the one thing Glass
+needs from it.
+
+Use a revision URL, not a branch: a branch moves, and a digest pinned to a moving
+target eventually fails for no reason anyone remembers.
 
 `WEIGHTS_PRESETS` ships empty. With no entries the UI says so and points at the
 helper, rather than offering a download that may 404 or may not be the model it
