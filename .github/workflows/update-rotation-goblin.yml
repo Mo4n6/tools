@@ -1,5 +1,6 @@
 name: Update Rotation Goblin market data
 # Fail closed on bad generated data.
+# Pages deployment is dispatched after the pipeline status marker is committed.
 
 on:
   schedule:
