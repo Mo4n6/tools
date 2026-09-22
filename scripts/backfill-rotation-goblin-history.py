@@ -30,6 +30,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "src/features/rotation-goblin/research/technical-history-10y.json"
+CHART_OUT = ROOT / "src/features/rotation-goblin/chartHistory.generated.ts"
 
 TICKERS = [
     "XLE", "XLF", "XLB", "XLU", "XLV", "XLI", "XLK", "SMH", "IWM",
@@ -133,6 +134,32 @@ def remove_incomplete_session(
     return rows
 
 
+def trim_incomplete_week(
+    rows: list[tuple[dt.date, float]],
+    now_utc: dt.datetime,
+) -> list[tuple[dt.date, float]]:
+    """Historical research rows should contain only completed market weeks.
+
+    During Mon-Thu, or before Friday's close, remove the current ISO week.
+    The live dashboard appends the current completed daily-session reading
+    separately so users still see the latest state without contaminating the
+    historical weekly series.
+    """
+    if not rows:
+        return rows
+    weekday = now_utc.weekday()  # Mon=0 ... Sun=6
+    week_is_complete = weekday >= 5 or (weekday == 4 and now_utc.hour >= 22)
+    if week_is_complete:
+        return rows
+
+    current_iso = now_utc.date().isocalendar()
+    current_key = (current_iso.year, current_iso.week)
+    return [
+        row for row in rows
+        if (row[0].isocalendar().year, row[0].isocalendar().week) != current_key
+    ]
+
+
 def fetch_history(
     ticker: str,
     start: dt.date,
@@ -140,10 +167,12 @@ def fetch_history(
     now_utc: dt.datetime,
 ) -> tuple[list[tuple[dt.date, float]], str]:
     yahoo = remove_incomplete_session(fetch_yahoo(ticker, start, end), now_utc)
+    yahoo = trim_incomplete_week(yahoo, now_utc)
     provider = "Yahoo adjusted close"
 
     try:
         stooq = remove_incomplete_session(fetch_stooq(ticker, start, end), now_utc)
+        stooq = trim_incomplete_week(stooq, now_utc)
         yahoo_map = dict(yahoo)
         stooq_map = dict(stooq)
         common = sorted(set(yahoo_map) & set(stooq_map))
@@ -517,7 +546,41 @@ def main() -> None:
     validate_history_payload(payload)
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, separators=(",", ":")) + "\n", encoding="utf-8")
+
+    chart_series = {
+        ticker: [
+            {
+                "date": row["date"],
+                "rsi14w": row["features"]["rsi14w"],
+                "relativeRsi14w": row["features"]["relativeRsi14w"],
+                "priceVs200dPct": row["features"]["priceVs200dPct"],
+                "sma50Vs200Pct": row["features"]["sma50Vs200Pct"],
+            }
+            for row in rows
+        ]
+        for ticker, rows in series.items()
+    }
+    chart_meta = {
+        "generatedAt": payload["metadata"]["generatedAt"],
+        "latestCompletedWeekSession": payload["metadata"]["latestCompletedSession"],
+        "frequency": "weekly-completed-weeks-only",
+        "benchmark": BENCHMARK,
+    }
+    chart_ts = """export type HistoricalChartPoint = {
+  date: string;
+  rsi14w: number;
+  relativeRsi14w: number;
+  priceVs200dPct: number;
+  sma50Vs200Pct: number;
+};
+
+"""
+    chart_ts += "export const chartHistoryMeta = " + json.dumps(chart_meta, indent=2) + " as const;\n\n"
+    chart_ts += "export const historicalChartSeries: Record<string, HistoricalChartPoint[]> = " + json.dumps(chart_series, separators=(",", ":")) + ";\n"
+    CHART_OUT.write_text(chart_ts, encoding="utf-8")
+
     print(f"Wrote {OUT.relative_to(ROOT)} ({OUT.stat().st_size / 1024:.1f} KiB)")
+    print(f"Wrote {CHART_OUT.relative_to(ROOT)} ({CHART_OUT.stat().st_size / 1024:.1f} KiB)")
 
 
 if __name__ == "__main__":
