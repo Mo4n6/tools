@@ -19,7 +19,7 @@ export type DecisionEngineRow = {
 
 export const decisionEngineMeta = {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-22T20:00:10Z",
+  "generatedAt": "2026-09-22T20:01:04Z",
   "asOf": "2026-09-21",
   "benchmark": "SPY",
   "trainingStart": "2016-09-23",
