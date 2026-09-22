@@ -21,6 +21,7 @@ from __future__ import annotations
 import concurrent.futures
 import datetime as dt
 import html
+import io
 import json
 import math
 import re
@@ -38,6 +39,7 @@ HISTORY = ROOT / "src/features/rotation-goblin/valuation-history.json"
 USER_AGENT = "RotationGoblin/1.0 (+https://github.com/Mo4n6/tools)"
 MIN_HISTORY_SAMPLES = 20
 MAX_HISTORY_SAMPLES = 1500
+MAX_STALE_DAYS = 10
 
 SSGA_BASE = "https://www.ssga.com/us/en/intermediary/etfs/"
 ISHARES_BASE = "https://www.ishares.com/us/products/"
@@ -93,8 +95,12 @@ FUND_CONFIG: dict[str, dict[str, Any]] = {
     },
     "SMH": {
         "provider": "VanEck",
-        "url": "https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/overview/",
-        "kind": "vaneck",
+        "urls": [
+            "https://www.vaneck.com/us/en/investments/semiconductor-etf-smh-fact-sheet.pdf",
+            "https://www.vaneck.com/offshore/en/investments/semiconductor-etf-smh-fact-sheet.pdf",
+        ],
+        "url": "https://www.vaneck.com/us/en/investments/semiconductor-etf-smh-fact-sheet.pdf",
+        "kind": "vaneck_pdf",
         "primaryMetric": "pe",
     },
     "IWM": {
@@ -192,64 +198,90 @@ def plain_text(raw_html: str) -> str:
     parser = TextExtractor()
     parser.feed(raw_html)
     parser.close()
-    return re.sub(r"\\s+", " ", " ".join(parser.parts)).strip()
+    return re.sub(r"\s+", " ", " ".join(parser.parts)).strip()
 
 
-def number_after(text: str, label: str, max_chars: int = 1000) -> float | None:
+def decimal_after(text: str, label: str, max_chars: int = 1200) -> float | None:
+    """Return the first decimal-formatted value after a metric label.
+
+    Sponsor pages repeat labels and explanatory text. Requiring a decimal token
+    deliberately rejects footnote digits such as the "1" in "FY1" instead of
+    guessing. If a sponsor changes its markup/format, the parser fails closed.
+    """
     match = re.search(re.escape(label), text, flags=re.IGNORECASE)
     if not match:
         return None
     window = text[match.end():match.end() + max_chars]
-
-    # Sponsor pages sprinkle integer footnote markers around metric labels.
-    # Valuation multiples are published with decimal precision, so prefer the
-    # first decimal token and only fall back to an integer if necessary.
-    decimal = re.search(r"(?<![0-9])([0-9]{1,3}\\.[0-9]+)(?![0-9])", window)
-    number = decimal or re.search(r"(?<![0-9])([0-9]{1,3})(?![0-9])", window)
-    if not number:
+    decimal = re.search(r"(?<![0-9])([0-9]{1,4}\.[0-9]+)(?![0-9])", window)
+    if not decimal:
         return None
-    value = float(number.group(1))
+    value = float(decimal.group(1))
     return value if math.isfinite(value) and value > 0 else None
 
 
-def number_in_section(text: str, section: str, label: str, max_chars: int = 2500) -> float | None:
+def decimal_in_section(text: str, section: str, label: str, max_chars: int = 3000) -> float | None:
     section_match = re.search(re.escape(section), text, flags=re.IGNORECASE)
     if not section_match:
         return None
     section_text = text[section_match.end():section_match.end() + max_chars]
-    return number_after(section_text, label, max_chars=max_chars)
+    return decimal_after(section_text, label, max_chars=max_chars)
 
 
 def parse_ssga(raw_html: str) -> dict[str, float | None]:
     text = plain_text(raw_html)
     return {
-        "pb": number_in_section(text, "Fund Characteristics", "Price/Book Ratio"),
-        "forward_pe": number_in_section(text, "Fund Characteristics", "Price/Earnings Ratio FY1"),
-        "pe": number_in_section(text, "Index Characteristics", "Price/Earnings"),
-        "pcf": number_in_section(text, "Index Characteristics", "Price/Cash Flow"),
+        "pb": decimal_in_section(text, "Fund Characteristics", "Price/Book Ratio"),
+        "forward_pe": decimal_in_section(text, "Fund Characteristics", "Price/Earnings Ratio FY1"),
+        "pe": decimal_in_section(text, "Index Characteristics", "Price/Earnings"),
+        "pcf": decimal_in_section(text, "Index Characteristics", "Price/Cash Flow"),
     }
 
 
 def parse_ishares(raw_html: str) -> dict[str, float | None]:
     text = plain_text(raw_html)
     return {
-        "pb": number_in_section(text, "Portfolio Characteristics", "P/B Ratio"),
-        "pe": number_in_section(text, "Portfolio Characteristics", "P/E Ratio"),
-        "pcf": number_in_section(text, "Portfolio Characteristics", "P/CF Ratio"),
+        "pb": decimal_in_section(text, "Portfolio Characteristics", "P/B Ratio"),
+        "pe": decimal_in_section(text, "Portfolio Characteristics", "P/E Ratio"),
+        "pcf": decimal_in_section(text, "Portfolio Characteristics", "P/CF Ratio"),
         "forward_pe": None,
     }
 
 
-def parse_vaneck(raw_html: str) -> dict[str, float | None]:
-    text = plain_text(raw_html)
-    # VanEck exposes fund-data labels in the page body; unlike State Street,
-    # the metrics are trailing P/E and P/B rather than a forward FY1 multiple.
+def parse_vaneck_pdf(raw_pdf: bytes) -> dict[str, float | None]:
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:  # pragma: no cover - guarded by CI workflow
+        raise RuntimeError("pypdf is required for the VanEck factsheet parser") from exc
+
+    reader = PdfReader(io.BytesIO(raw_pdf))
+    text = " ".join((page.extract_text() or "") for page in reader.pages[:2])
+    text = re.sub(r"\s+", " ", text)
     return {
-        "pb": number_after(text, "Price/Book Ratio", max_chars=1800),
-        "pe": number_after(text, "Price/Earnings Ratio", max_chars=1800),
+        "pb": decimal_after(text, "Price/Book Ratio", max_chars=1000),
+        "pe": decimal_after(text, "Price/Earnings Ratio", max_chars=1000),
         "pcf": None,
         "forward_pe": None,
     }
+
+
+METRIC_RANGES: dict[str, tuple[float, float]] = {
+    "pb": (0.2, 30.0),
+    "forward_pe": (5.0, 100.0),
+    "pe": (5.0, 150.0),
+    "pcf": (3.0, 100.0),
+}
+
+
+def validate_parsed_metrics(ticker: str, values: dict[str, float | None], required: list[str]) -> None:
+    for metric in required:
+        value = values.get(metric)
+        if value is None:
+            raise RuntimeError(f"{ticker}: missing required valuation metric {metric}")
+        low, high = METRIC_RANGES[metric]
+        if not (low <= value <= high):
+            raise RuntimeError(
+                f"{ticker}: implausible {metric}={value}; expected {low} <= value <= {high}"
+            )
 
 
 def clamp(value: float) -> float:
