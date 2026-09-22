@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TECH = ROOT / "src/features/rotation-goblin/marketData.generated.ts"
 VALUATION = ROOT / "src/features/rotation-goblin/valuationData.generated.ts"
 CANONICAL = ROOT / "src/features/rotation-goblin/technical-state-history.json"
-CHART = ROOT / "src/features/rotation-goblin/chartHistory.generated.ts"
+CHART_DIR = ROOT / "public/rotation-goblin/history"
 VALUATION_HISTORY = ROOT / "src/features/rotation-goblin/valuation-history.json"
 
 ALLOW_PARTIAL = os.environ.get("RG_ALLOW_PARTIAL_CANONICAL") == "1"
@@ -127,10 +127,11 @@ def validate_canonical(technical_rows: list[dict[str, Any]], benchmark: dict[str
             expected_min = 2200 if ticker != "KMLM" else 900
             require(len(states) >= expected_min, f"{ticker}: canonical history is not fully seeded ({len(states)} rows)")
 
-    chart_series = extract_json_assignment(CHART, "historicalChartSeries")
-    require(set(chart_series) == EXPECTED_TECH, "Chart ticker universe mismatch")
+    require(CHART_DIR.exists(), "Chart history directory is missing")
     for ticker in EXPECTED_TECH:
-        points = chart_series[ticker]
+        path = CHART_DIR / f"{ticker}.json"
+        require(path.exists(), f"{ticker}: chart history file missing")
+        points = json.loads(path.read_text(encoding="utf-8"))
         require(points, f"{ticker}: chart history empty")
         require(points[-1]["date"] == benchmark["asOf"], f"{ticker}: chart does not include canonical latest session")
         require(nearly_equal(points[-1]["rsi14w"], by_ticker[ticker]["rsi14w"], 0.011), f"{ticker}: chart/live RSI mismatch")
