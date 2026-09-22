@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  CANVAS_BUDGET_BYTES,
+  CANVAS_BYTES_PER_PIXEL,
+  MAX_CANVAS_PIXELS,
   accumulateTile,
   axisWindow,
+  canvasBytes,
   createCanvas,
   edgeRamp,
   planTiles,
@@ -112,5 +116,33 @@ describe('canvas composition', () => {
     const canvas = createCanvas(4, 4);
     const out = resolveCanvas(canvas);
     expect([...out.data].every((byte) => byte === 0)).toBe(true);
+  });
+});
+
+describe('accumulator budget', () => {
+  it('counts four colour sums and a weight per output pixel', () => {
+    expect(CANVAS_BYTES_PER_PIXEL).toBe(20);
+    expect(canvasBytes(1000, 1000)).toBe(20_000_000);
+    expect(MAX_CANVAS_PIXELS).toBe(Math.floor(CANVAS_BUDGET_BYTES / CANVAS_BYTES_PER_PIXEL));
+  });
+
+  it('allocates an ordinary output', () => {
+    expect(createCanvas(64, 64).weight.length).toBe(4096);
+  });
+
+  it('refuses an output past the budget before allocating anything', () => {
+    // A 12-megapixel photo through a 4x model: 192 megapixels of accumulator,
+    // which is 3.8 GB. This is the case that took the tab down.
+    expect(() => createCanvas(16_000, 12_000)).toThrow(RangeError);
+    expect(() => createCanvas(16_000, 12_000)).toThrow(/3\.6 GB|GB budget/);
+  });
+
+  it('states the factor to lower rather than just failing', () => {
+    expect(() => createCanvas(16_000, 12_000)).toThrow(/smaller source image or a model with a lower factor/);
+  });
+
+  it('admits the largest size inside the budget', () => {
+    expect(MAX_CANVAS_PIXELS).toBeGreaterThan(50_000_000);
+    expect(() => createCanvas(MAX_CANVAS_PIXELS + 1, 1)).toThrow(RangeError);
   });
 });

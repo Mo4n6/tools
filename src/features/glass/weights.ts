@@ -13,7 +13,9 @@
 const CACHE_NAME = 'glass-weights-v1';
 
 export type WeightsSource =
-  | { readonly kind: 'url'; readonly url: string }
+  /** `sha256` is present for a preset and absent for a URL the operator typed:
+   *  we can only verify bytes against a digest somebody recorded in advance. */
+  | { readonly kind: 'url'; readonly url: string; readonly sha256?: string }
   | { readonly kind: 'file'; readonly file: File };
 
 export interface DownloadProgress {
@@ -95,6 +97,29 @@ export async function readWithProgress(
   return merged.buffer;
 }
 
+/** Lowercase hex SHA-256, the form the presets record. */
+export async function digestHex(buffer: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Refuses bytes that are not the ones the preset recorded.
+ *
+ * This is the whole point of pinning a digest, so it fails closed: an ONNX
+ * graph is executable, and handing unexpected weights to the runtime because
+ * the check was inconvenient would be worse than having no check at all.
+ */
+export async function verifyDigest(buffer: ArrayBuffer, expected: string): Promise<void> {
+  const actual = await digestHex(buffer);
+  if (actual !== expected.toLowerCase()) {
+    throw new Error(
+      `Weights do not match the expected digest. Expected ${expected.slice(0, 16)}…, ` +
+        `got ${actual.slice(0, 16)}…. The file at that URL is not the one this preset pins.`,
+    );
+  }
+}
+
 async function openCache(): Promise<Cache | null> {
   // Absent in workers without the Cache API, and in some privacy modes. A
   // missing cache costs a re-download, not correctness.
@@ -123,6 +148,10 @@ export async function loadWeights(
   const cached = await cache?.match(source.url).catch(() => undefined);
   if (cached) {
     const buffer = await cached.arrayBuffer();
+    // Checked again on the way out of the cache. Storage is per-origin and
+    // survives reloads, so a bad entry that was verified once would otherwise
+    // be trusted forever.
+    if (source.sha256) await verifyDigest(buffer, source.sha256);
     onProgress?.({ received: buffer.byteLength, total: buffer.byteLength });
     return buffer;
   }
@@ -138,6 +167,10 @@ export async function loadWeights(
   const buffer = response.body
     ? await readWithProgress(response.body, Number.isFinite(total) ? total : null, onProgress)
     : await response.arrayBuffer();
+
+  // Before the cache, so a file that fails the check is never stored, and
+  // before the return, so it never reaches the runtime.
+  if (source.sha256) await verifyDigest(buffer, source.sha256);
 
   // Best effort: a quota refusal must not lose the download we already have.
   await cache?.put(source.url, new Response(buffer.slice(0))).catch(() => undefined);

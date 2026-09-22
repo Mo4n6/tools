@@ -28,7 +28,8 @@
     "check:kokoro-chunk": "node scripts/check-kokoro-chunk.mjs",
     "check:deployed-assets": "node scripts/check-deployed-assets.mjs",
     "check:ort-asset": "node scripts/check-ort-asset.mjs",
-    "licenses": "node scripts/license-tally.mjs"
+    "licenses": "node scripts/license-tally.mjs",
+    "glass:preset": "node scripts/glass-preset.mjs"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
