@@ -1,3 +1,9 @@
+// Rotation Goblin — sector rotation, RSI and relative-strength radar.
+// SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
+// Required Notice: Copyright 2026 Mo4n6 (https://github.com/Mo4n6/tools)
+//
+// Not investment advice.
+
 import { useMemo, useState } from 'react';
 import { dataMeta, type EtfRow, type Phase, sampleEtfs } from './sampleData';
 

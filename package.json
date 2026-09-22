@@ -2,6 +2,12 @@
   "name": "tts-reader-mvp",
   "private": true,
   "version": "0.1.0",
+  "license": "PolyForm-Small-Business-1.0.0",
+  "author": "Mo4n6",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mo4n6/tools.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -21,7 +27,8 @@
     "check:browser-imports": "node scripts/check-browser-imports.mjs",
     "check:kokoro-chunk": "node scripts/check-kokoro-chunk.mjs",
     "check:deployed-assets": "node scripts/check-deployed-assets.mjs",
-    "check:ort-asset": "node scripts/check-ort-asset.mjs"
+    "check:ort-asset": "node scripts/check-ort-asset.mjs",
+    "licenses": "node scripts/license-tally.mjs"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",

@@ -1,5 +1,6 @@
-// Husk - PowerShell deobfuscation and IOC extraction, fully browser-local.
-// Copyright (c) 2026 Mo (@Mo4n6) - https://github.com/Mo4n6/tools
+// Husk — PowerShell deobfuscation and IOC extraction, fully browser-local.
+// SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
+// Required Notice: Copyright 2026 Mo4n6 (https://github.com/Mo4n6/tools)
 //
 // Host stubs: the constructs Husk recognises but will never perform.
 //

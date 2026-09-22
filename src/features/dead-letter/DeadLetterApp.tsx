@@ -1,3 +1,9 @@
+// Dead Letter — offline .eml / .msg viewer and header analysis.
+// SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
+// Required Notice: Copyright 2026 Mo4n6 (https://github.com/Mo4n6/tools)
+//
+// The standalone page it serves carries the same notice; see public/dead-letter.html.
+
 import { useMemo } from 'react';
 import { DEAD_LETTER_FILE_NAME, buildDeadLetterUrl } from './deadLetterAsset';
 

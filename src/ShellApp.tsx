@@ -1,3 +1,9 @@
+// Mo4n6 Tools — the shell that hosts every tool on one page.
+// SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
+// Required Notice: Copyright 2026 Mo4n6 (https://github.com/Mo4n6/tools)
+//
+// Bundled third-party code keeps its own licence; see THIRD-PARTY.md.
+
 import { useEffect, useMemo, useState } from 'react';
 import MomoroReaderApp from './App';
 import BinauralBeatsApp from './features/binaural-beats/BinauralBeatsApp';
