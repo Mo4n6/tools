@@ -1,17 +1,21 @@
 name: Build Rotation Goblin historical backfill
 
 on:
+  schedule:
+    - cron: '45 23 * * 5'
   workflow_dispatch:
   pull_request:
     paths:
       - 'scripts/backfill-rotation-goblin-history.py'
       - 'scripts/validate-rotation-goblin-history.py'
+      - 'src/features/rotation-goblin/chartHistory.generated.ts'
       - '.github/workflows/backfill-rotation-goblin-history.yml'
   push:
     branches: ['main']
     paths:
       - 'scripts/backfill-rotation-goblin-history.py'
       - 'scripts/validate-rotation-goblin-history.py'
+      - 'src/features/rotation-goblin/chartHistory.generated.ts'
       - '.github/workflows/backfill-rotation-goblin-history.yml'
 
 permissions:
@@ -38,17 +42,29 @@ jobs:
       - name: Validate historical dataset
         run: python scripts/validate-rotation-goblin-history.py
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck chart against generated history
+        run: npm run typecheck
+
       - name: Commit historical dataset
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
-          if [ -z "$(git status --porcelain -- src/features/rotation-goblin/research/technical-history-10y.json)" ]; then
+          if [ -z "$(git status --porcelain -- src/features/rotation-goblin/research/technical-history-10y.json src/features/rotation-goblin/chartHistory.generated.ts)" ]; then
             echo "Historical dataset unchanged."
             exit 0
           fi
 
           git config user.name "rotation-goblin-history-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add src/features/rotation-goblin/research/technical-history-10y.json
+          git add src/features/rotation-goblin/research/technical-history-10y.json src/features/rotation-goblin/chartHistory.generated.ts
           git commit -m "Update Rotation Goblin historical backfill"
           git push
