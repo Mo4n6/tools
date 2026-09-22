@@ -53,6 +53,9 @@ jobs:
       - name: Validate Kokoro chunk output
         run: npm run check:kokoro-chunk
 
+      - name: Validate ONNX Runtime asset output
+        run: npm run check:ort-asset
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:

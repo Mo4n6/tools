@@ -19,7 +19,8 @@
     "husk:oracle": "pwsh -NoProfile -File scripts/husk/generate-lexer-oracle.ps1",
     "check:browser-imports": "node scripts/check-browser-imports.mjs",
     "check:kokoro-chunk": "node scripts/check-kokoro-chunk.mjs",
-    "check:deployed-assets": "node scripts/check-deployed-assets.mjs"
+    "check:deployed-assets": "node scripts/check-deployed-assets.mjs",
+    "check:ort-asset": "node scripts/check-ort-asset.mjs"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
@@ -28,6 +29,7 @@
     "jsdom": "^26.1.0",
     "kokoro-js": "^1.2.1",
     "lamejs": "^1.2.1",
+    "onnxruntime-web": "1.22.0-dev.20250409-89f8206ba4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "remark": "^15.0.1",

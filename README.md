@@ -15,6 +15,7 @@ Workflow runs:
 - Tools shell route (hash-safe): `https://<host>/<base-path>#/momoro-reader`
 - Binaural Beats route: `https://<host>/<base-path>#/binaural-beats` or `https://<host>/tools/binaural-beats`
 - Dead Letter route: `https://<host>/<base-path>#/dead-letter` or `https://<host>/tools/dead-letter`
+- Glass route: `https://<host>/<base-path>#/glass` or `https://<host>/tools/glass`
 - Dead Letter standalone file (also what the tab's download button serves): `https://<host>/<base-path>dead-letter.html`
 - Pretty route (with SPA 404 redirect fallback): `https://<host>/tools/momoro-reader?b64=<base64text>`
 
@@ -65,6 +66,52 @@ In GitHub repository settings:
 
 1. Go to **Settings → Pages**.
 2. Under **Build and deployment**, set **Source** to **GitHub Actions**.
+
+## Glass (image upscaling)
+
+Glass enlarges an image without sending it anywhere. It offers three methods
+rather than choosing one, because they do different things and only the person
+looking at the image knows which is wanted:
+
+| Tier | Method | Best for | Download |
+| --- | --- | --- | --- |
+| Lanczos | Windowed-sinc resampling, in a worker | Sharp photographs that just need to be larger | None |
+| Pixel | Scale2x edge extension, in a worker | Sprites, screenshots, logos, line art | None |
+| Neural | A tiled ONNX super-resolution model | Soft photographs where invented detail beats none | The weights you supply |
+
+The first two tiers need nothing but the page. Lanczos reconstructs the signal
+the source pixels encode; Pixel never blends, so the output palette is exactly
+the input palette.
+
+### Neural tier weights
+
+Glass ships no model and contacts no inference service. Point it at an ONNX
+super-resolution network — an ESRGAN-family export is the usual choice — either
+as a local file or as an https URL, and it is cached in the browser after the
+first load. The scale factor is read back from the model's own output shape
+rather than configured, so a 2x and a 4x network both work unchanged.
+
+A build can supply a default URL with `VITE_GLASS_WEIGHTS_URL`. Left unset,
+which is the default, the tier fetches nothing until the operator chooses a
+model.
+
+### What the neural tier adds to the deployment
+
+The ONNX Runtime WebAssembly binary (~21 MB, served compressed) is emitted into
+`dist/assets` by the build and referenced by hash, so it deploys with the site
+instead of being fetched from a CDN at runtime. `npm run check:ort-asset` fails
+the build if that binary stops being emitted or stops being referenced.
+
+Note that this is a different posture from the Kokoro TTS path, which loads its
+runtime from jsDelivr at run time.
+
+Execution uses WebGPU where the browser offers an adapter and single-threaded
+WASM otherwise. Threads are not requested: they need `SharedArrayBuffer`, which
+needs cross-origin isolation headers, which GitHub Pages cannot send.
+
+Large images are tiled with overlapping context and recombined through a
+raised-cosine window, so a photograph does not have to fit in GPU memory all at
+once and the tile seams do not show.
 
 ## Static single-file tools
 
