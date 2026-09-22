@@ -67,7 +67,7 @@ def main() -> None:
     require(metadata["schemaVersion"] == 2, "Canonical schema version must be 2")
     require(metadata["benchmark"] == "SPY", "Canonical benchmark must be SPY")
     require(metadata["frequency"] == "daily-completed-market-sessions", "Canonical frequency must be daily")
-    require("future" not in metadata["featurePolicy"].lower(), "Feature policy should not permit future labels")
+    require(metadata["featurePolicy"] == "point-in-time price-derived inputs only; no valuation or future labels", "Canonical feature policy mismatch")
     require(set(series) == EXPECTED_TICKERS, "Canonical ticker universe mismatch")
     require(set(outcome_series) == EXPECTED_TICKERS, "Outcome ticker universe mismatch")
     require(set(chart) == EXPECTED_TICKERS, "Chart ticker universe mismatch")
