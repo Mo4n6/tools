@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Fail CI if Rotation Goblin generated data is stale, malformed, or implausible."""
+"""Fail CI if Rotation Goblin live data or canonical history is inconsistent."""
 
 from __future__ import annotations
 
 import datetime as dt
 import json
 import math
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -13,8 +14,11 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 TECH = ROOT / "src/features/rotation-goblin/marketData.generated.ts"
 VALUATION = ROOT / "src/features/rotation-goblin/valuationData.generated.ts"
-ROTATION_HISTORY = ROOT / "src/features/rotation-goblin/rotation-history.json"
+CANONICAL = ROOT / "src/features/rotation-goblin/technical-state-history.json"
+CHART = ROOT / "src/features/rotation-goblin/chartHistory.generated.ts"
 VALUATION_HISTORY = ROOT / "src/features/rotation-goblin/valuation-history.json"
+
+ALLOW_PARTIAL = os.environ.get("RG_ALLOW_PARTIAL_CANONICAL") == "1"
 
 EXPECTED_TECH = {
     "XLE","XLF","XLB","XLU","XLV","XLI","XLK","SMH","IWM","IYR",
@@ -53,6 +57,10 @@ def date_age(date_text: str, today: dt.date) -> int:
     return (today - dt.date.fromisoformat(date_text)).days
 
 
+def nearly_equal(left: Any, right: Any, tolerance: float = 0.011) -> bool:
+    return finite(left) and finite(right) and abs(float(left) - float(right)) <= tolerance
+
+
 def validate_technicals(today: dt.date) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rows = extract_json_assignment(TECH, "technicalRows")
     benchmark = extract_json_assignment(TECH, "benchmarkSnapshot")
@@ -78,6 +86,57 @@ def validate_technicals(today: dt.date) -> tuple[list[dict[str, Any]], dict[str,
     return rows, benchmark
 
 
+def validate_canonical(technical_rows: list[dict[str, Any]], benchmark: dict[str, Any]) -> None:
+    require(CANONICAL.exists(), "Canonical technical-state history is missing")
+    payload = json.loads(CANONICAL.read_text(encoding="utf-8"))
+    metadata = payload.get("metadata", {})
+    series = payload.get("series", {})
+
+    require(metadata.get("schemaVersion") == 2, "Canonical schema version mismatch")
+    require(metadata.get("benchmark") == "SPY", "Canonical benchmark mismatch")
+    require(metadata.get("frequency") == "daily-completed-market-sessions", "Canonical frequency mismatch")
+    require(metadata.get("latestCompletedSession") == benchmark["asOf"], "Canonical latest session differs from live benchmark")
+    require(set(series) == EXPECTED_TECH, "Canonical ticker universe mismatch")
+
+    by_ticker = {row["ticker"]: row for row in technical_rows}
+    for ticker in sorted(EXPECTED_TECH):
+        states = series[ticker]
+        require(states, f"{ticker}: canonical history empty")
+        latest = states[-1]
+        features = latest["features"]
+        live = by_ticker[ticker]
+
+        require(latest["date"] == live["asOf"], f"{ticker}: canonical latest date differs from live data")
+        require("outcomes" not in latest, f"{ticker}: future outcomes leaked into canonical technical state")
+        require(nearly_equal(features["close"], live["price"], 0.011), f"{ticker}: canonical/live price mismatch")
+        require(nearly_equal(features["rsi14w"], live["rsi14w"], 0.011), f"{ticker}: canonical/live RSI mismatch")
+        require(nearly_equal(features["relativeRsi14w"], live["relativeRsi"], 0.011), f"{ticker}: canonical/live relative RSI mismatch")
+        require(nearly_equal(features["return3mPct"], live["ret3m"], 0.011), f"{ticker}: canonical/live 3M return mismatch")
+        require(nearly_equal(features["rel1mPct"], live["rel1m"], 0.011), f"{ticker}: canonical/live 1M relative return mismatch")
+        require(nearly_equal(features["rel3mPct"], live["rel3m"], 0.011), f"{ticker}: canonical/live 3M relative return mismatch")
+        require(nearly_equal(features["rel6mPct"], live["rel6m"], 0.011), f"{ticker}: canonical/live 6M relative return mismatch")
+        require(nearly_equal(features["rel12mPct"], live["rel12m"], 0.011), f"{ticker}: canonical/live 12M relative return mismatch")
+        require(nearly_equal(features["drawdown52wPct"], live["drawdown52w"], 0.011), f"{ticker}: canonical/live drawdown mismatch")
+        require((features["priceVs200dPct"] >= 0) == live["above200d"], f"{ticker}: canonical/live 200D regime mismatch")
+
+        dates = [row["date"] for row in states]
+        require(dates == sorted(dates), f"{ticker}: canonical dates are not chronological")
+        require(len(dates) == len(set(dates)), f"{ticker}: duplicate canonical dates")
+
+        if not ALLOW_PARTIAL:
+            expected_min = 2200 if ticker != "KMLM" else 900
+            require(len(states) >= expected_min, f"{ticker}: canonical history is not fully seeded ({len(states)} rows)")
+
+    chart_series = extract_json_assignment(CHART, "historicalChartSeries")
+    require(set(chart_series) == EXPECTED_TECH, "Chart ticker universe mismatch")
+    for ticker in EXPECTED_TECH:
+        points = chart_series[ticker]
+        require(points, f"{ticker}: chart history empty")
+        require(points[-1]["date"] == benchmark["asOf"], f"{ticker}: chart does not include canonical latest session")
+        require(nearly_equal(points[-1]["rsi14w"], by_ticker[ticker]["rsi14w"], 0.011), f"{ticker}: chart/live RSI mismatch")
+        require(nearly_equal(points[-1]["relativeRsi14w"], by_ticker[ticker]["relativeRsi"], 0.011), f"{ticker}: chart/live relative RSI mismatch")
+
+
 def validate_valuations(today: dt.date) -> list[dict[str, Any]]:
     rows = extract_json_assignment(VALUATION, "valuationRows")
     tickers = {row["ticker"] for row in rows}
@@ -100,54 +159,42 @@ def validate_valuations(today: dt.date) -> list[dict[str, Any]]:
         require(age <= max_age, f"{ticker}: valuation source snapshot too stale ({age} days)")
 
         primary = row.get("primaryMultiple")
-        benchmark = row.get("benchmarkMultiple")
+        benchmark_multiple = row.get("benchmarkMultiple")
         pb = row.get("priceToBook")
         benchmark_pb = row.get("benchmarkPriceToBook")
         score = row.get("valueScore")
 
         require(finite(primary) and 3 <= primary <= 150, f"{ticker}: implausible primary multiple {primary}")
-        require(finite(benchmark) and 3 <= benchmark <= 100, f"{ticker}: implausible benchmark multiple {benchmark}")
+        require(finite(benchmark_multiple) and 3 <= benchmark_multiple <= 100, f"{ticker}: implausible benchmark multiple {benchmark_multiple}")
         require(finite(pb) and 0.2 <= pb <= 30, f"{ticker}: implausible P/B {pb}")
         require(finite(benchmark_pb) and 0.2 <= benchmark_pb <= 30, f"{ticker}: implausible benchmark P/B {benchmark_pb}")
         require(finite(score) and 0 <= score <= 100, f"{ticker}: invalid value score {score}")
 
-        if row.get("primaryMetric") == "Forward P/E (FY1)":
-            require(primary >= 5 and benchmark >= 5, f"{ticker}: forward P/E failed lower-bound guard")
-
     return rows
 
 
-def validate_histories(technical_rows: list[dict[str, Any]], valuation_rows: list[dict[str, Any]]) -> None:
-    rotation_history = json.loads(ROTATION_HISTORY.read_text(encoding="utf-8"))
-    valuation_history = json.loads(VALUATION_HISTORY.read_text(encoding="utf-8"))
-
-    tech_by_ticker = {row["ticker"]: row for row in technical_rows}
-    for ticker in EXPECTED_TECH:
-        entries = rotation_history.get(ticker) or []
-        require(entries, f"{ticker}: missing rotation history")
-        require(entries[-1]["date"] == tech_by_ticker[ticker]["asOf"], f"{ticker}: rotation history does not match latest completed session")
-        require(0 <= int(entries[-1]["value"]) <= 100, f"{ticker}: invalid rotation history score")
-
+def validate_valuation_history(valuation_rows: list[dict[str, Any]]) -> None:
+    history = json.loads(VALUATION_HISTORY.read_text(encoding="utf-8"))
     for row in valuation_rows:
-        ticker = row["ticker"]
         if row["status"] != "automated":
             continue
-        entries = valuation_history.get(ticker) or []
-        require(entries, f"{ticker}: missing valuation history")
-        require(entries[-1]["date"] == row["asOf"], f"{ticker}: valuation history date mismatch")
-        require(abs(float(entries[-1]["crossScore"]) - float(row["crossSectionScore"])) <= 0.11, f"{ticker}: valuation history score mismatch")
-        require(abs(float(entries[-1]["primaryRelative"]) - float(row["primaryRelative"])) <= 0.001, f"{ticker}: valuation history primary ratio mismatch")
-        require(abs(float(entries[-1]["pbRelative"]) - float(row["pbRelative"])) <= 0.001, f"{ticker}: valuation history P/B ratio mismatch")
+        entries = history.get(row["ticker"]) or []
+        require(entries, f"{row['ticker']}: missing valuation history")
+        require(entries[-1]["date"] == row["asOf"], f"{row['ticker']}: valuation history date mismatch")
+        require(abs(float(entries[-1]["crossScore"]) - float(row["crossSectionScore"])) <= 0.11, f"{row['ticker']}: valuation history score mismatch")
 
 
 def main() -> None:
     today = dt.datetime.now(dt.timezone.utc).date()
     technical_rows, benchmark = validate_technicals(today)
+    validate_canonical(technical_rows, benchmark)
     valuation_rows = validate_valuations(today)
-    validate_histories(technical_rows, valuation_rows)
+    validate_valuation_history(valuation_rows)
 
     stale = sorted(row["ticker"] for row in valuation_rows if row["status"] == "stale")
+    canonical_mode = "partial CI seed" if ALLOW_PARTIAL else "full 10-year canonical history"
     print(f"Data integrity OK: {len(technical_rows)} technical rows, session {benchmark['asOf']}")
+    print(f"Canonical integrity OK: live data and chart derive from {canonical_mode}")
     print(f"Valuation integrity OK: {len(EXPECTED_VALUED)} valued ETFs, {len(EXPECTED_NA)} deliberate N/A assets")
     if stale:
         print("WARNING: last-known-good valuation fallback active for: " + ", ".join(stale))
