@@ -9,6 +9,7 @@ P/E-based "value" score.
 Sources:
 - State Street fund pages for SPY and Select Sector SPDR ETFs
 - iShares fund pages for IWM, IYR, EFA, and EEM
+- VanEck's official SMH fund page for semiconductor valuation
 
 The script stores a daily valuation snapshot so the dashboard can build its own
 tracked-history percentile over time. Until enough observations accumulate,
@@ -83,6 +84,18 @@ FUND_CONFIG: dict[str, dict[str, Any]] = {
         "url": SSGA_BASE + "state-street-industrial-select-sector-spdr-etf-xli",
         "kind": "ssga",
         "primaryMetric": "forward_pe",
+    },
+    "XLK": {
+        "provider": "State Street",
+        "url": SSGA_BASE + "state-street-technology-select-sector-spdr-etf-xlk",
+        "kind": "ssga",
+        "primaryMetric": "forward_pe",
+    },
+    "SMH": {
+        "provider": "VanEck",
+        "url": "https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/overview/",
+        "kind": "vaneck",
+        "primaryMetric": "pe",
     },
     "IWM": {
         "provider": "iShares",
@@ -227,6 +240,18 @@ def parse_ishares(raw_html: str) -> dict[str, float | None]:
     }
 
 
+def parse_vaneck(raw_html: str) -> dict[str, float | None]:
+    text = plain_text(raw_html)
+    # VanEck exposes fund-data labels in the page body; unlike State Street,
+    # the metrics are trailing P/E and P/B rather than a forward FY1 multiple.
+    return {
+        "pb": number_after(text, "Price/Book Ratio", max_chars=1800),
+        "pe": number_after(text, "Price/Earnings Ratio", max_chars=1800),
+        "pcf": None,
+        "forward_pe": None,
+    }
+
+
 def clamp(value: float) -> float:
     return max(0.0, min(100.0, value))
 
@@ -307,7 +332,14 @@ def main() -> None:
             debug_at = debug_text.find(debug_label)
             if debug_at >= 0:
                 print(f"DEBUG_{ticker}: {debug_text[debug_at:debug_at + 900]}")
-        values = parse_ssga(raw) if config["kind"] == "ssga" else parse_ishares(raw)
+        if config["kind"] == "ssga":
+            values = parse_ssga(raw)
+        elif config["kind"] == "ishares":
+            values = parse_ishares(raw)
+        elif config["kind"] == "vaneck":
+            values = parse_vaneck(raw)
+        else:
+            raise RuntimeError(f"Unsupported valuation source kind: {config['kind']}")
         return ticker, values
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
@@ -475,7 +507,7 @@ def main() -> None:
         "minimumHistorySamples": MIN_HISTORY_SAMPLES,
         "automatedTickers": sorted(ticker for ticker in FUND_CONFIG if ticker != "SPY"),
         "notApplicableTickers": sorted(NOT_APPLICABLE),
-        "providers": ["State Street", "iShares"],
+        "providers": ["State Street", "iShares", "VanEck"],
         "note": (
             "Equity/real-estate valuation is automated from official sponsor pages. "
             "Non-earnings assets are intentionally not assigned P/E-style value scores."
