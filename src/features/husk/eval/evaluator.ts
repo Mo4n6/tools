@@ -350,7 +350,11 @@ function truthy(value: PSValue): boolean {
   return true;
 }
 
-function toNumber(value: PSValue): number | undefined {
+function toNumber(value: PSValue | undefined): number | undefined {
+  // Members index their argument list directly, so a call written with fewer
+  // arguments than the member expects arrives here as undefined. Real samples
+  // do that; crashing on it loses the whole analysis.
+  if (value === undefined) return undefined;
   if (value.kind === 'number') return value.value;
   if (value.kind === 'bool') return value.value ? 1 : 0;
   if (value.kind === 'null') return 0;

@@ -22,6 +22,14 @@ interface Rule {
   readonly normalize?: (value: string) => string;
 }
 
+/**
+ * Cap on matches taken from one rule in one layer. A megabyte of hex yields
+ * tens of thousands of shapes that pass a pattern; past a few hundred they
+ * are noise, and collecting them all is what turns a large sample into a
+ * multi-second analysis.
+ */
+const MAX_MATCHES_PER_RULE = 500;
+
 /** Hosts that appear in obfuscation scaffolding rather than as targets. */
 const BENIGN_HOSTS = new Set([
   'microsoft.com',
@@ -43,7 +51,11 @@ const RULES: readonly Rule[] = [
     // separator: Emotet packs its fallback URLs as
     // http://a.test/x/@http://b.test/y/@... and matching greedily across
     // those swallows the whole chain as one indicator.
-    pattern: /\b(?:https?|ftp):\/\/(?:(?!@(?:https?|ftp):\/\/)[^\s"'`<>()\]},;|])+/gi,
+    // The length bound is load-bearing, not cosmetic: a negative lookahead
+    // inside an unbounded quantifier recurses per character, and real samples
+    // contain megabytes of unbroken base64 that the character class matches.
+    // That overflowed the stack. 2048 is far beyond any real URL.
+    pattern: /\b(?:https?|ftp):\/\/(?:(?!@(?:https?|ftp):\/\/)[^\s"'`<>()\]},;|]){1,2048}/gi,
     confidence: 'high',
     // A trailing '@' is a list separator, not a path character. Real samples
     // end their chain with one:
@@ -149,9 +161,15 @@ const RULES: readonly Rule[] = [
   },
   {
     kind: 'base64-blob',
-    // Long enough to be a payload rather than an encoded word.
-    pattern: /\b[A-Za-z0-9+/]{120,}={0,2}/g,
+    // Long enough to be a payload rather than an encoded word, and bounded
+    // above because it must be: an open-ended {120,} over the multi-megabyte
+    // unbroken base64 in real samples overflows V8's regex stack outright.
+    pattern: /\b[A-Za-z0-9+/]{120,4096}={0,2}/g,
     confidence: 'medium',
+    // Only the head is reported; the blob itself is in the layer view. This
+    // also makes chunks of one blob collapse to a single indicator instead of
+    // one per 4096 characters.
+    normalize: (v) => v.slice(0, 96),
   },
 ];
 
@@ -213,6 +231,7 @@ function contextAround(source: string, offset: number, span = 60): string {
  */
 export function extractIocs(trace: Trace): IocReport {
   const found = new Map<string, Ioc>();
+  const truncated = new Set<IocKind>();
 
   const add = (ioc: Ioc): void => {
     const key = `${ioc.kind}\u0000${ioc.value.toLowerCase()}`;
@@ -242,7 +261,16 @@ export function extractIocs(trace: Trace): IocReport {
 
     for (const rule of RULES) {
       rule.pattern.lastIndex = 0;
+      // A single rule must not be able to flood the report from one huge
+      // layer. Distinct indicators past this point are noise, not signal.
+      let matches = 0;
       for (const match of layer.source.matchAll(rule.pattern)) {
+        if ((matches += 1) > MAX_MATCHES_PER_RULE) {
+          // Truncation must be stated. A report silently cut at 500 looks
+          // identical to a sample that genuinely had 500 indicators.
+          truncated.add(rule.kind);
+          break;
+        }
         const raw = match[0];
         const value = rule.normalize ? rule.normalize(raw) : raw;
         if (value.length === 0) continue;
@@ -289,6 +317,16 @@ export function extractIocs(trace: Trace): IocReport {
     }
   }
 
+  for (const kind of truncated) {
+    trace.gaps.report({
+      kind: 'GAP',
+      signature: `${kind} indicators truncated`,
+      argTypes: [],
+      provenance: { layer: 0 },
+      detail: `more than ${MAX_MATCHES_PER_RULE} matches in one layer; the list is incomplete`,
+    });
+  }
+
   const indicators = [...found.values()].sort(compareIocs);
   const byKind = new Map<IocKind, Ioc[]>();
   for (const ioc of indicators) {
@@ -297,7 +335,7 @@ export function extractIocs(trace: Trace): IocReport {
     else byKind.set(ioc.kind, [ioc]);
   }
 
-  return { indicators, byKind, hasEmbeddedPe };
+  return { indicators, byKind, hasEmbeddedPe, truncatedKinds: [...truncated] };
 }
 
 /** High confidence first, then earliest layer, then value for stability. */

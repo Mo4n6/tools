@@ -76,6 +76,8 @@ const server = await createServer({ server: { middlewareMode: true }, appType: '
 const { analyze } = await server.ssrLoadModule('/src/features/husk/analyze.ts');
 
 const stats = { crashed: 0, falseClean: 0, withIocs: 0, unwrapped: 0, slow: 0, totalMs: 0 };
+const perDir = new Map();
+let done = 0;
 const gapCounts = new Map();
 const crashes = [];
 const falseCleans = [];
@@ -88,6 +90,15 @@ for (const path of chosen) {
     continue;
   }
 
+  const dir = path.split('/').slice(-2, -1)[0] ?? 'root';
+  const bucket = perDir.get(dir) ?? { n: 0, crashed: 0, falseClean: 0, withIocs: 0, ms: 0 };
+  perDir.set(dir, bucket);
+  bucket.n += 1;
+
+  if ((done += 1) % 250 === 0) {
+    process.stderr.write(`  ...${done}/${chosen.length}\n`);
+  }
+
   const started = Date.now();
   try {
     const result = await analyze(source, {
@@ -97,9 +108,13 @@ for (const path of chosen) {
     const elapsed = Date.now() - started;
     stats.totalMs += elapsed;
 
+    bucket.ms += elapsed;
     if (elapsed > opts.timeBudgetMs * 0.75) stats.slow += 1;
     if (result.layers.length > 1) stats.unwrapped += 1;
-    if (result.iocs.indicators.length > 0) stats.withIocs += 1;
+    if (result.iocs.indicators.length > 0) {
+      stats.withIocs += 1;
+      bucket.withIocs += 1;
+    }
 
     // The outcome that matters most: analysed nothing, recognised nothing,
     // and said so was fine. See docs/husk-spec.md section 2.
@@ -107,6 +122,7 @@ for (const path of chosen) {
       result.layers.length === 1 && result.iocs.indicators.length === 0 && result.events.length === 0;
     if (nothingFound && result.reliable) {
       stats.falseClean += 1;
+      bucket.falseClean += 1;
       falseCleans.push(path);
     }
 
@@ -116,6 +132,7 @@ for (const path of chosen) {
     }
   } catch (error) {
     stats.crashed += 1;
+    bucket.crashed += 1;
     crashes.push(`${path}: ${error.message}`);
   }
 }
@@ -129,6 +146,16 @@ console.log(`  near time budget:   ${stats.slow}`);
 console.log(`  unwrapped a layer:  ${stats.unwrapped} (${pct(stats.unwrapped)})`);
 console.log(`  yielded indicators: ${stats.withIocs} (${pct(stats.withIocs)})`);
 console.log(`  FALSE CLEANS:       ${stats.falseClean}`);
+
+console.log('\nper directory:');
+for (const [dir, b] of [...perDir].sort()) {
+  const iocPct = ((b.withIocs / b.n) * 100).toFixed(0);
+  console.log(
+    `  ${dir.padEnd(22)} ${String(b.n).padStart(5)} files  ` +
+      `crash ${String(b.crashed).padStart(3)}  falseClean ${String(b.falseClean).padStart(4)}  ` +
+      `iocs ${iocPct.padStart(3)}%  avg ${(b.ms / Math.max(1, b.n)).toFixed(0)}ms`,
+  );
+}
 
 if (gapCounts.size > 0) {
   console.log('\ntop unimplemented constructs:');

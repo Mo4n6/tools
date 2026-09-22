@@ -44,4 +44,9 @@ export interface IocReport {
   readonly byKind: ReadonlyMap<IocKind, readonly Ioc[]>;
   /** True when a PE header was found in a decoded blob. */
   readonly hasEmbeddedPe: boolean;
+  /**
+   * Kinds whose list was cut short because one layer produced too many
+   * matches. Named so a truncated report cannot be read as a complete one.
+   */
+  readonly truncatedKinds: readonly IocKind[];
 }

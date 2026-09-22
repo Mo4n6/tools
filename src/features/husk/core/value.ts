@@ -8,7 +8,7 @@
 // beyond that becomes a PSObject stub with a recorded gap rather than a
 // silently wrong value.
 
-import { CLEAN, type Taint, union } from './taint';
+import { CLEAN, type Taint, union, unionAll } from './taint';
 
 export type PSValue =
   | PSNull
@@ -70,6 +70,11 @@ export interface PSObject extends Tainted {
   readonly members: ReadonlyMap<string, PSValue>;
 }
 
+/** Lazily yields each value's taint, so no spread is built. */
+function* iterTaints(values: Iterable<PSValue>): Generator<Taint> {
+  for (const value of values) yield value.taint;
+}
+
 // --- Constructors ---------------------------------------------------------
 
 export const psNull = (taint: Taint = CLEAN): PSNull => ({ kind: 'null', taint });
@@ -96,7 +101,7 @@ export const psString = (value: string, taint: Taint = CLEAN): PSString => ({
 export const psArray = (items: readonly PSValue[], taint: Taint = CLEAN): PSArray => ({
   kind: 'array',
   items,
-  taint: union(taint, ...items.map((i) => i.taint)),
+  taint: unionAll([taint, ...iterTaints(items)]),
 });
 
 export const psHashtable = (
@@ -105,7 +110,7 @@ export const psHashtable = (
 ): PSHashtable => ({
   kind: 'hashtable',
   entries,
-  taint: union(taint, ...[...entries.values()].map((v) => v.taint)),
+  taint: unionAll([taint, ...iterTaints(entries.values())]),
 });
 
 export const psScriptBlock = (source: string, taint: Taint = CLEAN): PSScriptBlock => ({
@@ -128,7 +133,7 @@ export const psObject = (
   kind: 'object',
   typeName,
   members,
-  taint: union(taint, ...[...members.values()].map((v) => v.taint)),
+  taint: unionAll([taint, ...iterTaints(members.values())]),
 });
 
 /** Re-tag a value with additional taint, preserving everything else. */

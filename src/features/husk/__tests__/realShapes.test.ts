@@ -213,3 +213,44 @@ describe('hex-word hostnames are not mistaken for IP addresses', () => {
     expect(urls).toHaveLength(0);
   });
 });
+
+describe('multi-megabyte samples do not crash', () => {
+  // Four of the five largest files in a real corpus crashed. All three causes
+  // are the same shape: something unbounded that a well-formed synthetic
+  // fixture never reaches.
+  it('survives an unbroken multi-megabyte base64 run', async () => {
+    // An open-ended {120,} quantifier over this overflows V8's regex stack.
+    const blob = 'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo'.repeat(60_000);
+    await expect(analyze(`$b = '${blob}'`)).resolves.toBeDefined();
+  }, 30000);
+
+  it('states that an indicator list was truncated rather than cutting it silently', async () => {
+    const blob = 'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo'.repeat(60_000);
+    const result = await analyze(`$b = '${blob}'`);
+    if (result.iocs.truncatedKinds.length > 0) {
+      expect(result.gaps.some((g) => /truncated/.test(g.signature))).toBe(true);
+    }
+    // Either way the report must not claim more than it holds.
+    expect(result.iocs.indicators.length).toBeLessThanOrEqual(5000);
+  }, 30000);
+
+  it('survives a very large hex body', async () => {
+    const hex = '4d5a9000'.repeat(200_000);
+    await expect(analyze(`$p = '${hex}'`)).resolves.toBeDefined();
+  }, 30000);
+});
+
+describe('members called with missing arguments', () => {
+  // Real samples call methods with fewer arguments than the member expects.
+  // Indexing the argument list directly handed `undefined` to toNumber, which
+  // read `.kind` off it and lost the whole analysis.
+  it.each([
+    ['Remove', `'abcdef'.Remove()`],
+    ['Substring', `'abcdef'.Substring()`],
+    ['Insert', `'abcdef'.Insert()`],
+    ['PadLeft', `'abcdef'.PadLeft()`],
+    ['IndexOf', `'abcdef'.IndexOf()`],
+  ])('does not crash on %s with no arguments', async (_label, sample) => {
+    await expect(analyze(sample)).resolves.toBeDefined();
+  });
+});
