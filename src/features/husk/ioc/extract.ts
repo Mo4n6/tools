@@ -91,14 +91,28 @@ const RULES: readonly Rule[] = [
   },
   {
     kind: 'email',
-    pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+    // Every quantifier is bounded, and that is the whole point. The
+    // unbounded form
+    //   /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/
+    // backtracks catastrophically: over a multi-megabyte unbroken run
+    // containing no '@' - which is exactly what a hex-encoded payload is -
+    // every start position consumes the rest of the file, fails to find an
+    // '@', then retries one character along. That is quadratic, and it hung
+    // a corpus run for an hour on a single 3MB sample.
+    //
+    // RFC 5321 bounds the local part at 64 characters and the domain at 255,
+    // so nothing real is lost by bounding them here.
+    pattern: /\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}\b/g,
     confidence: 'high',
   },
   {
     kind: 'domain',
     // Bare hostnames are noisy, so only well-known suspicious or explicit
     // multi-label names with a real TLD count, and only at medium confidence.
-    pattern: /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|ru|cn|top|xyz|info|biz|online|site|club|tk|ml|ga|cf|pw|cc|io|co|us|uk|de|fr|nl|pl|br|in|ir|su)\b/gi,
+    // The label repetition is bounded for the same reason as the email rule:
+    // a hostname has at most a handful of labels, and an unbounded '+' over a
+    // long run is a backtracking hazard.
+    pattern: /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){1,8}(?:com|net|org|ru|cn|top|xyz|info|biz|online|site|club|tk|ml|ga|cf|pw|cc|io|co|us|uk|de|fr|nl|pl|br|in|ir|su)\b/gi,
     confidence: 'medium',
     normalize: (v) => v.toLowerCase(),
     reject: (value, context) => {

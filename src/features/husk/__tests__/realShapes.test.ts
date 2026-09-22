@@ -254,3 +254,37 @@ describe('members called with missing arguments', () => {
     await expect(analyze(sample)).resolves.toBeDefined();
   });
 });
+
+describe('IOC patterns cannot backtrack catastrophically', () => {
+  // A 3MB hex payload hung a corpus run for an hour. The email rule's
+  // unbounded `[A-Za-z0-9._%+-]+@` consumed the rest of the file from every
+  // start position looking for an '@' that was not there. Quadratic, and a
+  // denial of service on anyone who pastes such a sample.
+  it('handles a multi-megabyte unbroken hex run in reasonable time', async () => {
+    const hex = '4d5a9000'.repeat(375_000); // ~3MB, no '@' anywhere
+    const started = Date.now();
+    await analyze(`$payload = "${hex}"`, { timeBudgetMs: 5000 });
+    expect(Date.now() - started).toBeLessThan(20000);
+  }, 40000);
+
+  it('handles a long run of email-ish characters with no @', async () => {
+    const run = 'a.b_c%d+e-f'.repeat(120_000);
+    const started = Date.now();
+    await analyze(`$x = "${run}"`, { timeBudgetMs: 5000 });
+    expect(Date.now() - started).toBeLessThan(20000);
+  }, 40000);
+
+  it('still extracts a real email address', async () => {
+    const emails = (await analyze(`$to = 'operator@evil-domain.top'`)).iocs.indicators
+      .filter((i) => i.kind === 'email')
+      .map((i) => i.value);
+    expect(emails).toContain('operator@evil-domain.top');
+  });
+
+  it('still extracts a multi-label domain', async () => {
+    const domains = (await analyze(`$h = 'a.b.c.evil-domain.top'`)).iocs.indicators
+      .filter((i) => i.kind === 'domain')
+      .map((i) => i.value);
+    expect(domains.some((d) => d.endsWith('evil-domain.top'))).toBe(true);
+  });
+});
