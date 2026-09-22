@@ -21,7 +21,6 @@ from __future__ import annotations
 import concurrent.futures
 import datetime as dt
 import html
-import io
 import json
 import math
 import re
@@ -94,14 +93,11 @@ FUND_CONFIG: dict[str, dict[str, Any]] = {
         "primaryMetric": "forward_pe",
     },
     "SMH": {
-        "provider": "VanEck",
-        "urls": [
-            "https://www.vaneck.com/us/en/investments/semiconductor-etf-smh-fact-sheet.pdf",
-            "https://www.vaneck.com/offshore/en/investments/semiconductor-etf-smh-fact-sheet.pdf",
-        ],
-        "url": "https://www.vaneck.com/us/en/investments/semiconductor-etf-smh-fact-sheet.pdf",
-        "kind": "vaneck_pdf",
+        "provider": "iShares",
+        "url": ISHARES_BASE + "239705/ishares-semiconductor-etf",
+        "kind": "ishares",
         "primaryMetric": "pe",
+        "proxyTicker": "SOXX",
     },
     "IWM": {
         "provider": "iShares",
@@ -251,23 +247,6 @@ def parse_ishares(raw_html: str) -> dict[str, float | None]:
         "pb": decimal_in_section(text, "Portfolio Characteristics", "P/B Ratio"),
         "pe": decimal_in_section(text, "Portfolio Characteristics", "P/E Ratio"),
         "pcf": decimal_in_section(text, "Portfolio Characteristics", "P/CF Ratio"),
-        "forward_pe": None,
-    }
-
-
-def parse_vaneck_pdf(raw_pdf: bytes) -> dict[str, float | None]:
-    try:
-        from pypdf import PdfReader
-    except ImportError as exc:  # pragma: no cover - guarded by CI workflow
-        raise RuntimeError("pypdf is required for the VanEck factsheet parser") from exc
-
-    reader = PdfReader(io.BytesIO(raw_pdf))
-    text = " ".join((page.extract_text() or "") for page in reader.pages[:2])
-    text = re.sub(r"\s+", " ", text)
-    return {
-        "pb": decimal_after(text, "Price/Book Ratio", max_chars=1000),
-        "pe": decimal_after(text, "Price/Earnings Ratio", max_chars=1000),
-        "pcf": None,
         "forward_pe": None,
     }
 
@@ -423,6 +402,7 @@ def stale_or_error_row(
         "assetClass": "equity" if ticker != "IYR" else "real_estate",
         "provider": config["provider"],
         "sourceUrl": config["url"],
+        "proxyTicker": config.get("proxyTicker"),
         "asOf": today.isoformat(),
         "primaryMetric": metric_label(config["primaryMetric"]),
         "primaryMultiple": None,
@@ -447,25 +427,13 @@ def main() -> None:
         ticker, config = item
         kind = config["kind"]
 
-        if kind == "vaneck_pdf":
-            pdf_errors: list[str] = []
-            values: dict[str, float | None] | None = None
-            for url in config.get("urls", [config["url"]]):
-                try:
-                    values = parse_vaneck_pdf(http_get_bytes(url))
-                    break
-                except Exception as exc:  # noqa: BLE001
-                    pdf_errors.append(f"{url}: {exc}")
-            if values is None:
-                raise RuntimeError(" | ".join(pdf_errors))
+        raw = http_get(config["url"])
+        if kind == "ssga":
+            values = parse_ssga(raw)
+        elif kind == "ishares":
+            values = parse_ishares(raw)
         else:
-            raw = http_get(config["url"])
-            if kind == "ssga":
-                values = parse_ssga(raw)
-            elif kind == "ishares":
-                values = parse_ishares(raw)
-            else:
-                raise RuntimeError(f"Unsupported valuation source kind: {kind}")
+            raise RuntimeError(f"Unsupported valuation source kind: {kind}")
 
         required = ["pb", config["primaryMetric"]]
         if ticker == "SPY":
@@ -567,6 +535,7 @@ def main() -> None:
             "assetClass": "equity" if ticker != "IYR" else "real_estate",
             "provider": config["provider"],
             "sourceUrl": config["url"],
+            "proxyTicker": config.get("proxyTicker"),
             "asOf": today,
             "primaryMetric": metric_label(metric),
             "primaryMultiple": round(primary, 2),
@@ -580,7 +549,12 @@ def main() -> None:
             "historySamples": len(entries),
             "valueScore": round(value_score, 1),
             "note": (
-                "Value score blends the ETF's primary valuation multiple and P/B versus SPY. "
+                (
+                    f"Valuation proxy: {config['proxyTicker']} is used for the semiconductor complex because "
+                    "the SMH sponsor endpoint blocks automated CI access. "
+                    if config.get("proxyTicker") else ""
+                )
+                + "Value score blends the ETF's primary valuation multiple and P/B versus SPY. "
                 + (
                     f"Tracked-history percentile is active with {len(entries)} samples."
                     if tracked_percentile is not None
@@ -596,6 +570,7 @@ def main() -> None:
             "assetClass": "non_earnings",
             "provider": None,
             "sourceUrl": None,
+            "proxyTicker": None,
             "asOf": today,
             "primaryMetric": None,
             "primaryMultiple": None,
@@ -620,9 +595,10 @@ def main() -> None:
         "minimumHistorySamples": MIN_HISTORY_SAMPLES,
         "automatedTickers": sorted(ticker for ticker in FUND_CONFIG if ticker != "SPY"),
         "notApplicableTickers": sorted(NOT_APPLICABLE),
-        "providers": ["State Street", "iShares", "VanEck"],
+        "providers": ["State Street", "iShares"],
         "note": (
             "Equity/real-estate valuation is automated from official sponsor pages. "
+            "SMH uses SOXX as a clearly labeled semiconductor-sector valuation proxy. "
             "Non-earnings assets are intentionally not assigned P/E-style value scores."
         ),
     }
@@ -635,6 +611,7 @@ export type GeneratedValuationRow = {
   assetClass: 'equity' | 'real_estate' | 'non_earnings';
   provider: string | null;
   sourceUrl: string | null;
+  proxyTicker?: string | null;
   asOf: string;
   primaryMetric: string | null;
   primaryMultiple: number | null;
