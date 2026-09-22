@@ -5,9 +5,9 @@ No API key is required. The script tries Stooq first and Yahoo's chart endpoint
 as a fallback. It calculates technical indicators locally and writes a typed
 TypeScript data module consumed by the static Vite app.
 
-Valuation scores are intentionally NOT fetched here. Those remain a clearly
-labeled manual input in sampleData.ts until a reliable fundamentals source is
-added.
+Rotation-score history consumes the latest generated valuation score where
+that concept applies. Non-earnings assets use a technical-only score instead
+of being assigned a fake equity valuation.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import datetime as dt
 import io
 import json
 import math
+import re
 import os
 import time
 import urllib.parse
@@ -27,17 +28,12 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "src/features/rotation-goblin/marketData.generated.ts"
 HISTORY = ROOT / "src/features/rotation-goblin/rotation-history.json"
+VALUATION_OUT = ROOT / "src/features/rotation-goblin/valuationData.generated.ts"
 
 TICKERS = [
     "SPY", "XLE", "XLF", "XLB", "XLU", "XLV", "XLI", "IWM",
     "IYR", "EFA", "EEM", "GLD", "TLT", "PDBC", "KMLM", "UUP",
 ]
-
-VALUE_SCORES = {
-    "XLE": 89, "XLF": 76, "XLB": 78, "XLU": 72, "XLV": 63,
-    "XLI": 31, "IWM": 74, "IYR": 82, "EFA": 69, "EEM": 71,
-    "GLD": 44, "TLT": 68, "PDBC": 58, "KMLM": 50, "UUP": 46,
-}
 
 USER_AGENT = "RotationGoblin/1.0 (+https://github.com/Mo4n6/tools)"
 LOOKBACK_DAYS = 1200
@@ -204,16 +200,48 @@ def clamp(value: float) -> float:
     return max(0.0, min(100.0, value))
 
 
-def rotation_score(value_score: float, rsi: float, relative_rsi: float, rel6m: float) -> int:
+def load_value_scores() -> dict[str, float]:
+    if not VALUATION_OUT.exists():
+        return {}
+    content = VALUATION_OUT.read_text(encoding="utf-8")
+    match = re.search(
+        r"export const valuationRows: GeneratedValuationRow\[\] = (\[.*\]);",
+        content,
+        flags=re.DOTALL,
+    )
+    if not match:
+        return {}
+    try:
+        rows = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return {}
+    scores: dict[str, float] = {}
+    for row in rows:
+        ticker = row.get("ticker")
+        score = row.get("valueScore")
+        if isinstance(ticker, str) and isinstance(score, (int, float)):
+            scores[ticker] = float(score)
+    return scores
+
+
+def rotation_score(value_score: float | None, rsi: float, relative_rsi: float, rel6m: float) -> int:
     rsi_sweet_spot = clamp(100.0 - abs(rsi - 58.0) * 4.0)
     relative_rsi_score = clamp((relative_rsi - 35.0) * 2.5)
     relative_performance_score = clamp(50.0 + rel6m * 3.0)
-    score = (
-        value_score * 0.30
-        + rsi_sweet_spot * 0.15
-        + relative_rsi_score * 0.30
-        + relative_performance_score * 0.25
-    )
+
+    if value_score is None:
+        score = (
+            rsi_sweet_spot * 0.20
+            + relative_rsi_score * 0.45
+            + relative_performance_score * 0.35
+        )
+    else:
+        score = (
+            value_score * 0.30
+            + rsi_sweet_spot * 0.15
+            + relative_rsi_score * 0.30
+            + relative_performance_score * 0.25
+        )
     return round(score)
 
 
@@ -247,6 +275,7 @@ def main() -> None:
         history = {}
 
     technical_rows: list[dict[str, object]] = []
+    value_scores = load_value_scores()
 
     for ticker in TICKERS:
         if ticker == "SPY":
@@ -274,7 +303,7 @@ def main() -> None:
         rel12m = relative_return(daily, spy_daily, 252)
         ret3m = return_pct(closes, 63)
 
-        score = rotation_score(VALUE_SCORES[ticker], rsi14w, relative_rsi, rel6m)
+        score = rotation_score(value_scores.get(ticker), rsi14w, relative_rsi, rel6m)
         entries = history.setdefault(ticker, [])
         if entries and entries[-1].get("date") == as_of:
             entries[-1] = {"date": as_of, "value": score}
@@ -343,7 +372,7 @@ export type GeneratedTechnicalRow = {
         "generatedAt": generated_at,
         "benchmark": "SPY",
         "live": True,
-        "note": "Technicals are automated. Valuation scores remain manual and are labeled in the UI.",
+        "note": "Technicals are automated. Rotation history uses automated sponsor valuation where applicable and technical-only scoring for non-earnings assets.",
     }
 
     output = type_header

@@ -1,4 +1,5 @@
 import { benchmarkSnapshot, marketDataMeta, technicalRows } from './marketData.generated';
+import { valuationDataMeta, valuationRows, type ValuationStatus } from './valuationData.generated';
 
 export type Phase = 'Capitulation' | 'Accumulation' | 'Rotation' | 'Momentum' | 'Crowded' | 'Decay';
 export type Trend = 'up' | 'flat' | 'down';
@@ -6,8 +7,19 @@ export type Trend = 'up' | 'flat' | 'down';
 export type EtfRow = {
   ticker: string;
   theme: string;
-  valueScore: number;
-  valueStatus: 'manual';
+  valueScore: number | null;
+  valueStatus: ValuationStatus;
+  valuationMetric: string | null;
+  valuationMultiple: number | null;
+  valuationBenchmarkMultiple: number | null;
+  valuationRelative: number | null;
+  priceToBook: number | null;
+  pbRelative: number | null;
+  valuationProvider: string | null;
+  valuationSourceUrl: string | null;
+  valuationHistorySamples: number;
+  trackedHistoryPercentile: number | null;
+  valuationNote: string;
   price: number | null;
   asOf: string;
   rsi14w: number;
@@ -31,25 +43,24 @@ export type EtfRow = {
 type AssetMeta = {
   ticker: string;
   theme: string;
-  valueScore: number;
 };
 
 const assetMeta: AssetMeta[] = [
-  { ticker:'XLE', theme:'Energy', valueScore:89 },
-  { ticker:'XLF', theme:'Financials', valueScore:76 },
-  { ticker:'XLB', theme:'Materials', valueScore:78 },
-  { ticker:'XLU', theme:'Utilities', valueScore:72 },
-  { ticker:'XLV', theme:'Health Care', valueScore:63 },
-  { ticker:'XLI', theme:'Industrials', valueScore:31 },
-  { ticker:'IWM', theme:'U.S. Small Caps', valueScore:74 },
-  { ticker:'IYR', theme:'U.S. Real Estate', valueScore:82 },
-  { ticker:'EFA', theme:'Developed ex-U.S.', valueScore:69 },
-  { ticker:'EEM', theme:'Emerging Markets', valueScore:71 },
-  { ticker:'GLD', theme:'Gold', valueScore:44 },
-  { ticker:'TLT', theme:'Long Treasuries', valueScore:68 },
-  { ticker:'PDBC', theme:'Broad Commodities', valueScore:58 },
-  { ticker:'KMLM', theme:'Managed Futures', valueScore:50 },
-  { ticker:'UUP', theme:'U.S. Dollar', valueScore:46 },
+  { ticker:'XLE', theme:'Energy' },
+  { ticker:'XLF', theme:'Financials' },
+  { ticker:'XLB', theme:'Materials' },
+  { ticker:'XLU', theme:'Utilities' },
+  { ticker:'XLV', theme:'Health Care' },
+  { ticker:'XLI', theme:'Industrials' },
+  { ticker:'IWM', theme:'U.S. Small Caps' },
+  { ticker:'IYR', theme:'U.S. Real Estate' },
+  { ticker:'EFA', theme:'Developed ex-U.S.' },
+  { ticker:'EEM', theme:'Emerging Markets' },
+  { ticker:'GLD', theme:'Gold' },
+  { ticker:'TLT', theme:'Long Treasuries' },
+  { ticker:'PDBC', theme:'Broad Commodities' },
+  { ticker:'KMLM', theme:'Managed Futures' },
+  { ticker:'UUP', theme:'U.S. Dollar' },
 ];
 
 const clamp = (value:number):number => Math.max(0,Math.min(100,value));
@@ -60,55 +71,98 @@ const relativePerformanceScore = (rel6m:number):number => clamp(50 + rel6m * 3);
 const oversoldScore = (rsi:number):number => clamp((50 - rsi) * 3);
 const drawdownScore = (drawdown52w:number):number => clamp(Math.abs(Math.min(0,drawdown52w)) * 4);
 
-const phaseFor = (valueScore:number,row:(typeof technicalRows)[number]):Phase => {
-  if (valueScore < 40 && row.rsi14w >= 70 && row.relativeRsi >= 65) return 'Crowded';
+const rotationScoreFor = (valueScore:number|null,rsi:number,relativeRsi:number,rel6m:number):number => {
+  const rsiScore = rsiSweetSpot(rsi);
+  const relativeScore = relativeRsiScore(relativeRsi);
+  const performanceScore = relativePerformanceScore(rel6m);
+
+  if (valueScore === null) {
+    return Math.round(rsiScore * 0.20 + relativeScore * 0.45 + performanceScore * 0.35);
+  }
+
+  return Math.round(
+    valueScore * 0.30 +
+    rsiScore * 0.15 +
+    relativeScore * 0.30 +
+    performanceScore * 0.25
+  );
+};
+
+const contrarianScoreFor = (valueScore:number|null,rsi:number,drawdown52w:number):number => {
+  const oversold = oversoldScore(rsi);
+  const drawdown = drawdownScore(drawdown52w);
+
+  if (valueScore === null) {
+    return Math.round(oversold * 0.55 + drawdown * 0.45);
+  }
+
+  return Math.round(valueScore * 0.45 + oversold * 0.30 + drawdown * 0.25);
+};
+
+const phaseFor = (
+  valueScore:number|null,
+  row:(typeof technicalRows)[number],
+):Phase => {
+  if (valueScore !== null && valueScore < 35 && row.rsi14w >= 70 && row.relativeRsi >= 65) return 'Crowded';
   if (row.rsi14w <= 35 && row.relativeRsi <= 40) return 'Capitulation';
   if (row.relativeRsi < 38 && row.rel6m < 0 && row.rsi14w < 45) return 'Decay';
   if (row.relativeRsi >= 55 && row.rel3m > 0 && row.rsi14w >= 45 && row.rsi14w < 68) return 'Rotation';
   if (row.rsi14w >= 65 && row.relativeRsi >= 60) return 'Momentum';
-  if (valueScore >= 60 && row.rsiTrend !== 'down') return 'Accumulation';
+  if (valueScore !== null && valueScore >= 60 && row.rsiTrend !== 'down') return 'Accumulation';
   if (row.relativeRsi < 45 && row.rel6m < 0) return 'Decay';
   return row.relativeRsi >= 55 ? 'Rotation' : 'Accumulation';
 };
 
-const noteFor = (phase:Phase):string => {
+const noteFor = (phase:Phase,valueStatus:ValuationStatus):string => {
+  const valuationClause = valueStatus === 'not_applicable'
+    ? ' This asset uses technical/regime signals only because equity-style valuation multiples are not meaningful.'
+    : valueStatus === 'error'
+      ? ' Valuation data is temporarily unavailable, so the score is falling back to technical signals.'
+      : '';
+
   switch (phase) {
-    case 'Capitulation': return 'Price is washed out, but the model wants evidence that selling pressure is actually ending before treating weakness as opportunity.';
-    case 'Accumulation': return 'Valuation is supportive and momentum is repairing, but relative outperformance is not fully confirmed yet.';
-    case 'Rotation': return 'Relative strength has turned constructive while valuation still offers some support — the setup this radar is designed to surface.';
-    case 'Momentum': return 'Absolute and relative trends are strong. The easy re-rating may already be underway, so valuation matters more.';
-    case 'Crowded': return 'Momentum is strong but the manual valuation snapshot is rich, increasing chase risk.';
-    case 'Decay': return 'Relative momentum is deteriorating. Cheapness alone is not enough until trend repair appears.';
+    case 'Capitulation': return 'Price is washed out, but the model wants evidence that selling pressure is actually ending before treating weakness as opportunity.' + valuationClause;
+    case 'Accumulation': return 'Valuation and/or price action are supportive and momentum is repairing, but relative outperformance is not fully confirmed yet.' + valuationClause;
+    case 'Rotation': return 'Relative strength has turned constructive before the opportunity is fully mature — the setup this radar is designed to surface.' + valuationClause;
+    case 'Momentum': return 'Absolute and relative trends are strong. The easy re-rating may already be underway, so entry price matters more.' + valuationClause;
+    case 'Crowded': return 'Momentum is strong but valuation is rich versus SPY, increasing chase risk.' + valuationClause;
+    case 'Decay': return 'Relative momentum is deteriorating. Cheapness alone is not enough until trend repair appears.' + valuationClause;
   }
 };
 
 const technicalByTicker = new Map(technicalRows.map((row) => [row.ticker,row]));
+const valuationByTicker = new Map(valuationRows.map((row) => [row.ticker,row]));
 
 export const sampleEtfs: EtfRow[] = assetMeta.flatMap((meta) => {
   const technical = technicalByTicker.get(meta.ticker);
-  if (!technical) return [];
+  const valuation = valuationByTicker.get(meta.ticker);
+  if (!technical || !valuation) return [];
 
-  const rotationScore = Math.round(
-    meta.valueScore * 0.30 +
-    rsiSweetSpot(technical.rsi14w) * 0.15 +
-    relativeRsiScore(technical.relativeRsi) * 0.30 +
-    relativePerformanceScore(technical.rel6m) * 0.25
-  );
-  const contrarianScore = Math.round(
-    meta.valueScore * 0.45 +
-    oversoldScore(technical.rsi14w) * 0.30 +
-    drawdownScore(technical.drawdown52w) * 0.25
-  );
+  const valueScore = valuation.status === 'automated' ? valuation.valueScore : null;
+  const rotationScore = rotationScoreFor(valueScore,technical.rsi14w,technical.relativeRsi,technical.rel6m);
+  const contrarianScore = contrarianScoreFor(valueScore,technical.rsi14w,technical.drawdown52w);
   const momentumScore = Math.round(
     momentumRsiScore(technical.rsi14w) * 0.35 +
     relativeRsiScore(technical.relativeRsi) * 0.40 +
     relativePerformanceScore(technical.rel6m) * 0.25
   );
-  const phase = phaseFor(meta.valueScore,technical);
+  const phase = phaseFor(valueScore,technical);
 
   return [{
     ...meta,
-    valueStatus:'manual' as const,
+    valueScore,
+    valueStatus:valuation.status,
+    valuationMetric:valuation.primaryMetric,
+    valuationMultiple:valuation.primaryMultiple,
+    valuationBenchmarkMultiple:valuation.benchmarkMultiple,
+    valuationRelative:valuation.primaryRelative,
+    priceToBook:valuation.priceToBook,
+    pbRelative:valuation.pbRelative,
+    valuationProvider:valuation.provider,
+    valuationSourceUrl:valuation.sourceUrl,
+    valuationHistorySamples:valuation.historySamples,
+    trackedHistoryPercentile:valuation.trackedHistoryPercentile,
+    valuationNote:valuation.note,
     price:technical.price,
     asOf:technical.asOf,
     rsi14w:technical.rsi14w,
@@ -125,7 +179,7 @@ export const sampleEtfs: EtfRow[] = assetMeta.flatMap((meta) => {
     rotationScore,
     contrarianScore,
     momentumScore,
-    note:noteFor(phase),
+    note:noteFor(phase,valuation.status),
     history:technical.history,
   }];
 });
@@ -181,4 +235,7 @@ export const regimeCards = [
   },
 ] as const;
 
-export const dataMeta = marketDataMeta;
+export const dataMeta = {
+  technicals: marketDataMeta,
+  valuations: valuationDataMeta,
+};
