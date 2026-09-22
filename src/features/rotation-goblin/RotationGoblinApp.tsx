@@ -49,15 +49,10 @@ const trend = (value:EtfRow['rsiTrend']):string => value === 'up' ? '↑' : valu
 const RotationChart = ({ row }:{ row:EtfRow }):JSX.Element => {
   const [rangeYears,setRangeYears] = useState<1|3|5|10>(5);
   const historical = historicalChartSeries[row.ticker] ?? [];
-  const livePoint = { date:row.asOf, rsi14w:row.rsi14w, relativeRsi14w:row.relativeRsi };
-  const combined = historical.length && historical[historical.length - 1]?.date === row.asOf
-    ? historical.map((point) => ({ date:point.date, rsi14w:point.rsi14w, relativeRsi14w:point.relativeRsi14w }))
-    : [...historical.map((point) => ({ date:point.date, rsi14w:point.rsi14w, relativeRsi14w:point.relativeRsi14w })),livePoint];
-
-  const latestDate = combined.length ? new Date(`${combined[combined.length - 1].date}T00:00:00Z`) : new Date();
+  const latestDate = historical.length ? new Date(`${historical[historical.length - 1].date}T00:00:00Z`) : new Date();
   const cutoff = new Date(latestDate);
   cutoff.setUTCFullYear(cutoff.getUTCFullYear() - rangeYears);
-  const visible = combined.filter((point) => new Date(`${point.date}T00:00:00Z`) >= cutoff);
+  const visible = historical.filter((point) => new Date(`${point.date}T00:00:00Z`) >= cutoff);
 
   const width = 700;
   const height = 250;
@@ -95,7 +90,7 @@ const RotationChart = ({ row }:{ row:EtfRow }):JSX.Element => {
           <circle cx={xFor(visible.length-1)} cy={yFor(visible[visible.length-1].relativeRsi14w)} r="3.5" fill="#7dd3fc"><title>{`${visible[visible.length-1].date} • Relative RSI ${visible[visible.length-1].relativeRsi14w.toFixed(1)}`}</title></circle>
         </svg>
       ) : <div className="flex h-60 items-center justify-center text-sm text-amber-200/70">Historical chart data is being generated.</div>}
-      <p className="mt-1 text-[11px] text-emerald-300/40">{visible.length} weekly observations shown • completed-week history plus the latest completed daily-session reading</p>
+      <p className="mt-1 text-[11px] text-emerald-300/40">{visible.length} observations shown • derived from the canonical technical-state history</p>
     </div>
   );
 };
@@ -241,7 +236,7 @@ const RotationGoblinApp = ():JSX.Element => {
               )}
             </div>
           </div>
-          <div className="rounded-lg border border-emerald-500/15 bg-black/20 p-3"><div className="flex items-center justify-between gap-3"><strong className="text-sm text-emerald-100">Technical momentum history</strong><span className="text-[11px] text-emerald-300/40">10Y point-in-time backfill</span></div><p className="mt-1 text-xs text-emerald-300/45">14-week RSI and ETF/SPY Relative RSI. Historical weeks exclude valuation and future information.</p><div className="mt-3"><RotationChart row={selected} /></div></div>
+          <div className="rounded-lg border border-emerald-500/15 bg-black/20 p-3"><div className="flex items-center justify-between gap-3"><strong className="text-sm text-emerald-100">Technical momentum history</strong><span className="text-[11px] text-emerald-300/40">canonical 10Y technical history</span></div><p className="mt-1 text-xs text-emerald-300/45">14-week RSI and ETF/SPY Relative RSI. Chart points are derived from the canonical technical-state store; valuation and future outcomes are excluded.</p><div className="mt-3"><RotationChart row={selected} /></div></div>
         </div>
       </section> : null}
 

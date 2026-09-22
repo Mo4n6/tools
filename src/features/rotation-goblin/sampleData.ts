@@ -39,7 +39,6 @@ export type EtfRow = {
   contrarianScore: number;
   momentumScore: number;
   note: string;
-  history: { month: string; value: number }[];
 };
 
 type AssetMeta = {
@@ -187,7 +186,6 @@ export const sampleEtfs: EtfRow[] = assetMeta.flatMap((meta) => {
     contrarianScore,
     momentumScore,
     note:noteFor(phase,valuation.status),
-    history:technical.history,
   }];
 });
 
