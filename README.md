@@ -87,16 +87,28 @@ slash. Unset, a production build falls back to the repository name from
 
 ### Build-time flags
 
-| Variable | Default | Effect |
+| Variable | Unset behaviour | Effect |
 | --- | --- | --- |
 | `VITE_BASE_PATH` | repository name | Deploy subpath |
-| `VITE_ENABLE_URL_INGEST` | `false` | Momoro Reader URL ingestion; needs a backend |
-| `VITE_EXTRACT_API_BASE_URL` | — | That backend's base URL |
-| `VITE_SKIP_KOKORO_INIT_ON_PAGES` | `true` on Pages-style paths | Skip Kokoro init and use Web Speech |
+| `VITE_ENABLE_URL_INGEST` | **on** | Momoro Reader URL ingestion; needs a backend |
+| `VITE_EXTRACT_API_BASE_URL` | `/api/extract` | That backend's base URL |
+| `VITE_SKIP_KOKORO_INIT_ON_PAGES` | **does not skip** | Skip Kokoro init and use Web Speech |
 | `VITE_GLASS_WEIGHTS_URL` | — | Pre-fills the Glass weights field |
 
+Both flags are worth reading twice, because neither defaults the way the name
+suggests:
+
+- URL ingestion is enabled unless the value is exactly `false`
+  (`VITE_ENABLE_URL_INGEST !== 'false'`). So a plain `npm run dev` shows the URL
+  tab, and submitting there posts to `/api/extract`, which is nothing unless you
+  are running a backend. Set it to `false` if you want the tab gone.
+- Kokoro init is skipped only when the value is exactly `true` **and** the base
+  path is not `/` (`isPagesStyleBase && shouldSkipKokoroInitOnPages`). Unset, it
+  initialises normally.
+
 The Pages build sets `VITE_ENABLE_URL_INGEST=false` and
-`VITE_SKIP_KOKORO_INIT_ON_PAGES=false`.
+`VITE_SKIP_KOKORO_INIT_ON_PAGES=false`, so the live site has the URL tab hidden
+and Kokoro enabled.
 
 ## Notes on individual tools
 
@@ -107,9 +119,11 @@ Kokoro path fetches `onnx-community/Kokoro-82M-ONNX` from Hugging Face on first
 use and runs it locally after that, on WebGPU where the browser offers an adapter
 and on WASM otherwise.
 
-URL ingestion is the one feature here that needs a server: extracting an article
-from a URL requires a backend, so it is off unless you deploy one and set the two
-variables above.
+URL ingestion is the one feature in this repository that needs a server:
+extracting an article from a URL requires a backend. Note that it is **on** in a
+default build — see the flags above — so the URL tab appears in `npm run dev` and
+posts to `/api/extract` whether or not anything is listening there. The Pages
+build turns it off explicitly.
 
 ### Glass
 
