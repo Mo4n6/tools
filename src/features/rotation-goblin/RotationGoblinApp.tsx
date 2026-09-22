@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { dataMeta, type EtfRow, type Phase, regimeCards, sampleEtfs } from './sampleData';
+import { dataMeta, type EtfRow, type Phase, sampleEtfs } from './sampleData';
 
 const phases: Phase[] = ['Capitulation','Accumulation','Rotation','Momentum','Crowded','Decay'];
 
@@ -11,12 +11,6 @@ const phaseMeta: Record<Phase,{ action:string; color:string; dot:string; descrip
   Crowded:{ action:'DO NOT CHASE / CONSIDER TRIMMING', color:'border-violet-400/40 bg-violet-500/10 text-violet-200', dot:'bg-violet-400', description:'Strong narrative, rich valuation, and elevated chase risk.' },
   Decay:{ action:'REDUCE / AVOID UNTIL REPAIRED', color:'border-orange-400/40 bg-orange-500/10 text-orange-200', dot:'bg-orange-400', description:'Valuation and relative momentum are both deteriorating.' },
 };
-
-const toneClass = {
-  good:'text-emerald-300',
-  warn:'text-amber-300',
-  bad:'text-red-300',
-} as const;
 
 const scoreClass = (value:number|null):string => value === null ? 'text-zinc-500' : value >= 75 ? 'text-emerald-300' : value >= 50 ? 'text-amber-300' : 'text-zinc-400';
 
@@ -136,10 +130,6 @@ const RotationGoblinApp = ():JSX.Element => {
 
       <section className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm leading-relaxed text-amber-100">
         <strong>⚠ Financial caveat:</strong> This dashboard is for education, research, and entertainment only. It is not financial, investment, tax, or legal advice. Signals can be wrong, stale, or spectacularly stupid. Past performance does not predict future returns. Do your own research and consider your own risk tolerance before buying or selling anything.
-      </section>
-
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-        {regimeCards.map((card) => <article key={card.label} className="rounded-lg border border-emerald-500/20 bg-[#07110a] p-4"><p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-400/60">{card.label}</p><p className={`mt-1 text-xl font-black ${toneClass[card.tone]}`}>{card.value}</p><p className="mt-1 text-xs text-emerald-300/50">{card.note}</p></article>)}
       </section>
 
       <section className="rounded-xl border border-emerald-500/25 bg-[#07110a] p-5">
