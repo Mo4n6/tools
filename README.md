@@ -85,15 +85,45 @@ the input palette.
 
 ### Neural tier weights
 
-Glass ships no model and contacts no inference service. Point it at an ONNX
-super-resolution network — an ESRGAN-family export is the usual choice — either
-as a local file or as an https URL, and it is cached in the browser after the
-first load. The scale factor is read back from the model's own output shape
-rather than configured, so a 2x and a 4x network both work unchanged.
+Glass ships no model and contacts no inference service. There are three ways to
+give it one, and nothing is fetched until the operator picks:
 
-A build can supply a default URL with `VITE_GLASS_WEIGHTS_URL`. Left unset,
-which is the default, the tier fetches nothing until the operator chooses a
-model.
+1. **A known model** — an entry in `WEIGHTS_PRESETS`, chosen from a list.
+2. **A local file** — an `.onnx` from disk.
+3. **A URL** — any https address (http is allowed on localhost only).
+
+Weights are cached in the browser after the first load. The scale factor is read
+back from the model's own output shape rather than configured, so a 2x and a 4x
+network both work unchanged.
+
+A build can also pre-fill the URL field with `VITE_GLASS_WEIGHTS_URL`.
+
+### Adding a known model
+
+A preset pins its URL to an immutable revision and records a SHA-256 of the
+exact bytes. Glass verifies that digest before the weights reach the runtime,
+on the network path and on the cache path alike, and refuses anything that does
+not match. The effect is that the host serving the file is infrastructure
+rather than a trusted party: a swap at the origin, an interfering middlebox or
+a poisoned cache entry fails the check instead of quietly executing.
+
+Entries are produced by the helper rather than written by hand, because a wrong
+digest is indistinguishable from an attack:
+
+```
+npm run glass:preset -- https://huggingface.co/<repo>/resolve/<revision>/model.onnx
+```
+
+It downloads the candidate, hashes it, loads the graph, runs a 64x64 RGB tile
+through it to confirm it really is a super-resolution model, reports the factor
+it inferred, and prints a record to paste into `WEIGHTS_PRESETS` in
+`src/features/glass/presets.ts`. Use a revision URL, not a branch: a branch
+moves, and a digest pinned to a moving target eventually fails for no reason
+anyone remembers.
+
+`WEIGHTS_PRESETS` ships empty. With no entries the UI says so and points at the
+helper, rather than offering a download that may 404 or may not be the model it
+claims to be.
 
 ### What the neural tier adds to the deployment
 
