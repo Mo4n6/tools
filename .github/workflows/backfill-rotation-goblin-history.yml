@@ -42,7 +42,7 @@ jobs:
         if: github.event_name != 'pull_request'
         shell: bash
         run: |
-          if git diff --quiet -- src/features/rotation-goblin/research/technical-history-10y.json; then
+          if [ -z "$(git status --porcelain -- src/features/rotation-goblin/research/technical-history-10y.json)" ]; then
             echo "Historical dataset unchanged."
             exit 0
           fi
