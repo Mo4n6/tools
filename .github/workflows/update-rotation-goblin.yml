@@ -66,6 +66,10 @@ jobs:
       - name: Verify generated data typechecks
         run: npm run typecheck
 
+      - name: Verify production build
+        if: github.event_name == 'pull_request'
+        run: npm run build
+
       - name: Commit refreshed data
         if: github.event_name != 'pull_request'
         shell: bash
