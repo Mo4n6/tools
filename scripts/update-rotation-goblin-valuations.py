@@ -359,6 +359,86 @@ def metric_label(metric: str) -> str:
     }.get(metric, metric)
 
 
+def load_previous_rows() -> dict[str, dict[str, Any]]:
+    if not OUT.exists():
+        return {}
+    content = OUT.read_text(encoding="utf-8")
+    match = re.search(
+        r"export const valuationRows: GeneratedValuationRow\[\] = (\[.*\]);",
+        content,
+        flags=re.DOTALL,
+    )
+    if not match:
+        return {}
+    try:
+        rows = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return {}
+    return {
+        str(row["ticker"]): row
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("ticker"), str)
+    }
+
+
+def previous_row_is_usable(row: dict[str, Any], today: dt.date) -> bool:
+    if row.get("status") not in {"automated", "stale"}:
+        return False
+    try:
+        as_of = dt.date.fromisoformat(str(row["asOf"]))
+        age = (today - as_of).days
+        primary = float(row["primaryMultiple"])
+        pb = float(row["priceToBook"])
+        value_score = float(row["valueScore"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if age < 0 or age > MAX_STALE_DAYS:
+        return False
+    if not (3.0 <= primary <= 150.0 and 0.2 <= pb <= 30.0 and 0.0 <= value_score <= 100.0):
+        return False
+    return True
+
+
+def stale_or_error_row(
+    ticker: str,
+    config: dict[str, Any],
+    previous_rows: dict[str, dict[str, Any]],
+    today: dt.date,
+    benchmark_pb: float | None,
+    error: str,
+) -> dict[str, Any]:
+    previous = previous_rows.get(ticker)
+    if previous and previous_row_is_usable(previous, today):
+        stale = dict(previous)
+        stale["status"] = "stale"
+        stale["note"] = (
+            f"Using last known good valuation from {previous['asOf']} because the current "
+            f"sponsor refresh failed: {error}"
+        )
+        return stale
+
+    return {
+        "ticker": ticker,
+        "status": "error",
+        "assetClass": "equity" if ticker != "IYR" else "real_estate",
+        "provider": config["provider"],
+        "sourceUrl": config["url"],
+        "asOf": today.isoformat(),
+        "primaryMetric": metric_label(config["primaryMetric"]),
+        "primaryMultiple": None,
+        "benchmarkMultiple": None,
+        "primaryRelative": None,
+        "priceToBook": None,
+        "benchmarkPriceToBook": benchmark_pb,
+        "pbRelative": None,
+        "crossSectionScore": None,
+        "trackedHistoryPercentile": None,
+        "historySamples": 0,
+        "valueScore": None,
+        "note": error,
+    }
+
+
 def main() -> None:
     fetched: dict[str, dict[str, float | None]] = {}
     errors: dict[str, str] = {}
@@ -415,9 +495,11 @@ def main() -> None:
     if not spy.get("pb") or not spy.get("forward_pe") or not spy.get("pe") or not spy.get("pcf"):
         raise RuntimeError(f"SPY benchmark parsing incomplete: {spy}")
 
-    today = dt.datetime.now(dt.timezone.utc).date().isoformat()
+    today_date = dt.datetime.now(dt.timezone.utc).date()
+    today = today_date.isoformat()
     generated_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     history = load_history()
+    previous_rows = load_previous_rows()
     rows: list[dict[str, Any]] = []
 
     for ticker, config in FUND_CONFIG.items():
@@ -426,26 +508,16 @@ def main() -> None:
 
         values = fetched.get(ticker)
         if not values:
-            rows.append({
-                "ticker": ticker,
-                "status": "error",
-                "assetClass": "equity",
-                "provider": config["provider"],
-                "sourceUrl": config["url"],
-                "asOf": today,
-                "primaryMetric": metric_label(config["primaryMetric"]),
-                "primaryMultiple": None,
-                "benchmarkMultiple": None,
-                "primaryRelative": None,
-                "priceToBook": None,
-                "benchmarkPriceToBook": spy.get("pb"),
-                "pbRelative": None,
-                "crossSectionScore": None,
-                "trackedHistoryPercentile": None,
-                "historySamples": len(history.get(ticker, [])),
-                "valueScore": None,
-                "note": errors.get(ticker, "Valuation source unavailable."),
-            })
+            rows.append(
+                stale_or_error_row(
+                    ticker,
+                    config,
+                    previous_rows,
+                    today_date,
+                    spy.get("pb"),
+                    errors.get(ticker, "Valuation source unavailable."),
+                )
+            )
             continue
 
         metric = config["primaryMetric"]
@@ -455,26 +527,16 @@ def main() -> None:
         benchmark_pb = spy.get("pb")
 
         if primary is None or benchmark is None or pb is None or benchmark_pb is None:
-            rows.append({
-                "ticker": ticker,
-                "status": "error",
-                "assetClass": "equity" if ticker != "IYR" else "real_estate",
-                "provider": config["provider"],
-                "sourceUrl": config["url"],
-                "asOf": today,
-                "primaryMetric": metric_label(metric),
-                "primaryMultiple": primary,
-                "benchmarkMultiple": benchmark,
-                "primaryRelative": None,
-                "priceToBook": pb,
-                "benchmarkPriceToBook": benchmark_pb,
-                "pbRelative": None,
-                "crossSectionScore": None,
-                "trackedHistoryPercentile": None,
-                "historySamples": len(history.get(ticker, [])),
-                "valueScore": None,
-                "note": "Sponsor page loaded, but one or more valuation fields could not be parsed.",
-            })
+            rows.append(
+                stale_or_error_row(
+                    ticker,
+                    config,
+                    previous_rows,
+                    today_date,
+                    benchmark_pb,
+                    "Sponsor page loaded, but one or more valuation fields could not be parsed.",
+                )
+            )
             continue
 
         primary_relative = primary / benchmark
@@ -565,7 +627,7 @@ def main() -> None:
         ),
     }
 
-    type_header = """export type ValuationStatus = 'automated' | 'not_applicable' | 'error';
+    type_header = """export type ValuationStatus = 'automated' | 'stale' | 'not_applicable' | 'error';
 
 export type GeneratedValuationRow = {
   ticker: string;
