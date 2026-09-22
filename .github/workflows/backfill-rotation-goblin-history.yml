@@ -22,6 +22,12 @@ permissions:
   contents: write
   actions: write
 
+# Share a lock with the live updater: both workflows write the canonical
+# history and compact chart assets, so they must never commit concurrently.
+concurrency:
+  group: rotation-goblin-canonical-writer
+  cancel-in-progress: false
+
 jobs:
   backfill:
     runs-on: ubuntu-latest

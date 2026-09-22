@@ -29,6 +29,13 @@ on:
 permissions:
   contents: write
 
+# The live updater and historical backfill both write the canonical history.
+# Serialize them across workflows so simultaneous push/schedule events cannot
+# race on the same JSON files and fail during the commit/rebase step.
+concurrency:
+  group: rotation-goblin-canonical-writer
+  cancel-in-progress: false
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
