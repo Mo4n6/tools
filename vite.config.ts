@@ -41,6 +41,12 @@ export default defineConfig(({ mode }) => ({
             return 'kokoro';
           }
 
+          // Glass only reaches for the ONNX runtime when the operator picks the
+          // neural tier, so it must not ride along in the entry chunk.
+          if (id.includes('node_modules/onnxruntime-web')) {
+            return 'onnxruntime';
+          }
+
           if (isMp3EncoderAsset(id)) {
             return 'mp3-encoder';
           }
