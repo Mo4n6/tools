@@ -187,7 +187,12 @@ def number_after(text: str, label: str, max_chars: int = 1000) -> float | None:
     if not match:
         return None
     window = text[match.end():match.end() + max_chars]
-    number = re.search(r"(?<![0-9])([0-9]{1,3}(?:\\.[0-9]+)?)(?![0-9])", window)
+
+    # Sponsor pages sprinkle integer footnote markers around metric labels.
+    # Valuation multiples are published with decimal precision, so prefer the
+    # first decimal token and only fall back to an integer if necessary.
+    decimal = re.search(r"(?<![0-9])([0-9]{1,3}\\.[0-9]+)(?![0-9])", window)
+    number = decimal or re.search(r"(?<![0-9])([0-9]{1,3})(?![0-9])", window)
     if not number:
         return None
     value = float(number.group(1))
