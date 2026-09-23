@@ -81,6 +81,20 @@ describe('output budget', () => {
     expect(MAX_OUTPUT_PIXELS).toBe(Math.floor(OUTPUT_BUDGET_BYTES / OUTPUT_BYTES_PER_PIXEL));
   });
 
+  it('stays clear of the allocation cliff it could not recover from', () => {
+    // A Uint8ClampedArray of 1.9 GB allocates in a current Chromium; 2.0 GB
+    // throws outright. A budget at or past that turns a clear refusal into an
+    // opaque crash, and the canvas copy during encode doubles the peak, so the
+    // budget belongs at roughly half.
+    const ALLOCATION_CLIFF = 2 * 1024 ** 3;
+    expect(OUTPUT_BUDGET_BYTES).toBeLessThanOrEqual(ALLOCATION_CLIFF / 2);
+  });
+
+  it('admits the 4x print job', () => {
+    // 3136x4672 through a 4x model: 234 megapixels, 0.87 GB.
+    expect(() => createOutput(12544, 18688)).not.toThrow();
+  });
+
   it('admits a print-resolution job', () => {
     // 3136x4672 through a 2x model: 58.6 megapixels. This needed 1.1 GB as a
     // float accumulator and was refused; as an image it is 234 MB.

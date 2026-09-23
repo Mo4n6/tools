@@ -103,13 +103,26 @@ export const OUTPUT_BYTES_PER_PIXEL = 4;
 /**
  * What one result is allowed to claim.
  *
- * Half a gibibyte of image, which is around 134 megapixels — comfortably past
- * print resolution for anything a browser will then be asked to encode. The
- * encode itself is the reason not to raise it further: putImageData hands the
- * canvas its own copy, so peak use is roughly double this before the PNG is
- * even produced.
+ * One gibibyte of image, about 268 megapixels. The number is not a guess; it
+ * is bounded from two directions that were measured rather than assumed.
+ *
+ * Above, by allocation. A Uint8ClampedArray of 1.9 GB still allocates in a
+ * current Chromium and 2.0 GB does not — it throws "Array buffer allocation
+ * failed" outright. Anything at or past that cliff cannot be produced at all,
+ * whatever the budget says, so a larger number here would only move a clear
+ * refusal into an opaque crash.
+ *
+ * Below, by the encode. putImageData hands the canvas its own copy, so a
+ * result at this budget peaks near 2 GB before a PNG exists — which is
+ * verified to work, and which is also why the budget is half the cliff rather
+ * than just under it.
+ *
+ * Raising it further means taking the canvas out of the encode path, not
+ * changing this constant: CompressionStream can deflate a PNG directly from
+ * these bytes, which removes the copy and the browser's own canvas limits with
+ * it.
  */
-export const OUTPUT_BUDGET_BYTES = 536_870_912;
+export const OUTPUT_BUDGET_BYTES = 1_073_741_824;
 
 export const MAX_OUTPUT_PIXELS = Math.floor(OUTPUT_BUDGET_BYTES / OUTPUT_BYTES_PER_PIXEL);
 
