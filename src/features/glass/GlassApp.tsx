@@ -62,6 +62,11 @@ const GlassApp = (): JSX.Element => {
   const [split, setSplit] = useState(50);
 
   const imageInput = useRef<HTMLInputElement | null>(null);
+  // Sample clicks are ordered here rather than in the hook. The hook's guard
+  // takes its number when `load` is called, which for a sample is only after
+  // the fetch has finished, so two clicks race and the slower fetch wins.
+  const sampleTicket = useRef(0);
+  const sampleFetch = useRef<AbortController | null>(null);
   const tier = tierById(tierId);
 
   // Keep the factor legal for the tier: switching to Pixel while 3x is selected
@@ -89,21 +94,45 @@ const GlassApp = (): JSX.Element => {
   const handleFiles = useCallback(
     (files: FileList | null) => {
       const file = files?.[0];
-      if (file) void load(file);
+      if (!file) return;
+      // Choosing a file also outranks any sample still being fetched.
+      sampleTicket.current += 1;
+      sampleFetch.current?.abort();
+      sampleFetch.current = null;
+      void load(file);
     },
     [load],
   );
 
   const loadSample = useCallback(
     async (fileName: string): Promise<void> => {
-      // Resolved against BASE_URL inside the handler, not at render: the
-      // component is rendered to static markup in tests, where there is no
-      // window to resolve against.
-      const base = new URL(import.meta.env.BASE_URL, window.location.href);
-      const response = await fetch(new URL(`glass-samples/${fileName}`, base).href);
-      if (!response.ok) return;
-      const blob = await response.blob();
-      await load(new File([blob], fileName, { type: blob.type || 'image/png' }));
+      sampleFetch.current?.abort();
+      const controller = new AbortController();
+      sampleFetch.current = controller;
+
+      sampleTicket.current += 1;
+      const ticket = sampleTicket.current;
+
+      try {
+        // Resolved against BASE_URL inside the handler, not at render: the
+        // component is rendered to static markup in tests, where there is no
+        // window to resolve against.
+        const base = new URL(import.meta.env.BASE_URL, window.location.href);
+        const response = await fetch(new URL(`glass-samples/${fileName}`, base).href, {
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const blob = await response.blob();
+
+        // The abort above handles the common case, but a response already in
+        // flight can still resolve; the ticket is what makes the newest click
+        // authoritative regardless of which fetch finished first.
+        if (sampleTicket.current !== ticket) return;
+        await load(new File([blob], fileName, { type: blob.type || 'image/png' }));
+      } catch {
+        // An aborted fetch is the expected outcome of a second click, not a
+        // failure worth reporting.
+      }
     },
     [load],
   );
