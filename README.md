@@ -225,8 +225,16 @@ to do with the size anyone needs to print. Turning on **Print size** separates
 the two: the tier decides how much detail exists, and this decides how far it is
 spread.
 
-Give it a size in inches and a density, or pick one of the DTF presets, and the
-result is rendered at exactly those pixels. `Fit whole` keeps the entire design
+It is off by default and independent of the tier, and it is not a DTF feature
+with a general escape hatch — it is a general feature with DTF shortcuts. Sizes
+are given in inches, centimetres or plain pixels, at any density from 1 to 2400
+DPI; the suggested densities are a datalist, not a menu, and the size presets
+only fill in a width and height that were already free to type. Plenty of work —
+a banner, a sprite sheet, a game asset — has no physical size at all, which is
+why pixels are a unit here like any other.
+
+Give it a size and a density, or pick one of the DTF presets, and the result is
+rendered at exactly those pixels. `Fit whole` keeps the entire design
 and pads the rest with transparency, which is what transfer film wants — it
 carries ink only where there is ink, so the margin costs nothing. `Fill sheet`
 covers the target instead and crops whatever falls outside.
@@ -243,8 +251,8 @@ over 22 inches.
 The download is named for the size, so a folder of transfers reads
 `logo@11x14in.png` rather than four files all called `4x`.
 
-Print targets are held to the same memory ceiling as the upscaler, because
-inches and density multiply quickly: 22x36 inches at 600 DPI is 285 megapixels.
+Print targets are held to the same memory ceiling as the upscaler, because size
+and density multiply quickly: 22x36 inches at 600 DPI is 285 megapixels.
 
 #### What the neural tier adds to the deployment
 

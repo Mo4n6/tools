@@ -34,8 +34,10 @@ export interface PrintPreset {
 /**
  * Common DTF transfer and gang-sheet sizes.
  *
- * A starting point rather than a standard: printers and shops differ, and the
- * width and height remain editable. The 22-inch widths are the usual film roll
+ * Shortcuts for one use of this panel, not the range of it. Every one of them
+ * only writes a width and a height that were already free to type, and the
+ * panel takes centimetres and raw pixels just as willingly — nothing here is a
+ * setting anybody is confined to. The 22-inch widths are the usual film roll
  * and the reason gang sheets are shaped the way they are.
  */
 export const DTF_PRESETS: readonly PrintPreset[] = [
@@ -47,8 +49,52 @@ export const DTF_PRESETS: readonly PrintPreset[] = [
   { id: 'gang-long', label: 'Gang sheet 22x36', widthInches: 22, heightInches: 36, note: 'Film-roll width, longer run.' },
 ];
 
-/** Densities worth offering. 300 is the DTF default; 600 is for fine line art. */
-export const DPI_CHOICES = [150, 300, 600] as const;
+/**
+ * Densities worth suggesting. 300 is the usual transfer density; 600 suits
+ * fine line art; 72 and 96 are screen conventions.
+ *
+ * Suggestions, not a menu: the density is a free number, because a tool that
+ * enlarges pictures has no business deciding what someone is enlarging them
+ * for.
+ */
+export const DPI_SUGGESTIONS = [72, 96, 150, 300, 600] as const;
+
+/** Densities below or above this are refused as typing mistakes, not choices. */
+export const DPI_RANGE = { min: 1, max: 2400 } as const;
+
+export function clampDpi(dpi: number): number {
+  if (!Number.isFinite(dpi)) return 300;
+  return Math.min(DPI_RANGE.max, Math.max(DPI_RANGE.min, Math.round(dpi)));
+}
+
+/**
+ * How a target may be expressed.
+ *
+ * Inches because transfers are sold that way, centimetres because most of the
+ * world measures that way, and pixels because plenty of work — a banner, a
+ * sprite sheet, an asset for a game — has no physical size at all and asking
+ * for one would be a fiction.
+ */
+export type PrintUnit = 'in' | 'cm' | 'px';
+
+export const UNIT_LABELS: Record<PrintUnit, string> = { in: 'inches', cm: 'cm', px: 'pixels' };
+
+const CM_PER_INCH = 2.54;
+
+/** Converts a length in the given unit to the inches the target is held in. */
+export function toInches(value: number, unit: PrintUnit, dpi: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (unit === 'in') return value;
+  if (unit === 'cm') return value / CM_PER_INCH;
+  return value / clampDpi(dpi);
+}
+
+/** Converts inches back out for display in the given unit. */
+export function fromInches(inches: number, unit: PrintUnit, dpi: number): number {
+  if (unit === 'in') return inches;
+  if (unit === 'cm') return inches * CM_PER_INCH;
+  return Math.round(inches * clampDpi(dpi));
+}
 
 /** The pixel dimensions a target works out to. */
 export function targetPixels(target: PrintTarget): { width: number; height: number } {

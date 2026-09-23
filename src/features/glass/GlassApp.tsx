@@ -14,13 +14,18 @@ import { GLASS_AUTHOR, GLASS_AUTHOR_URL, GLASS_COPYRIGHT, GLASS_SOURCE_URL } fro
 import { TIERS, tierById, type LocalTierId } from './pipeline';
 import { usablePresets } from './presets';
 import {
-  DPI_CHOICES,
+  DPI_SUGGESTIONS,
   DTF_PRESETS,
   FIT_MODE_COPY,
+  UNIT_LABELS,
   assessPrint,
+  clampDpi,
+  fromInches,
   targetPixels,
+  toInches,
   type FitMode,
   type PrintTarget,
+  type PrintUnit,
 } from './print';
 import type { TierId } from './types';
 import { useGlass, type PrintSettings } from './useGlass';
@@ -77,6 +82,9 @@ const GlassApp = (): JSX.Element => {
     dpi: 300,
   });
   const [fitMode, setFitMode] = useState<FitMode>('fit');
+  // The target is held in inches whatever is typed, so switching units cannot
+  // drift the size; only the numbers shown are converted.
+  const [printUnit, setPrintUnit] = useState<PrintUnit>('in');
 
   const imageInput = useRef<HTMLInputElement | null>(null);
   // Sample clicks are ordered here rather than in the hook. The hook's guard
@@ -434,6 +442,10 @@ const GlassApp = (): JSX.Element => {
                   The tier decides how much detail there is; this decides how far it is spread.
                   Fitted after upscaling, and padded with transparency so no ink is printed around it.
                 </p>
+                <p className="mt-1 text-xs text-emerald-300/40">
+                  Any size, in inches, centimetres or plain pixels. The DTF shortcuts below only fill
+                  in a width and a height you could type yourself.
+                </p>
 
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {DTF_PRESETS.map((preset) => {
@@ -468,46 +480,68 @@ const GlassApp = (): JSX.Element => {
                   <p className="mt-1 text-xs text-emerald-300/50">{activePreset.note}</p>
                 ) : null}
 
+                <div className="mt-2 flex gap-1.5 text-xs">
+                  {(['in', 'cm', 'px'] as const).map((unit) => (
+                    <button
+                      key={unit}
+                      type="button"
+                      onClick={() => setPrintUnit(unit)}
+                      className={
+                        unit === printUnit
+                          ? 'rounded-md border border-emerald-400 bg-emerald-500/20 px-2 py-1'
+                          : 'rounded-md border border-emerald-500/30 px-2 py-1 hover:border-emerald-400/60'
+                      }
+                    >
+                      {UNIT_LABELS[unit]}
+                    </button>
+                  ))}
+                </div>
+
                 <div className="mt-2 grid grid-cols-3 gap-2">
                   {(
                     [
-                      ['Width in', 'widthInches'],
-                      ['Height in', 'heightInches'],
+                      ['Width', 'widthInches'],
+                      ['Height', 'heightInches'],
                     ] as const
-                  ).map(([label, key]) => (
-                    <label key={key} className="text-xs text-emerald-300/50">
-                      {label}
-                      <input
-                        type="number"
-                        min={0.25}
-                        max={120}
-                        step={0.25}
-                        value={printTarget[key]}
-                        onChange={(event) =>
-                          setPrintTarget((previous) => ({
-                            ...previous,
-                            [key]: Math.max(0.25, Number(event.target.value) || 0.25),
-                          }))
-                        }
-                        className={`mt-1 ${textField}`}
-                      />
-                    </label>
-                  ))}
+                  ).map(([label, key]) => {
+                    const shown = fromInches(printTarget[key], printUnit, printTarget.dpi);
+                    return (
+                      <label key={key} className="text-xs text-emerald-300/50">
+                        {label}
+                        <input
+                          type="number"
+                          min={0}
+                          step={printUnit === 'px' ? 1 : 0.25}
+                          value={printUnit === 'px' ? shown : Number(shown.toFixed(3))}
+                          onChange={(event) => {
+                            const inches = toInches(Number(event.target.value), printUnit, printTarget.dpi);
+                            if (inches <= 0) return;
+                            setPrintTarget((previous) => ({ ...previous, [key]: inches }));
+                          }}
+                          className={`mt-1 ${textField}`}
+                        />
+                      </label>
+                    );
+                  })}
                   <label className="text-xs text-emerald-300/50">
                     DPI
-                    <select
+                    <input
+                      type="number"
+                      list="glass-dpi"
+                      min={1}
+                      max={2400}
+                      step={1}
                       value={printTarget.dpi}
                       onChange={(event) =>
-                        setPrintTarget((previous) => ({ ...previous, dpi: Number(event.target.value) }))
+                        setPrintTarget((previous) => ({ ...previous, dpi: clampDpi(Number(event.target.value)) }))
                       }
                       className={`mt-1 ${textField}`}
-                    >
-                      {DPI_CHOICES.map((dpi) => (
-                        <option key={dpi} value={dpi}>
-                          {dpi}
-                        </option>
+                    />
+                    <datalist id="glass-dpi">
+                      {DPI_SUGGESTIONS.map((dpi) => (
+                        <option key={dpi} value={dpi} />
                       ))}
-                    </select>
+                    </datalist>
                   </label>
                 </div>
 

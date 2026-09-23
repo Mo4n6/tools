@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DPI_RANGE,
   DTF_PRESETS,
   FIT_MODE_COPY,
+  UNIT_LABELS,
+  clampDpi,
+  fromInches,
+  toInches,
   assessPrint,
   describeQuality,
   effectiveDpi,
@@ -126,6 +131,57 @@ describe('print target budget', () => {
 
   it('allows the same sheet at the usual density', () => {
     expect(targetPixels({ widthInches: 22, heightInches: 36, dpi: 300 })).toEqual({ width: 6600, height: 10800 });
+  });
+});
+
+describe('units', () => {
+  it('offers a name for each unit it accepts', () => {
+    expect(Object.keys(UNIT_LABELS).sort()).toEqual(['cm', 'in', 'px']);
+  });
+
+  it('leaves inches alone', () => {
+    expect(toInches(11, 'in', 300)).toBe(11);
+    expect(fromInches(11, 'in', 300)).toBe(11);
+  });
+
+  it('converts centimetres both ways without drift', () => {
+    expect(toInches(2.54, 'cm', 300)).toBeCloseTo(1, 10);
+    expect(fromInches(1, 'cm', 300)).toBeCloseTo(2.54, 10);
+    expect(fromInches(toInches(30, 'cm', 300), 'cm', 300)).toBeCloseTo(30, 10);
+  });
+
+  it('treats pixels as a size in their own right, against the density', () => {
+    expect(toInches(3300, 'px', 300)).toBe(11);
+    expect(fromInches(11, 'px', 300)).toBe(3300);
+    // The same pixel count is a different physical size at a different density.
+    expect(toInches(3300, 'px', 150)).toBe(22);
+  });
+
+  it('refuses a size that is not a size', () => {
+    for (const unit of ['in', 'cm', 'px'] as const) {
+      expect(toInches(0, unit, 300)).toBe(0);
+      expect(toInches(-5, unit, 300)).toBe(0);
+      expect(toInches(Number.NaN, unit, 300)).toBe(0);
+    }
+  });
+});
+
+describe('density', () => {
+  it('accepts anything sensible rather than a fixed menu', () => {
+    for (const dpi of [72, 96, 203, 300, 360, 600, 1200]) {
+      expect(clampDpi(dpi)).toBe(dpi);
+    }
+  });
+
+  it('treats an absurd value as a typing mistake', () => {
+    expect(clampDpi(0)).toBe(DPI_RANGE.min);
+    expect(clampDpi(-40)).toBe(DPI_RANGE.min);
+    expect(clampDpi(999_999)).toBe(DPI_RANGE.max);
+    expect(clampDpi(Number.NaN)).toBe(300);
+  });
+
+  it('rounds rather than carrying a fractional density', () => {
+    expect(clampDpi(299.6)).toBe(300);
   });
 });
 
