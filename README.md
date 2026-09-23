@@ -218,6 +218,34 @@ built to make a different tier obviously correct:
 Output is deterministic, so regenerating without changing the script produces no
 diff.
 
+#### Print size
+
+A model enlarges by the factor it was trained for, and that factor has nothing
+to do with the size anyone needs to print. Turning on **Print size** separates
+the two: the tier decides how much detail exists, and this decides how far it is
+spread.
+
+Give it a size in inches and a density, or pick one of the DTF presets, and the
+result is rendered at exactly those pixels. `Fit whole` keeps the entire design
+and pads the rest with transparency, which is what transfer film wants — it
+carries ink only where there is ink, so the margin costs nothing. `Fill sheet`
+covers the target instead and crops whatever falls outside.
+
+Fitting happens after upscaling rather than instead of it. That ordering is the
+point: reducing a large result is discarding surplus detail, where enlarging a
+small one is stretching a shortage of it.
+
+Before anything runs, the panel reports the density the chosen size would
+actually get — the number that decides whether a print holds up, and the one
+usually not shown. A result can be enormous in pixels and still be thin spread
+over 22 inches.
+
+The download is named for the size, so a folder of transfers reads
+`logo@11x14in.png` rather than four files all called `4x`.
+
+Print targets are held to the same memory ceiling as the upscaler, because
+inches and density multiply quickly: 22x36 inches at 600 DPI is 285 megapixels.
+
 #### What the neural tier adds to the deployment
 
 The ONNX Runtime WebAssembly binary (~21 MB, served compressed) is emitted into

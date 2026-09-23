@@ -13,8 +13,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GLASS_AUTHOR, GLASS_AUTHOR_URL, GLASS_COPYRIGHT, GLASS_SOURCE_URL } from './attribution';
 import { TIERS, tierById, type LocalTierId } from './pipeline';
 import { usablePresets } from './presets';
+import {
+  DPI_CHOICES,
+  DTF_PRESETS,
+  assessPrint,
+  targetPixels,
+  type FitMode,
+  type PrintTarget,
+} from './print';
 import type { TierId } from './types';
-import { useGlass } from './useGlass';
+import { useGlass, type PrintSettings } from './useGlass';
 import { configuredWeightsUrl, describeBytes, isUsableWeightsUrl } from './weights';
 
 const panel = 'rounded-md border border-emerald-500/30 bg-[#07110a] p-3 text-sm text-emerald-100';
@@ -48,7 +56,7 @@ const WEIGHTS_MODE_LABELS: Record<WeightsMode, string> = {
 };
 
 const GlassApp = (): JSX.Element => {
-  const { state, load, runLocal, runNeural, cancel, clear } = useGlass();
+  const { state, load, runLocal, runNeural, cancel, clear, setPrint } = useGlass();
 
   const [tierId, setTierId] = useState<TierId>('lanczos');
   const [scale, setScale] = useState(2);
@@ -60,6 +68,14 @@ const GlassApp = (): JSX.Element => {
   const [weightsUrl, setWeightsUrl] = useState(() => configuredWeightsUrl(import.meta.env) ?? '');
   const [weightsFile, setWeightsFile] = useState<File | null>(null);
   const [split, setSplit] = useState(50);
+
+  const [printOn, setPrintOn] = useState(false);
+  const [printTarget, setPrintTarget] = useState<PrintTarget>({
+    widthInches: 11,
+    heightInches: 14,
+    dpi: 300,
+  });
+  const [fitMode, setFitMode] = useState<FitMode>('fit');
 
   const imageInput = useRef<HTMLInputElement | null>(null);
   // Sample clicks are ordered here rather than in the hook. The hook's guard
@@ -77,9 +93,45 @@ const GlassApp = (): JSX.Element => {
     }
   }, [scale, tier]);
 
+  useEffect(() => {
+    setPrint(printOn ? ({ target: printTarget, mode: fitMode } satisfies PrintSettings) : null);
+  }, [fitMode, printOn, printTarget, setPrint]);
+
   const busy = state.phase === 'running' || state.phase === 'decoding';
 
+
+
   const selectedPreset = presets.find((candidate) => candidate.id === presetId) ?? null;
+
+  /**
+   * What the chosen size would give, worked out before anything runs.
+   *
+   * The tier's own factor decides how many pixels exist; this decides how far
+   * they are spread. Only the two together say whether a print will hold up,
+   * and the density is the half nobody is usually shown.
+   */
+  const printOutlook = useMemo(() => {
+    const source = state.source;
+    if (!printOn || !source) return null;
+
+    const upscaled = {
+      width: source.image.width * (tier.scales.length > 0 ? scale : (selectedPreset?.scale ?? 4)),
+      height: source.image.height * (tier.scales.length > 0 ? scale : (selectedPreset?.scale ?? 4)),
+    };
+
+    try {
+      const pixels = targetPixels(printTarget);
+      const { dpi, quality } = assessPrint(upscaled, printTarget, fitMode);
+      return { pixels, dpi: Math.round(dpi), quality, error: null as string | null };
+    } catch (error) {
+      return {
+        pixels: null,
+        dpi: 0,
+        quality: 'thin' as const,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }, [fitMode, printOn, printTarget, scale, selectedPreset, state.source, tier.scales.length]);
 
   const weightsReady =
     weightsMode === 'preset'
@@ -357,6 +409,144 @@ const GlassApp = (): JSX.Element => {
               )}
             </div>
           )}
+
+          <div className={panel}>
+            <label className="flex cursor-pointer items-center gap-2 text-xs uppercase tracking-wide text-emerald-300/60">
+              <input
+                type="checkbox"
+                checked={printOn}
+                onChange={(event) => setPrintOn(event.target.checked)}
+                className="accent-emerald-400"
+              />
+              Print size
+            </label>
+
+            {printOn ? (
+              <>
+                <p className="mt-1 text-xs text-emerald-300/50">
+                  The tier decides how much detail there is; this decides how far it is spread.
+                  Fitted after upscaling, and padded with transparency so no ink is printed around it.
+                </p>
+
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {DTF_PRESETS.map((preset) => {
+                    const active =
+                      preset.widthInches === printTarget.widthInches &&
+                      preset.heightInches === printTarget.heightInches;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        title={preset.note}
+                        onClick={() =>
+                          setPrintTarget((previous) => ({
+                            ...previous,
+                            widthInches: preset.widthInches,
+                            heightInches: preset.heightInches,
+                          }))
+                        }
+                        className={
+                          active
+                            ? 'rounded-md border border-emerald-400 bg-emerald-500/20 px-2 py-1 text-xs'
+                            : 'rounded-md border border-emerald-500/30 px-2 py-1 text-xs hover:border-emerald-400/60'
+                        }
+                      >
+                        {preset.widthInches}x{preset.heightInches}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      ['Width in', 'widthInches'],
+                      ['Height in', 'heightInches'],
+                    ] as const
+                  ).map(([label, key]) => (
+                    <label key={key} className="text-xs text-emerald-300/50">
+                      {label}
+                      <input
+                        type="number"
+                        min={0.25}
+                        max={120}
+                        step={0.25}
+                        value={printTarget[key]}
+                        onChange={(event) =>
+                          setPrintTarget((previous) => ({
+                            ...previous,
+                            [key]: Math.max(0.25, Number(event.target.value) || 0.25),
+                          }))
+                        }
+                        className={`mt-1 ${textField}`}
+                      />
+                    </label>
+                  ))}
+                  <label className="text-xs text-emerald-300/50">
+                    DPI
+                    <select
+                      value={printTarget.dpi}
+                      onChange={(event) =>
+                        setPrintTarget((previous) => ({ ...previous, dpi: Number(event.target.value) }))
+                      }
+                      className={`mt-1 ${textField}`}
+                    >
+                      {DPI_CHOICES.map((dpi) => (
+                        <option key={dpi} value={dpi}>
+                          {dpi}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="mt-2 flex gap-2 text-xs">
+                  {(['fit', 'fill'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      title={
+                        mode === 'fit'
+                          ? 'Keep the whole design; pad the rest with transparency.'
+                          : 'Cover the sheet; crop whatever falls outside.'
+                      }
+                      onClick={() => setFitMode(mode)}
+                      className={
+                        mode === fitMode
+                          ? 'rounded-md border border-emerald-400 bg-emerald-500/20 px-2 py-1'
+                          : 'rounded-md border border-emerald-500/30 px-2 py-1 hover:border-emerald-400/60'
+                      }
+                    >
+                      {mode === 'fit' ? 'Fit whole' : 'Fill sheet'}
+                    </button>
+                  ))}
+                </div>
+
+                {printOutlook ? (
+                  printOutlook.error ? (
+                    <p className="mt-2 text-xs text-rose-300/80">{printOutlook.error}</p>
+                  ) : (
+                    <p className="mt-2 text-xs text-emerald-300/60">
+                      {printOutlook.pixels?.width}x{printOutlook.pixels?.height} px ·{' '}
+                      <span
+                        className={
+                          printOutlook.quality === 'thin'
+                            ? 'text-rose-300'
+                            : printOutlook.quality === 'marginal'
+                              ? 'text-amber-300'
+                              : 'text-emerald-200'
+                        }
+                      >
+                        {printOutlook.dpi} DPI, {printOutlook.quality}
+                      </span>
+                    </p>
+                  )
+                ) : (
+                  <p className="mt-2 text-xs text-emerald-300/40">Choose an image to see the density.</p>
+                )}
+              </>
+            ) : null}
+          </div>
 
           <div className="flex gap-2">
             <button type="button" className={primaryAction} disabled={!canRun} onClick={handleRun}>

@@ -61,8 +61,19 @@ export async function encodePng(image: RgbaImage): Promise<Blob> {
   });
 }
 
-/** Builds the download name, preserving the stem and marking the factor. */
-export function outputFileName(inputName: string, scale: number): string {
+/**
+ * Builds the download name, marking what was asked for.
+ *
+ * A factor when the result is simply larger, and the physical size when one
+ * was chosen — a folder of transfers is far easier to work through when the
+ * filenames say 11x14in than when they all say 4x.
+ */
+export function outputFileName(
+  inputName: string,
+  sizing: number | { readonly widthInches: number; readonly heightInches: number },
+): string {
   const stem = inputName.replace(/\.[^.]+$/, '') || 'image';
-  return `${stem}@${scale}x.png`;
+  if (typeof sizing === 'number') return `${stem}@${sizing}x.png`;
+  const trim = (value: number) => String(Number(value.toFixed(2)));
+  return `${stem}@${trim(sizing.widthInches)}x${trim(sizing.heightInches)}in.png`;
 }
