@@ -188,12 +188,16 @@ needs from it.
 Use a revision URL, not a branch: a branch moves, and a digest pinned to a moving
 target eventually fails for no reason anyone remembers.
 
-`WEIGHTS_PRESETS` ships with three Real-ESRGAN entries. **Their digests were
-supplied rather than computed in the environment that added them**, and carry no
-recorded size for the same reason. Verification still fails closed, so a wrong
-digest cannot load — but if one of them reports a mismatch, a transcription
-error is far likelier than an attack. Re-run the helper against the URL with the
-recorded digest as a second argument, and correct the entry from its output.
+`WEIGHTS_PRESETS` ships with three Real-ESRGAN entries. Their digests were
+supplied rather than computed when they were first added, and have since been
+confirmed against copies downloaded from those exact URLs; the recorded sizes
+were measured at the same time.
+
+What remains unconfirmed is behaviour: none has been run through Glass, so each
+`scale` is what the export is named for rather than what was observed. That
+costs nothing in correctness, because the real factor is read back from the
+model's output shape at run time — a wrong label changes what the dropdown says,
+not what the tier produces.
 
 With no entries at all the UI says so and points at the helper, rather than
 offering a download that may 404 or may not be the model it claims to be.
