@@ -43,20 +43,24 @@ export interface WeightsPreset {
 /**
  * Populated from `npm run glass:preset` output.
  *
- * PROVENANCE: the three digests below were supplied by the maintainer rather
- * than computed here — Hugging Face is unreachable from the environment this
- * file was written in, so the bytes were never fetched and hashed locally, and
- * `bytes` is absent for the same reason.
+ * PROVENANCE: these three digests were supplied rather than computed in the
+ * environment that first added them, and were confirmed afterwards against
+ * copies downloaded from these exact URLs — every one matched, and the sizes
+ * below were measured at the same time.
  *
- * That matters for reading a failure. Verification still fails closed, so a
- * wrong digest cannot load; but if one of these reports a mismatch, a
- * transcription error is far likelier than an attack. Re-run the helper
- * against the URL, compare, and correct the entry:
+ * What is still unconfirmed is how each behaves once loaded. None has been run
+ * through Glass, so the factors below are what the exports are named for
+ * rather than what was observed. That costs nothing in correctness: the real
+ * factor is read back from the model's output shape at run time, so a wrong
+ * label here changes what the dropdown says and not what the tier produces.
  *
- *   npm run glass:preset -- <url> <the digest recorded here>
+ * To add an entry, or to re-check one:
  *
- * Entries added that way carry a size and a factor read from the model itself,
- * and are confirmed rather than taken on trust.
+ *   npm run glass:preset -- <url> [expected-sha256]
+ *
+ * It hashes the bytes, loads the graph, and pushes a tile through it, which is
+ * the one thing a digest cannot tell you: a model with a fixed input size
+ * hashes perfectly well and then cannot be tiled.
  */
 export const WEIGHTS_PRESETS: readonly WeightsPreset[] = [
   {
@@ -65,6 +69,7 @@ export const WEIGHTS_PRESETS: readonly WeightsPreset[] = [
     note: 'A small, fast general-purpose model. The one to try first.',
     url: 'https://huggingface.co/EasyImageSharp/EasyImageSharp-models/resolve/749ac2375f4bb2aa67825ecec197e8e03eb293f0/realesrgan_general_x4v3.onnx',
     sha256: 'aaa2b465d2258bdcc30d51076bc358da00d1595d2fa05697979e782f97de325a',
+    bytes: 4867416,
     scale: 4,
   },
   {
@@ -73,6 +78,7 @@ export const WEIGHTS_PRESETS: readonly WeightsPreset[] = [
     note: 'The full x4 model. Slower, and stronger on photographs.',
     url: 'https://huggingface.co/SceneWorks/real-esrgan-onnx/resolve/09f741bac80a246b407da3ee902bf5f3291b602f/real_esrgan_x4.onnx',
     sha256: '5c586662929cbc686c1a5c38d9c060dbdb4ea5863a1f7672b8c0761e6b89c033',
+    bytes: 67051616,
     scale: 4,
   },
   {
@@ -81,7 +87,20 @@ export const WEIGHTS_PRESETS: readonly WeightsPreset[] = [
     note: 'Doubles rather than quadruples, for when 4x is more than you want.',
     url: 'https://huggingface.co/SceneWorks/real-esrgan-onnx/resolve/09f741bac80a246b407da3ee902bf5f3291b602f/real_esrgan_x2.onnx',
     sha256: '7115ba92e8a1bfa63d68558ef006ef3d91273a068d321b1439f8bb1c9179002c',
+    bytes: 67073434,
     scale: 2,
+  },
+  {
+    id: 'swin2sr-realworld-sr-x4-64-bsrgan-psnr',
+    label: 'Swin2SR real-world x4',
+    // The name carries a 64, which in this family usually means the export was
+    // traced at a fixed 64px input. If that is so here, it will fail on the
+    // first tile with the explanation neural.ts gives, rather than silently.
+    note: 'A transformer rather than a GAN. Untried: it may not tile.',
+    url: 'https://huggingface.co/Xenova/swin2SR-realworld-sr-x4-64-bsrgan-psnr/resolve/d0e9926970c93e472ce2392373d72597fc849027/onnx/model.onnx',
+    sha256: 'f496dc73dcc01d778b1a12eb4c4038d6b27cd1c0b5bcd4258455ed6d7816c835',
+    bytes: 52772645,
+    scale: 4,
   },
 ];
 
