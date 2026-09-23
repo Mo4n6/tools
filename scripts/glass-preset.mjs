@@ -22,6 +22,8 @@
 // reason anyone remembers.
 
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 const TILE = 64;
 const HEX_64 = /^[0-9a-f]{64}$/i;
@@ -79,10 +81,19 @@ async function inspect(job, ort) {
   const check = checkUrl(url);
   if (!check.ok) return { url, error: check.reason };
 
-  const response = await fetch(url, { redirect: 'follow' });
-  if (!response.ok) return { url, error: `${response.status} ${response.statusText}` };
+  // fetch rejects rather than resolving for DNS, TLS, timeout and reset
+  // failures, and reading the body can fail part-way through. Either would
+  // escape to the top level and end the run, which defeats the point of
+  // batching: one flaky host would cost every candidate after it.
+  let buffer;
+  try {
+    const response = await fetch(url, { redirect: 'follow' });
+    if (!response.ok) return { url, error: `${response.status} ${response.statusText}` };
+    buffer = Buffer.from(await response.arrayBuffer());
+  } catch (error) {
+    return { url, error: `could not fetch it: ${error instanceof Error ? error.message : error}` };
+  }
 
-  const buffer = Buffer.from(await response.arrayBuffer());
   const sha256 = createHash('sha256').update(buffer).digest('hex');
 
   // Checked, not trusted. This is the whole reason the script exists.
@@ -136,6 +147,65 @@ async function inspect(job, ort) {
   };
 }
 
+/** Lowercase, hyphenated, safe to paste as an id. */
+function slug(text) {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Reads the ids already in presets.ts, so a generated one cannot collide with
+ * an entry that is already shipping.
+ *
+ * Best effort: the file is TypeScript and this is a plain script, so it is
+ * scanned rather than imported. Failing to read it costs uniqueness against
+ * existing entries, which the test suite catches anyway.
+ */
+function existingIds() {
+  try {
+    const source = readFileSync(path.join(process.cwd(), 'src/features/glass/presets.ts'), 'utf8');
+    return new Set([...source.matchAll(/\bid:\s*'([^']+)'/g)].map((match) => match[1]));
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Derives an id that is actually distinct.
+ *
+ * The filename alone is not enough: exports are routinely called `model.onnx`,
+ * so two repositories in one batch would produce one id twice. Duplicated ids
+ * survive the paste and then quietly break selection, because the picker
+ * resolves a preset by finding the first match. So the bare stem is preferred,
+ * and qualified with the repository when it is taken.
+ */
+function deriveId(url, taken) {
+  const segments = new URL(url).pathname.split('/').filter(Boolean);
+  const stem = (segments[segments.length - 1] ?? 'model').replace(/\.onnx$/i, '');
+
+  // Everything before the revision marker names the repository.
+  const marker = segments.findIndex((segment) => segment === 'resolve' || segment === 'raw');
+  const repo = marker > 0 ? segments.slice(0, marker) : [];
+
+  const candidates = [
+    stem,
+    [...repo.slice(-1), stem].join('-'),
+    [...repo.slice(-2), stem].join('-'),
+  ];
+
+  for (const candidate of candidates) {
+    const id = slug(candidate);
+    if (id && !taken.has(id)) return id;
+  }
+
+  const base = slug([...repo.slice(-2), stem].join('-')) || 'model';
+  for (let n = 2; ; n += 1) {
+    if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
+  }
+}
+
 const jobs = (() => {
   try {
     return parseJobs(process.argv.slice(2));
@@ -179,8 +249,10 @@ if (usable.length === 0) {
 }
 
 console.log(`glass-preset: paste into WEIGHTS_PRESETS in src/features/glass/presets.ts\n`);
+const taken = existingIds();
 for (const result of usable) {
-  const id = (new URL(result.url).pathname.split('/').pop() ?? 'model').replace(/\.onnx$/i, '').toLowerCase();
+  const id = deriveId(result.url, taken);
+  taken.add(id);
   console.log(
     [
       '  {',
