@@ -13,6 +13,7 @@ import {
   effectiveDpi,
   fitToPrint,
   placeOnTarget,
+  printRefusal,
   targetPixels,
   type PrintTarget,
 } from '../print';
@@ -122,15 +123,33 @@ describe('fitToPrint', () => {
 });
 
 describe('print target budget', () => {
-  it('refuses a size that multiplies out past what can be held', () => {
+  const GANG: PrintTarget = { widthInches: 22, heightInches: 36, dpi: 300 };
+
+  it('refuses a sheet that multiplies out past what can be held', () => {
     // 22x36 inches at 600 DPI is 285 megapixels — larger than the upscaler
     // itself is allowed to produce.
-    expect(() => fitToPrint(solid(8, 8, [0, 0, 0, 255]), { widthInches: 22, heightInches: 36, dpi: 600 }, 'fit'))
+    expect(() => fitToPrint(solid(8, 8, [0, 0, 0, 255]), { ...GANG, dpi: 600 }, 'fit'))
       .toThrow(/Use a lower density or a smaller size/);
   });
 
   it('allows the same sheet at the usual density', () => {
-    expect(targetPixels({ widthInches: 22, heightInches: 36, dpi: 300 })).toEqual({ width: 6600, height: 10800 });
+    expect(targetPixels(GANG)).toEqual({ width: 6600, height: 10800 });
+    expect(printRefusal({ width: 2000, height: 3000 }, GANG, 'fit')).toBeNull();
+  });
+
+  it('refuses a fill that would scale the source past the ceiling before cropping', () => {
+    // The sheet is only 71 MP, but covering it with a tall narrow design means
+    // allocating 6600x52800 — 348 MP — and cropping afterwards. Checking the
+    // sheet alone let this through.
+    const tall = { width: 512, height: 4096 };
+    expect(printRefusal(tall, GANG, 'fill')).toMatch(/Filling this sheet scales the image/);
+    expect(() => fitToPrint(solid(512, 4096, [0, 0, 0, 255]), GANG, 'fill')).toThrow(RangeError);
+  });
+
+  it('says that fitting would work, since that is the way out', () => {
+    const tall = { width: 512, height: 4096 };
+    expect(printRefusal(tall, GANG, 'fill')).toMatch(/Fit whole would not/);
+    expect(printRefusal(tall, GANG, 'fit')).toBeNull();
   });
 });
 

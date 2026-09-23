@@ -57,6 +57,12 @@ describe('GlassApp', () => {
     expect(markup).not.toContain('Local file');
   });
 
+  it('cannot run before an image is chosen, whatever else is set', () => {
+    // canRun folds several conditions together; this pins the one that holds
+    // on a freshly loaded page.
+    expect(markup).toMatch(/Upscale<\/button>/);
+  });
+
   it('carries its attribution', () => {
     expect(markup).toContain('Mo4n6');
     expect(markup).toContain('https://github.com/Mo4n6/tools');

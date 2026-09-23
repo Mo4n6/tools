@@ -20,6 +20,7 @@ import {
   UNIT_LABELS,
   assessPrint,
   clampDpi,
+  printRefusal,
   fromInches,
   targetPixels,
   toInches,
@@ -85,6 +86,9 @@ const GlassApp = (): JSX.Element => {
   // The target is held in inches whatever is typed, so switching units cannot
   // drift the size; only the numbers shown are converted.
   const [printUnit, setPrintUnit] = useState<PrintUnit>('in');
+  // What is in the size boxes while it is still being typed. A half-finished
+  // number is not a size, but it is also not a reason to undo the keystroke.
+  const [sizeDraft, setSizeDraft] = useState<Partial<Record<'widthInches' | 'heightInches', string>>>({});
 
   const imageInput = useRef<HTMLInputElement | null>(null);
   // Sample clicks are ordered here rather than in the hook. The hook's guard
@@ -129,24 +133,43 @@ const GlassApp = (): JSX.Element => {
     const source = state.source;
     if (!printOn || !source) return null;
 
+    const pixels = targetPixels(printTarget);
+
+    // The factor is only known in advance for the local tiers, and for the
+    // neural tier when the model came from the list. A model supplied as a file
+    // or a URL announces its factor by running, so guessing one here would put
+    // a confident density on the screen that the run then contradicts.
+    const factor =
+      tier.scales.length > 0 ? scale : weightsMode === 'preset' ? (selectedPreset?.scale ?? null) : null;
+
+    if (factor === null) {
+      // The sheet itself can still be refused without knowing the factor.
+      const sheetOnly = printRefusal({ width: 1, height: 1 }, printTarget, 'fit');
+      return { pixels, dpi: null, quality: null, error: sheetOnly };
+    }
+
     const upscaled = {
-      width: source.image.width * (tier.scales.length > 0 ? scale : (selectedPreset?.scale ?? 4)),
-      height: source.image.height * (tier.scales.length > 0 ? scale : (selectedPreset?.scale ?? 4)),
+      width: Math.round(source.image.width * factor),
+      height: Math.round(source.image.height * factor),
     };
 
-    try {
-      const pixels = targetPixels(printTarget);
-      const { dpi, quality } = assessPrint(upscaled, printTarget, fitMode);
-      return { pixels, dpi: Math.round(dpi), quality, error: null as string | null };
-    } catch (error) {
-      return {
-        pixels: null,
-        dpi: 0,
-        quality: 'thin' as const,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }, [fitMode, printOn, printTarget, scale, selectedPreset, state.source, tier.scales.length]);
+    // Checked rather than caught: nothing above throws, so a try here was
+    // dead code and the oversize warning could never appear until after a run.
+    const error = printRefusal(upscaled, printTarget, fitMode);
+    if (error) return { pixels, dpi: null, quality: null, error };
+
+    const { dpi, quality } = assessPrint(upscaled, printTarget, fitMode);
+    return { pixels, dpi: Math.round(dpi), quality, error: null as string | null };
+  }, [
+    fitMode,
+    printOn,
+    printTarget,
+    scale,
+    selectedPreset,
+    state.source,
+    tier.scales.length,
+    weightsMode,
+  ]);
 
   const weightsReady =
     weightsMode === 'preset'
@@ -156,7 +179,13 @@ const GlassApp = (): JSX.Element => {
         : isUsableWeightsUrl(weightsUrl.trim());
 
   const canRun =
-    state.source !== null && !busy && (tierId !== 'neural' || weightsReady);
+    state.source !== null &&
+    !busy &&
+    (tierId !== 'neural' || weightsReady) &&
+    // Knowing in advance that the target cannot be rendered is only worth
+    // anything if the run is not offered anyway: otherwise the prediction just
+    // arrives twenty seconds before the failure it predicted.
+    !printOutlook?.error;
 
   const handleFiles = useCallback(
     (files: FileList | null) => {
@@ -485,7 +514,10 @@ const GlassApp = (): JSX.Element => {
                     <button
                       key={unit}
                       type="button"
-                      onClick={() => setPrintUnit(unit)}
+                      onClick={() => {
+                        setPrintUnit(unit);
+                        setSizeDraft({});
+                      }}
                       className={
                         unit === printUnit
                           ? 'rounded-md border border-emerald-400 bg-emerald-500/20 px-2 py-1'
@@ -512,12 +544,19 @@ const GlassApp = (): JSX.Element => {
                           type="number"
                           min={0}
                           step={printUnit === 'px' ? 1 : 0.25}
-                          value={printUnit === 'px' ? shown : Number(shown.toFixed(3))}
+                          value={sizeDraft[key] ?? (printUnit === 'px' ? shown : Number(shown.toFixed(3)))}
                           onChange={(event) => {
-                            const inches = toInches(Number(event.target.value), printUnit, printTarget.dpi);
-                            if (inches <= 0) return;
-                            setPrintTarget((previous) => ({ ...previous, [key]: inches }));
+                            const raw = event.target.value;
+                            // Keep what was typed, so the keystrokes that build
+                            // "0.5" are not each rejected as a zero size and
+                            // undone. The target only moves once it parses.
+                            setSizeDraft((previous) => ({ ...previous, [key]: raw }));
+                            const inches = toInches(Number(raw), printUnit, printTarget.dpi);
+                            if (inches > 0) {
+                              setPrintTarget((previous) => ({ ...previous, [key]: inches }));
+                            }
                           }}
+                          onBlur={() => setSizeDraft((previous) => ({ ...previous, [key]: undefined }))}
                           className={`mt-1 ${textField}`}
                         />
                       </label>
@@ -569,18 +608,24 @@ const GlassApp = (): JSX.Element => {
                     <p className="mt-2 text-xs text-rose-300/80">{printOutlook.error}</p>
                   ) : (
                     <p className="mt-2 text-xs text-emerald-300/60">
-                      {printOutlook.pixels?.width}x{printOutlook.pixels?.height} px ·{' '}
-                      <span
-                        className={
-                          printOutlook.quality === 'thin'
-                            ? 'text-rose-300'
-                            : printOutlook.quality === 'marginal'
-                              ? 'text-amber-300'
-                              : 'text-emerald-200'
-                        }
-                      >
-                        {printOutlook.dpi} DPI, {printOutlook.quality}
-                      </span>
+                      {printOutlook.pixels.width}x{printOutlook.pixels.height} px ·{' '}
+                      {printOutlook.quality === null ? (
+                        <span className="text-emerald-300/50">
+                          density depends on the factor this model turns out to have
+                        </span>
+                      ) : (
+                        <span
+                          className={
+                            printOutlook.quality === 'thin'
+                              ? 'text-rose-300'
+                              : printOutlook.quality === 'marginal'
+                                ? 'text-amber-300'
+                                : 'text-emerald-200'
+                          }
+                        >
+                          {printOutlook.dpi} DPI, {printOutlook.quality}
+                        </span>
+                      )}
                     </p>
                   )
                 ) : (

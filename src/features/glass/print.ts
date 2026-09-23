@@ -205,6 +205,50 @@ export function assessPrint(
 }
 
 /**
+ * Why a target cannot be rendered, or null when it can.
+ *
+ * Two allocations have to fit, not one. The sheet itself is the obvious one —
+ * inches and density multiply fast, and 22x36 at 600 DPI is 285 megapixels.
+ * The other is the resampled source, which in `fill` mode is larger than the
+ * sheet by however much the aspect ratios disagree: a tall narrow design on a
+ * wide sheet is scaled until it covers the width, and the part hanging off the
+ * top and bottom is allocated before it is cropped. A 512x4096 source on a
+ * 22x36 inch sheet needs 348 megapixels to produce a 71 megapixel result.
+ *
+ * Returned rather than thrown so the panel can say this before a run rather
+ * than after one.
+ */
+export function printRefusal(
+  source: { readonly width: number; readonly height: number },
+  target: PrintTarget,
+  mode: FitMode,
+): string | null {
+  const { width: targetWidth, height: targetHeight } = targetPixels(target);
+  const sheet = targetWidth * targetHeight;
+
+  if (sheet > MAX_OUTPUT_PIXELS) {
+    return (
+      `${target.widthInches}x${target.heightInches} ${UNIT_LABELS.in} at ${target.dpi} DPI is ` +
+      `${targetWidth}x${targetHeight} pixels, needing ` +
+      `${(outputBytes(targetWidth, targetHeight) / 1024 ** 3).toFixed(1)} GB. ` +
+      `Use a lower density or a smaller size.`
+    );
+  }
+
+  const placement = placeOnTarget(source, target, mode);
+  const scaled = placement.width * placement.height;
+  if (scaled > MAX_OUTPUT_PIXELS) {
+    return (
+      `Filling this sheet scales the image to ${placement.width}x${placement.height} before cropping, ` +
+      `needing ${(outputBytes(placement.width, placement.height) / 1024 ** 3).toFixed(1)} GB. ` +
+      `Fit whole would not, because it never scales past the sheet.`
+    );
+  }
+
+  return null;
+}
+
+/**
  * Renders a result at exactly the target's pixel dimensions.
  *
  * Resampled with the same Lanczos filter the first tier uses, then placed on a
@@ -212,20 +256,10 @@ export function assessPrint(
  * background would be printed as white ink.
  */
 export function fitToPrint(source: RgbaImage, target: PrintTarget, mode: FitMode): RgbaImage {
+  const refusal = printRefusal(source, target, mode);
+  if (refusal) throw new RangeError(refusal);
+
   const { width: targetWidth, height: targetHeight } = targetPixels(target);
-
-  // Inches and density multiply fast: 22x36 at 600 DPI is 285 megapixels,
-  // larger than anything the upscaler itself is allowed to produce. The same
-  // ceiling applies, and for the same reason.
-  if (targetWidth * targetHeight > MAX_OUTPUT_PIXELS) {
-    throw new RangeError(
-      `${target.widthInches}x${target.heightInches} inches at ${target.dpi} DPI is ` +
-        `${targetWidth}x${targetHeight} pixels, needing ` +
-        `${(outputBytes(targetWidth, targetHeight) / 1024 ** 3).toFixed(1)} GB. ` +
-        `Use a lower density or a smaller size.`,
-    );
-  }
-
   const placement = placeOnTarget(source, target, mode);
   const scaled = resample(source, placement.width, placement.height);
 

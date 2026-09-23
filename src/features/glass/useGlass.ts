@@ -182,6 +182,10 @@ export function useGlass(): GlassController {
         data: new Uint8ClampedArray(message.pixels),
       };
 
+      // publish can reject — a print target that will not fit, or an encode the
+      // browser refuses. Unhandled, that left the tab sitting on "resampling"
+      // for ever with nothing said. The neural path already awaits this inside
+      // a try; this one has to catch for itself.
       void publish(
         message.id,
         image,
@@ -190,7 +194,10 @@ export function useGlass(): GlassController {
         image.width / source.image.width,
         performance.now() - startedAt.current,
         null,
-      );
+      ).catch((error: unknown) => {
+        if (requestId.current !== message.id) return;
+        setState((previous) => ({ ...previous, phase: 'error', progress: null, error: messageOf(error) }));
+      });
     };
 
     worker.onerror = (event) => {
