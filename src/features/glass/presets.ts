@@ -27,8 +27,14 @@ export interface WeightsPreset {
   readonly url: string;
   /** Lowercase hex SHA-256 of the exact bytes at that URL. */
   readonly sha256: string;
-  /** Shown before the download starts, so the cost is known in advance. */
-  readonly bytes: number;
+  /**
+   * Shown before the download starts, so the cost is known in advance.
+   *
+   * Optional, because it is only known by fetching the file. An entry added
+   * from a digest supplied elsewhere has no size until someone runs the helper
+   * against it, and inventing a number would be worse than showing none.
+   */
+  readonly bytes?: number;
   /** What the model is expected to do; the real factor is still read back
    *  from its output shape, so a mismatch cannot produce a wrong-sized image. */
   readonly scale: number;
@@ -37,11 +43,47 @@ export interface WeightsPreset {
 /**
  * Populated from `npm run glass:preset` output.
  *
- * Empty ships an honest tier rather than a guessed one: with no entries the UI
- * says so and points at the script, instead of offering a download that may
- *404 or may not be the model it claims.
+ * PROVENANCE: the three digests below were supplied by the maintainer rather
+ * than computed here — Hugging Face is unreachable from the environment this
+ * file was written in, so the bytes were never fetched and hashed locally, and
+ * `bytes` is absent for the same reason.
+ *
+ * That matters for reading a failure. Verification still fails closed, so a
+ * wrong digest cannot load; but if one of these reports a mismatch, a
+ * transcription error is far likelier than an attack. Re-run the helper
+ * against the URL, compare, and correct the entry:
+ *
+ *   npm run glass:preset -- <url> <the digest recorded here>
+ *
+ * Entries added that way carry a size and a factor read from the model itself,
+ * and are confirmed rather than taken on trust.
  */
-export const WEIGHTS_PRESETS: readonly WeightsPreset[] = [];
+export const WEIGHTS_PRESETS: readonly WeightsPreset[] = [
+  {
+    id: 'realesrgan-general-x4v3',
+    label: 'Real-ESRGAN general x4v3',
+    note: 'A small, fast general-purpose model. The one to try first.',
+    url: 'https://huggingface.co/EasyImageSharp/EasyImageSharp-models/resolve/749ac2375f4bb2aa67825ecec197e8e03eb293f0/realesrgan_general_x4v3.onnx',
+    sha256: 'aaa2b465d2258bdcc30d51076bc358da00d1595d2fa05697979e782f97de325a',
+    scale: 4,
+  },
+  {
+    id: 'real-esrgan-x4',
+    label: 'Real-ESRGAN x4plus',
+    note: 'The full x4 model. Slower, and stronger on photographs.',
+    url: 'https://huggingface.co/SceneWorks/real-esrgan-onnx/resolve/09f741bac80a246b407da3ee902bf5f3291b602f/real_esrgan_x4.onnx',
+    sha256: '5c586662929cbc686c1a5c38d9c060dbdb4ea5863a1f7672b8c0761e6b89c033',
+    scale: 4,
+  },
+  {
+    id: 'real-esrgan-x2',
+    label: 'Real-ESRGAN x2plus',
+    note: 'Doubles rather than quadruples, for when 4x is more than you want.',
+    url: 'https://huggingface.co/SceneWorks/real-esrgan-onnx/resolve/09f741bac80a246b407da3ee902bf5f3291b602f/real_esrgan_x2.onnx',
+    sha256: '7115ba92e8a1bfa63d68558ef006ef3d91273a068d321b1439f8bb1c9179002c',
+    scale: 2,
+  },
+];
 
 const HEX_64 = /^[0-9a-f]{64}$/;
 
@@ -54,7 +96,7 @@ const HEX_64 = /^[0-9a-f]{64}$/;
 export function isUsablePreset(preset: WeightsPreset): boolean {
   if (!preset.id || !preset.label) return false;
   if (!HEX_64.test(preset.sha256)) return false;
-  if (!Number.isInteger(preset.bytes) || preset.bytes <= 0) return false;
+  if (preset.bytes !== undefined && (!Number.isInteger(preset.bytes) || preset.bytes <= 0)) return false;
   if (!(preset.scale > 1)) return false;
   try {
     return new URL(preset.url).protocol === 'https:';

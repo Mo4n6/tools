@@ -188,9 +188,31 @@ needs from it.
 Use a revision URL, not a branch: a branch moves, and a digest pinned to a moving
 target eventually fails for no reason anyone remembers.
 
-`WEIGHTS_PRESETS` ships empty. With no entries the UI says so and points at the
-helper, rather than offering a download that may 404 or may not be the model it
-claims to be.
+`WEIGHTS_PRESETS` ships with three Real-ESRGAN entries. **Their digests were
+supplied rather than computed in the environment that added them**, and carry no
+recorded size for the same reason. Verification still fails closed, so a wrong
+digest cannot load — but if one of them reports a mismatch, a transcription
+error is far likelier than an attack. Re-run the helper against the URL with the
+recorded digest as a second argument, and correct the entry from its output.
+
+With no entries at all the UI says so and points at the helper, rather than
+offering a download that may 404 or may not be the model it claims to be.
+
+#### Sample images
+
+`npm run glass:samples` draws the three images offered on the page into
+`public/glass-samples/`. They are generated rather than sourced, so the
+repository carries no third-party image and no licence question, and each one is
+built to make a different tier obviously correct:
+
+| Sample | What it is | Where it goes |
+| --- | --- | --- |
+| `sprite.png` | 32x32, four colours, hard edges | Pixel keeps them; Lanczos rounds them off |
+| `chart.png` | A spoke target and a gradient ramp | Lanczos resolves it; Pixel cannot |
+| `soft.png` | Blurred past recovery | Only the neural tier can invent detail |
+
+Output is deterministic, so regenerating without changing the script produces no
+diff.
 
 #### What the neural tier adds to the deployment
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import GlassApp from '../GlassApp';
 import { TIERS } from '../pipeline';
+import { usablePresets } from '../presets';
 
 describe('GlassApp', () => {
   const markup = renderToStaticMarkup(<GlassApp />);
@@ -35,6 +36,25 @@ describe('GlassApp', () => {
   it('cannot run before an image is chosen', () => {
     expect(markup).toMatch(/Upscale<\/button>/);
     expect(markup).toContain('disabled=""');
+  });
+
+  it('offers a sample for each tier, so the difference can be seen', () => {
+    for (const label of ['Sprite', 'Detail', 'Soft']) {
+      expect(markup).toContain(`>${label}</button>`);
+    }
+  });
+
+  it('ships known models for the neural tier to offer', () => {
+    // The weights panel only renders once Neural is selected, so this asserts
+    // the list the panel draws from rather than the default markup.
+    expect(usablePresets().length).toBeGreaterThan(0);
+  });
+
+  it('keeps the weights panel out of the way until a tier needs one', () => {
+    // Lanczos is the default and needs no model; showing a model picker beside
+    // it would suggest the first run costs a download when it does not.
+    expect(markup).not.toContain('Known model');
+    expect(markup).not.toContain('Local file');
   });
 
   it('carries its attribution', () => {
