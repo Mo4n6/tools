@@ -60,6 +60,25 @@ export function targetPixels(target: PrintTarget): { width: number; height: numb
 
 export type FitMode = 'fit' | 'fill';
 
+/**
+ * What each mode does, in the operator's terms rather than the geometry's.
+ *
+ * The difference decides whether part of a design is lost, which is worth
+ * saying in the panel rather than leaving to a tooltip nobody hovers over.
+ */
+export const FIT_MODE_COPY: Record<FitMode, { readonly label: string; readonly description: string }> = {
+  fit: {
+    label: 'Fit whole',
+    description:
+      'The whole design sits inside the sheet. Nothing is cropped, and the space left over stays transparent, so no ink is printed there.',
+  },
+  fill: {
+    label: 'Fill sheet',
+    description:
+      'The design covers the sheet edge to edge. Whatever falls outside is cropped away, so parts of the design can be lost.',
+  },
+};
+
 export interface Placement {
   /** Size the source is resampled to. */
   readonly width: number;

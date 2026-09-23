@@ -16,6 +16,7 @@ import { usablePresets } from './presets';
 import {
   DPI_CHOICES,
   DTF_PRESETS,
+  FIT_MODE_COPY,
   assessPrint,
   targetPixels,
   type FitMode,
@@ -110,6 +111,12 @@ const GlassApp = (): JSX.Element => {
    * they are spread. Only the two together say whether a print will hold up,
    * and the density is the half nobody is usually shown.
    */
+  const activePreset =
+    DTF_PRESETS.find(
+      (preset) =>
+        preset.widthInches === printTarget.widthInches && preset.heightInches === printTarget.heightInches,
+    ) ?? null;
+
   const printOutlook = useMemo(() => {
     const source = state.source;
     if (!printOn || !source) return null;
@@ -457,6 +464,10 @@ const GlassApp = (): JSX.Element => {
                   })}
                 </div>
 
+                {activePreset ? (
+                  <p className="mt-1 text-xs text-emerald-300/50">{activePreset.note}</p>
+                ) : null}
+
                 <div className="mt-2 grid grid-cols-3 gap-2">
                   {(
                     [
@@ -505,11 +516,7 @@ const GlassApp = (): JSX.Element => {
                     <button
                       key={mode}
                       type="button"
-                      title={
-                        mode === 'fit'
-                          ? 'Keep the whole design; pad the rest with transparency.'
-                          : 'Cover the sheet; crop whatever falls outside.'
-                      }
+                      title={FIT_MODE_COPY[mode].description}
                       onClick={() => setFitMode(mode)}
                       className={
                         mode === fitMode
@@ -517,10 +524,11 @@ const GlassApp = (): JSX.Element => {
                           : 'rounded-md border border-emerald-500/30 px-2 py-1 hover:border-emerald-400/60'
                       }
                     >
-                      {mode === 'fit' ? 'Fit whole' : 'Fill sheet'}
+                      {FIT_MODE_COPY[mode].label}
                     </button>
                   ))}
                 </div>
+                <p className="mt-1 text-xs text-emerald-300/60">{FIT_MODE_COPY[fitMode].description}</p>
 
                 {printOutlook ? (
                   printOutlook.error ? (

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DTF_PRESETS,
+  FIT_MODE_COPY,
   assessPrint,
   describeQuality,
   effectiveDpi,
@@ -125,6 +126,25 @@ describe('print target budget', () => {
 
   it('allows the same sheet at the usual density', () => {
     expect(targetPixels({ widthInches: 22, heightInches: 36, dpi: 300 })).toEqual({ width: 6600, height: 10800 });
+  });
+});
+
+describe('fit mode copy', () => {
+  it('describes both modes, not just the one that is selected', () => {
+    for (const mode of ['fit', 'fill'] as const) {
+      expect(FIT_MODE_COPY[mode].label.length).toBeGreaterThan(0);
+      expect(FIT_MODE_COPY[mode].description.length).toBeGreaterThan(20);
+    }
+  });
+
+  it('says plainly which one can lose part of the design', () => {
+    // The only difference that matters before committing to a print.
+    expect(FIT_MODE_COPY.fit.description).toMatch(/nothing is cropped/i);
+    expect(FIT_MODE_COPY.fill.description).toMatch(/cropped away|lost/i);
+  });
+
+  it('mentions the transparency that keeps ink off the film', () => {
+    expect(FIT_MODE_COPY.fit.description).toMatch(/transparent/i);
   });
 });
 
