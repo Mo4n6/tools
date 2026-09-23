@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { decodeImage, encodePng, outputFileName } from './imageIo';
+import { fitToPrint, type FitMode, type PrintTarget } from './print';
 import { applyAlpha, extractAlpha, isFullyOpaque } from './imageTensor';
 import { upscaleLanczos } from './lanczos';
 import {
@@ -25,6 +26,12 @@ export interface LoadedImage {
   readonly name: string;
   readonly previewUrl: string;
   readonly byteSize: number;
+}
+
+/** A physical size to render the finished result at, if one was chosen. */
+export interface PrintSettings {
+  readonly target: PrintTarget;
+  readonly mode: FitMode;
 }
 
 export interface UpscaleResult {
@@ -67,6 +74,8 @@ export interface GlassController {
   readonly runNeural: (weights: WeightsSource) => Promise<void>;
   readonly cancel: () => void;
   readonly clear: () => void;
+  /** Applied to whatever the chosen tier produces; null leaves it alone. */
+  readonly setPrint: (print: PrintSettings | null) => void;
 }
 
 export function useGlass(): GlassController {
@@ -81,6 +90,9 @@ export function useGlass(): GlassController {
   // state inside a setState updater would make the updater impure, and React
   // is free to run those more than once.
   const sourceRef = useRef<LoadedImage | null>(null);
+  // Held in a ref rather than passed through every run: it is a property of the
+  // output, not of the tier, and applies the same way to all three.
+  const printRef = useRef<PrintSettings | null>(null);
   // Held across runs so changing the scale does not re-download the weights.
   //
   // Keyed by the URL string, or by the File object itself. Two revisions of a
@@ -104,7 +116,13 @@ export function useGlass(): GlassController {
 
   const publish = useCallback(
     async (runId: number, image: RgbaImage, name: string, tier: TierId, scale: number, elapsedMs: number, backend: NeuralBackend | null) => {
-      const blob = await encodePng(image);
+      // The tier invents detail; this decides how big the result actually is.
+      // Fitting after upscaling rather than instead means the reduction is
+      // discarding surplus detail rather than stretching a shortage of it.
+      const print = printRef.current;
+      const finished = print ? fitToPrint(image, print.target, print.mode) : image;
+
+      const blob = await encodePng(finished);
       // Encoding a large PNG takes long enough for the operator to have cleared
       // the tool or loaded another image. Installing the result now would
       // resurrect a cleared one, or hang this output off the wrong source.
@@ -121,9 +139,9 @@ export function useGlass(): GlassController {
           error: null,
           result: {
             url,
-            fileName: outputFileName(name, scale),
-            width: image.width,
-            height: image.height,
+            fileName: outputFileName(name, print ? print.target : scale),
+            width: finished.width,
+            height: finished.height,
             byteSize: blob.size,
             tier,
             scale,
@@ -393,5 +411,9 @@ export function useGlass(): GlassController {
     });
   }, [releaseUrl]);
 
-  return { state, load, runLocal, runNeural, cancel, clear };
+  const setPrint = useCallback((print: PrintSettings | null): void => {
+    printRef.current = print;
+  }, []);
+
+  return { state, load, runLocal, runNeural, cancel, clear, setPrint };
 }

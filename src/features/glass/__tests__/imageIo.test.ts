@@ -18,4 +18,13 @@ describe('outputFileName', () => {
   it('copes with no extension at all', () => {
     expect(outputFileName('sprite', 8)).toBe('sprite@8x.png');
   });
+
+  it('names the physical size when one was chosen', () => {
+    expect(outputFileName('logo.png', { widthInches: 11, heightInches: 14 })).toBe('logo@11x14in.png');
+  });
+
+  it('trims a fractional size rather than spelling out the float', () => {
+    expect(outputFileName('logo.png', { widthInches: 3.5, heightInches: 4.25 })).toBe('logo@3.5x4.25in.png');
+    expect(outputFileName('logo.png', { widthInches: 8.0, heightInches: 10.0 })).toBe('logo@8x10in.png');
+  });
 });
