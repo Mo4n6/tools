@@ -29,7 +29,8 @@
     "check:deployed-assets": "node scripts/check-deployed-assets.mjs",
     "check:ort-asset": "node scripts/check-ort-asset.mjs",
     "licenses": "node scripts/license-tally.mjs",
-    "glass:preset": "node scripts/glass-preset.mjs"
+    "glass:preset": "node scripts/glass-preset.mjs",
+    "glass:samples": "node scripts/generate-glass-samples.mjs"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",

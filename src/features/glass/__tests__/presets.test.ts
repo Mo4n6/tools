@@ -35,6 +35,10 @@ describe('preset validation', () => {
     expect(isUsablePreset({ ...VALID, scale: 1 })).toBe(false);
   });
 
+  it('allows an unknown size, which is not the same as a wrong one', () => {
+    expect(isUsablePreset({ ...VALID, bytes: undefined })).toBe(true);
+  });
+
   it('rejects an entry with no identity', () => {
     expect(isUsablePreset({ ...VALID, id: '' })).toBe(false);
     expect(isUsablePreset({ ...VALID, label: '' })).toBe(false);
@@ -58,6 +62,22 @@ describe('the presets that actually ship', () => {
   it('have unique ids', () => {
     const ids = WEIGHTS_PRESETS.map((preset) => preset.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('pin every URL to a revision rather than a branch', () => {
+    // A branch moves. A digest pinned to a moving target is a check that will
+    // one day fail for a reason nobody remembers, so the pin is the invariant.
+    for (const preset of WEIGHTS_PRESETS) {
+      expect(preset.url, `${preset.id} is not revision-pinned`).toMatch(
+        /\/(resolve|raw)\/[0-9a-f]{7,40}\//,
+      );
+    }
+  });
+
+  it('advertise a factor above one', () => {
+    for (const preset of WEIGHTS_PRESETS) {
+      expect(preset.scale, `${preset.id}`).toBeGreaterThan(1);
+    }
   });
 });
 
