@@ -1,6 +1,13 @@
 name: Record Rotation Goblin pipeline status
 
 on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 * * * *'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/record-rotation-goblin-status.yml'
   workflow_run:
     workflows:
       - Update Rotation Goblin market data
@@ -11,9 +18,13 @@ permissions:
   contents: write
   actions: write
 
+concurrency:
+  group: rotation-goblin-status-recorder
+  cancel-in-progress: false
+
 jobs:
   record:
-    if: github.event.workflow_run.head_branch == 'main'
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event != 'pull_request')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -24,16 +35,14 @@ jobs:
         with:
           ref: main
 
-      - name: Record refresh result
+      - name: Find latest completed main refresh
         env:
-          RG_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          RG_RUN_ID: ${{ github.event.workflow_run.id }}
-          RG_RUN_URL: ${{ github.event.workflow_run.html_url }}
-          RG_EVENT: ${{ github.event.workflow_run.event }}
-          RG_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          RG_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
-          RG_STARTED_AT: ${{ github.event.workflow_run.run_started_at }}
-          RG_COMPLETED_AT: ${{ github.event.workflow_run.updated_at }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api 'repos/${{ github.repository }}/actions/workflows/update-rotation-goblin.yml/runs?branch=main&status=completed&per_page=100' > /tmp/rotation-runs.json
+
+      - name: Record refresh result
+        id: status
         run: |
           python - <<'PY'
           import datetime as dt
@@ -42,14 +51,21 @@ jobs:
           from pathlib import Path
 
           path = Path("src/features/rotation-goblin/pipelineStatus.generated.ts")
-          conclusion = os.environ.get("RG_CONCLUSION") or "unknown"
-          run_id = int(os.environ["RG_RUN_ID"]) if os.environ.get("RG_RUN_ID") else None
-          run_url = os.environ.get("RG_RUN_URL") or None
-          event = os.environ.get("RG_EVENT") or "unknown"
-          head_sha = os.environ.get("RG_HEAD_SHA") or ""
-          branch = os.environ.get("RG_HEAD_BRANCH") or ""
-          started_at = os.environ.get("RG_STARTED_AT") or None
-          completed_at = os.environ.get("RG_COMPLETED_AT") or None
+          runs = json.loads(Path('/tmp/rotation-runs.json').read_text())['workflow_runs']
+          runs = [run for run in runs if run['event'] in ('push', 'schedule', 'workflow_dispatch') and run['head_branch'] == 'main']
+          if not runs:
+              raise RuntimeError('No completed main refresh found')
+          run = max(runs, key=lambda run: (run['created_at'], run['id']))
+          conclusion = run['conclusion'] or 'unknown'
+          run_id, run_url = run['id'], run['html_url']
+          event, head_sha, branch = run['event'], run['head_sha'], run['head_branch']
+          started_at, completed_at = run['run_started_at'], run['updated_at']
+          previous = path.read_text() if path.exists() else ''
+          if f'runId: {run_id} as' in previous and json.dumps(completed_at) in previous:
+              print('Latest completed run is already recorded.')
+              raise SystemExit(0)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('changed=true\n')
           recorded_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
           def ts(value):
@@ -100,6 +116,7 @@ jobs:
           PY
 
       - name: Commit status marker
+        if: steps.status.outputs.changed == 'true'
         shell: bash
         run: |
           if git diff --quiet -- src/features/rotation-goblin/pipelineStatus.generated.ts; then
@@ -130,7 +147,12 @@ jobs:
           echo "Unable to push after 4 attempts."
           exit 1
 
-      - name: Deploy recorded pipeline status
+      - name: Ensure latest main is deployed
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run deploy-pages.yml --ref main
+        run: |
+          head=$(gh api repos/${{ github.repository }}/git/ref/heads/main --jq '.object.sha')
+          state=$(gh api "repos/${{ github.repository }}/actions/workflows/deploy-pages.yml/runs?branch=main&head_sha=$head&per_page=1" --jq '.workflow_runs[0] | if . == null then "missing" elif .status != "completed" then "active" else .conclusion end')
+          if [ "$state" != "success" ] && [ "$state" != "active" ]; then
+            gh workflow run deploy-pages.yml --ref main
+          fi

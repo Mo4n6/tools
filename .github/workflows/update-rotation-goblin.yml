@@ -14,14 +14,16 @@ on:
       - 'scripts/rotation_goblin_core.py'
       - 'scripts/build-rotation-goblin-decision-engine.py'
       - 'scripts/validate-rotation-goblin-decision-engine.py'
-      - 'scripts/build-rotation-goblin-decision-engine.py'
-      - 'scripts/validate-rotation-goblin-decision-engine.py'
+      - 'scripts/test-rotation-goblin-engine.py'
       - 'scripts/update-rotation-goblin-valuations.py'
       - 'scripts/validate-rotation-goblin-data.py'
       - 'src/features/rotation-goblin/technical-state-history.json'
       - '.github/workflows/update-rotation-goblin.yml'
   pull_request:
     paths:
+      - 'scripts/build-rotation-goblin-decision-engine.py'
+      - 'scripts/validate-rotation-goblin-decision-engine.py'
+      - 'scripts/test-rotation-goblin-engine.py'
       - 'src/features/rotation-goblin/**'
       - 'scripts/update-rotation-goblin.py'
       - 'scripts/rotation_goblin_core.py'
@@ -69,6 +71,9 @@ jobs:
 
       - name: Validate generated market data
         run: python scripts/validate-rotation-goblin-data.py
+
+      - name: Test Decision Engine chronology
+        run: python scripts/test-rotation-goblin-engine.py
 
       - name: Validate Decision Engine
         run: python scripts/validate-rotation-goblin-decision-engine.py

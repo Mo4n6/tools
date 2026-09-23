@@ -196,10 +196,15 @@ def load_training_rows() -> tuple[list[dict[str, Any]], dict[str, list[dict[str,
         latest_states[ticker] = states
 
         state_by_date = {row["date"]: row["features"] for row in states}
+        state_index = {row["date"]: i for i, row in enumerate(states)}
         for label_row in outcome_series[ticker]:
             target = target_monthly(label_row["outcomes"])
             if target is None:
                 continue
+            position = state_index.get(label_row["date"])
+            if position is None or position + 126 >= len(states):
+                continue
+            label_end = dt.date.fromisoformat(states[position + 126]["date"])
             features = state_by_date.get(label_row["date"])
             if features is None:
                 continue
@@ -221,6 +226,7 @@ def load_training_rows() -> tuple[list[dict[str, Any]], dict[str, list[dict[str,
                 "dateObj": dt.date.fromisoformat(label_row["date"]),
                 "features": extracted,
                 "target": float(target),
+                "labelEnd": label_end,
             })
 
     rows.sort(key=lambda row: (row["date"], row["ticker"]))
@@ -333,13 +339,47 @@ def quintile_spread(
     return top - bottom
 
 
-def walk_forward_diagnostics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def evaluate_combined(rows, calibrator, weights):
+    """Same-week rankings; no pooling bull/bear dates into one quintile."""
+    by_week = {}
+    for row in rows:
+        scores = {c: component_score(row["features"], calibrator, c) for c in COMPONENT_FEATURES}
+        f = row["features"]
+        predictions = {
+            "learned": sum(weights[c] * scores[c] for c in scores),
+            "prior": sum(PRIOR_WEIGHTS[c] * scores[c] for c in scores),
+            "relative3m": f["rel3mPct"],
+            "relative3mTrend": (1000 if f["priceVs200dPct"] > 0 else 0) + f["rel3mPct"],
+        }
+        by_week.setdefault(row["date"], []).append((predictions, row["target"]))
+    result = {}
+    for name in ("learned", "prior", "relative3m", "relative3mTrend"):
+        spreads = []
+        for week in by_week.values():
+            ordered = sorted(week, key=lambda item: item[0][name])
+            n = max(1, len(ordered) // 5)
+            spreads.append(mean([y for _, y in ordered[-n:]]) - mean([y for _, y in ordered[:n]]))
+        result[name] = {"weeklyTopBottomMonthlyRelativeSpreadPct": round(mean(spreads), 4),
+                        "weeks": len(spreads)}
+    return result
+
+
+def summarize_combined(folds):
+    result = {}
+    for name in ("learned", "prior", "relative3m", "relative3mTrend"):
+        values = [fold["combined"][name]["weeklyTopBottomMonthlyRelativeSpreadPct"] for fold in folds]
+        result[name] = {"averageSpreadPct": round(mean(values), 4),
+                        "positiveFolds": sum(v > 0 for v in values), "foldSpreads": values}
+    return result
+
+
+def walk_forward_diagnostics(rows: list[dict[str, Any]], *, inner: bool = False) -> dict[str, Any]:
     unique_dates = sorted({row["dateObj"] for row in rows})
-    require(len(unique_dates) >= 300, "Not enough unique weeks for walk-forward validation")
+    require(len(unique_dates) >= (100 if inner else 300), "Not enough unique weeks for walk-forward validation")
 
     # Five expanding-window validation folds spanning multiple market regimes.
     # Each fold keeps a six-month purge between training labels and validation.
-    fractions = [0.40, 0.52, 0.64, 0.76, 0.88, 1.00]
+    fractions = [0.60, 0.80, 1.00] if inner else [0.40, 0.52, 0.64, 0.76, 0.88, 1.00]
     boundaries = [
         unique_dates[min(len(unique_dates) - 1, int((len(unique_dates) - 1) * fraction))]
         for fraction in fractions
@@ -358,13 +398,14 @@ def walk_forward_diagnostics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         validation_end = boundaries[index + 1]
         train_end = validation_start - dt.timedelta(days=PURGE_DAYS)
 
-        train = [row for row in rows if row["dateObj"] < train_end]
+        train = [row for row in rows if row["dateObj"] < train_end and row["labelEnd"] < validation_start]
         validation = [
             row for row in rows
-            if validation_start <= row["dateObj"] <= validation_end
+            if validation_start <= row["dateObj"] and (row["dateObj"] < validation_end
+                or (index == len(boundaries) - 2 and row["dateObj"] == validation_end))
         ]
 
-        if len(train) < MIN_TRAIN_ROWS or len(validation) < MIN_VALIDATION_ROWS:
+        if len(train) < (500 if inner else MIN_TRAIN_ROWS) or len(validation) < (100 if inner else MIN_VALIDATION_ROWS):
             continue
 
         calibrator = fit_calibrator(train)
@@ -392,6 +433,15 @@ def walk_forward_diagnostics(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 "predictionTargetCorrelation": round(corr, 4),
             }
 
+        combined = None
+        if not inner:
+            # Select weights entirely inside this outer fold's training history.
+            nested = walk_forward_diagnostics(train, inner=True)
+            frozen_weights = nested["finalWeights"]
+            combined = evaluate_combined(validation, calibrator, frozen_weights)
+            combined["weights"] = frozen_weights
+            combined["weightSelectionLatestOutcome"] = max(row["labelEnd"] for row in train).isoformat()
+
         folds.append({
             "trainingEnd": train_end.isoformat(),
             "validationStart": validation_start.isoformat(),
@@ -399,6 +449,8 @@ def walk_forward_diagnostics(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "trainingRows": len(train),
             "validationRows": len(validation),
             "components": fold_components,
+            "combined": combined,
+            "lastTrainingOutcome": max(row["labelEnd"] for row in train).isoformat(),
         })
 
     require(len(folds) >= 2, "Insufficient valid walk-forward folds")
@@ -447,6 +499,7 @@ def walk_forward_diagnostics(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
     return {
         "folds": folds,
+        "combinedSummary": summarize_combined(folds) if not inner else {},
         "componentSummary": component_summary,
         "evidenceWeights": evidence_weights,
         "finalWeights": final_weights,
@@ -590,10 +643,13 @@ def main() -> None:
             "purgeDays": PURGE_DAYS,
             "foldCount": len(diagnostics["folds"]),
             "componentSummary": diagnostics["componentSummary"],
+            "combinedOutOfSample": diagnostics["combinedSummary"],
+            "validationPolicy": "Nested weight selection; non-overlapping outer folds; same-week ranking spreads. Overlapping labels and ETFs are dependent; no significance or after-cost claims.",
         },
         "note": (
             "Decision Score is a historical technical ranking, not a return forecast. "
-            "Historical edge is descriptive calibration and may not persist."
+            "Historical edge is in-sample response calibration, not independently calibrated expected return. "
+            "STRONG is a score band, not a buy instruction or probability."
         ),
     }
 

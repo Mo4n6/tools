@@ -11,8 +11,7 @@ on:
       - 'scripts/validate-rotation-goblin-history.py'
       - 'scripts/build-rotation-goblin-decision-engine.py'
       - 'scripts/validate-rotation-goblin-decision-engine.py'
-      - 'scripts/build-rotation-goblin-decision-engine.py'
-      - 'scripts/validate-rotation-goblin-decision-engine.py'
+      - 'scripts/test-rotation-goblin-engine.py'
       - '.github/workflows/backfill-rotation-goblin-history.yml'
   push:
     branches: ['main']
@@ -57,6 +56,9 @@ jobs:
 
       - name: Build Decision Engine
         run: python scripts/build-rotation-goblin-decision-engine.py
+
+      - name: Test Decision Engine chronology
+        run: python scripts/test-rotation-goblin-engine.py
 
       - name: Validate Decision Engine
         run: python scripts/validate-rotation-goblin-decision-engine.py

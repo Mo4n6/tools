@@ -94,6 +94,18 @@ def main() -> None:
     require(calibration.get("featureModels"), "Calibration feature models missing")
     require(calibration.get("walkForwardFolds"), "Walk-forward fold diagnostics missing")
 
+    folds = calibration["walkForwardFolds"]
+    for index, fold in enumerate(folds):
+        require(fold["lastTrainingOutcome"] < fold["validationStart"], "Training outcome crosses validation boundary")
+        require(fold["combined"]["weightSelectionLatestOutcome"] < fold["validationStart"], "Weight selection leaks validation outcomes")
+        if index:
+            require(folds[index - 1]["validationEnd"] == fold["validationStart"], "Unexpected fold boundary")
+        for name in ("learned", "prior", "relative3m", "relative3mTrend"):
+            require(finite(fold["combined"][name]["weeklyTopBottomMonthlyRelativeSpreadPct"]), "Invalid combined diagnostic")
+    for row in rows:
+        reconstructed = sum(weights[c] * row["componentScores"][c] for c in weights)
+        require(abs(reconstructed - row["decisionScore"]) < 0.11, "Score differs from weighted components")
+
     ranking = sorted(rows, key=lambda row: (-row["decisionScore"], row["ticker"]))
     print(
         f"Decision Engine integrity OK: {metadata['matureTrainingRows']} mature weekly observations, "
