@@ -90,6 +90,18 @@ export const WEIGHTS_PRESETS: readonly WeightsPreset[] = [
     bytes: 67073434,
     scale: 2,
   },
+  {
+    id: 'swin2sr-realworld-sr-x4-64-bsrgan-psnr',
+    label: 'Swin2SR real-world x4',
+    // The name carries a 64, which in this family usually means the export was
+    // traced at a fixed 64px input. If that is so here, it will fail on the
+    // first tile with the explanation neural.ts gives, rather than silently.
+    note: 'A transformer rather than a GAN. Untried: it may not tile.',
+    url: 'https://huggingface.co/Xenova/swin2SR-realworld-sr-x4-64-bsrgan-psnr/resolve/d0e9926970c93e472ce2392373d72597fc849027/onnx/model.onnx',
+    sha256: 'f496dc73dcc01d778b1a12eb4c4038d6b27cd1c0b5bcd4258455ed6d7816c835',
+    bytes: 52772645,
+    scale: 4,
+  },
 ];
 
 const HEX_64 = /^[0-9a-f]{64}$/;

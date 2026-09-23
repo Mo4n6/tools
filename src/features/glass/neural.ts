@@ -167,10 +167,32 @@ export async function upscaleNeural(
 
   // The first tile establishes the scale, and therefore the canvas size.
   const firstTile = tiles[0] as Tile;
-  const firstPatch = await session.run(cropTile(source, firstTile));
+  // A super-resolution export is not necessarily usable here. Some are built
+  // with a fixed input size, which loads and hashes perfectly well and then
+  // refuses the only thing Glass ever asks of a model. The raw shape error
+  // from the runtime does not say that, so it is said here.
+  let firstPatch;
+  try {
+    firstPatch = await session.run(cropTile(source, firstTile));
+  } catch (error) {
+    throw new Error(
+      `This model would not accept a ${firstTile.padWidth}x${firstTile.padHeight} tile. ` +
+        `Glass tiles every image, so a model built for one fixed input size cannot be used. ` +
+        `(${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+
   const scale = firstPatch.width / firstTile.padWidth;
-  if (!Number.isFinite(scale) || scale <= 0) {
-    throw new Error('Model did not enlarge the tile it was given');
+  // Strictly greater than one: a model that hands the tile back at its original
+  // size has not upscaled anything, and passing it through would produce a
+  // same-size result presented as an enlargement. Restoration models that
+  // denoise without enlarging land here, and they do not belong in this tier.
+  if (!Number.isFinite(scale) || scale <= 1) {
+    throw new Error(
+      `This model returned a ${firstPatch.width}x${firstPatch.height} tile for a ` +
+        `${firstTile.padWidth}x${firstTile.padHeight} one, so it does not enlarge. ` +
+        `Glass needs a super-resolution model here.`,
+    );
   }
 
   // The model's factor is only known now, so this is the first moment the
