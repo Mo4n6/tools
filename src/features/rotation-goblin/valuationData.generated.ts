@@ -23,7 +23,7 @@ export type GeneratedValuationRow = {
 };
 
 export const valuationDataMeta = {
-  "generatedAt": "2026-09-22T20:00:47Z",
+  "generatedAt": "2026-09-23T00:31:35Z",
   "benchmark": "SPY",
   "minimumHistorySamples": 20,
   "automatedTickers": [
@@ -104,7 +104,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": null,
     "sourceUrl": null,
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-23",
     "primaryMetric": null,
     "primaryMultiple": null,
     "benchmarkMultiple": null,
@@ -167,7 +167,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": null,
     "sourceUrl": null,
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-23",
     "primaryMetric": null,
     "primaryMultiple": null,
     "benchmarkMultiple": null,
@@ -188,7 +188,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": null,
     "sourceUrl": null,
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-23",
     "primaryMetric": null,
     "primaryMultiple": null,
     "benchmarkMultiple": null,
@@ -230,7 +230,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": null,
     "sourceUrl": null,
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-23",
     "primaryMetric": null,
     "primaryMultiple": null,
     "benchmarkMultiple": null,
@@ -251,7 +251,7 @@ export const valuationRows: GeneratedValuationRow[] = [
     "provider": null,
     "sourceUrl": null,
     "proxyTicker": null,
-    "asOf": "2026-09-22",
+    "asOf": "2026-09-23",
     "primaryMetric": null,
     "primaryMultiple": null,
     "benchmarkMultiple": null,
