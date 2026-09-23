@@ -11,13 +11,7 @@
 // silently produce a wrongly sized image.
 
 import { fromNchw, toNchw } from './imageTensor';
-import {
-  accumulateTile,
-  createCanvas,
-  planTiles,
-  resolveCanvas,
-  type Tile,
-} from './tiling';
+import { blendTileInto, createOutput, planTiles, type Tile } from './tiling';
 import type { RgbaImage } from './types';
 
 /** Tiles this size are a few hundred milliseconds on WebGPU and survive WASM. */
@@ -197,27 +191,27 @@ export async function upscaleNeural(
 
   // The model's factor is only known now, so this is the first moment the
   // output size can be checked at all.
-  let canvas;
+  let output;
   try {
-    canvas = createCanvas(Math.round(source.width * scale), Math.round(source.height * scale));
+    output = createOutput(Math.round(source.width * scale), Math.round(source.height * scale));
   } catch (error) {
     throw new RangeError(
       `${source.width}x${source.height} through a ${scale}x model is too large. ` +
         `${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  accumulateTile(canvas, firstPatch, firstTile, scale);
+  blendTileInto(output, firstPatch, firstTile, scale);
   options.onProgress?.(1, tiles.length);
 
   for (let i = 1; i < tiles.length; i += 1) {
     assertLive(options.signal);
     const tile = tiles[i] as Tile;
     const patch = await session.run(cropTile(source, tile));
-    accumulateTile(canvas, patch, tile, scale);
+    blendTileInto(output, patch, tile, scale);
     options.onProgress?.(i + 1, tiles.length);
     // Hand the tab back between tiles so the progress line actually paints.
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
-  return { image: resolveCanvas(canvas), scale };
+  return { image: output, scale };
 }
