@@ -75,6 +75,23 @@ describe('upscaleNeural', () => {
     }
   });
 
+  it('matches an untiled enlargement exactly, so no seam survives', async () => {
+    // The stub sees the same source through every tile, so wherever two tiles
+    // overlap they agree, and any difference from a single-pass enlargement
+    // would be the compositor inventing a seam.
+    const source = gradient(41, 27);
+    const session = doublingSession(2);
+
+    const tiled = await upscaleNeural(source, session, { tileSize: 12, overlap: 4 });
+    const whole = await session.run(source);
+
+    expect(tiled.image.width).toBe(whole.width);
+    expect(tiled.image.height).toBe(whole.height);
+    for (let i = 0; i < whole.data.length; i += 1) {
+      expect(Math.abs((tiled.image.data[i] ?? 0) - (whole.data[i] ?? 0))).toBeLessThanOrEqual(1);
+    }
+  });
+
   it('reports progress once per tile', async () => {
     const onProgress = vi.fn();
     await upscaleNeural(gradient(40, 24), doublingSession(2), {

@@ -1,16 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  CANVAS_BUDGET_BYTES,
-  CANVAS_BYTES_PER_PIXEL,
-  MAX_CANVAS_PIXELS,
-  accumulateTile,
-  axisWindow,
-  canvasBytes,
-  createCanvas,
+  MAX_OUTPUT_PIXELS,
+  OUTPUT_BUDGET_BYTES,
+  OUTPUT_BYTES_PER_PIXEL,
+  blendTileInto,
+  createOutput,
   edgeRamp,
+  outputBytes,
   planTiles,
-  resolveCanvas,
 } from '../tiling';
 import type { RgbaImage } from '../types';
 
@@ -63,7 +61,7 @@ describe('planTiles', () => {
   });
 });
 
-describe('blend windows', () => {
+describe('edgeRamp', () => {
   it('ramps up monotonically and reaches one', () => {
     expect(edgeRamp(0, 0)).toBe(1);
     expect(edgeRamp(8, 8)).toBe(1);
@@ -71,39 +69,48 @@ describe('blend windows', () => {
     expect(edgeRamp(4, 8)).toBeLessThan(edgeRamp(7, 8));
   });
 
-  it('is flat when neither side was padded', () => {
-    expect([...axisWindow(5, 2, false, false)]).toEqual([1, 1, 1, 1, 1]);
-  });
-
-  it('fades only the padded side', () => {
-    const window = axisWindow(8, 3, true, false);
-    expect(window[0]).toBeLessThan(1);
-    expect(window[7]).toBe(1);
-  });
-
-  it('never reaches zero, so a lone tile still contributes', () => {
-    for (const weight of axisWindow(8, 4, true, true)) {
-      expect(weight).toBeGreaterThan(0);
-    }
+  it('never reaches zero', () => {
+    expect(edgeRamp(0, 64)).toBeGreaterThan(0);
   });
 });
 
-describe('canvas composition', () => {
-  it('reconstructs a constant colour across tile seams', () => {
-    const scale = 2;
-    const width = 40;
-    const height = 24;
-    const canvas = createCanvas(width * scale, height * scale);
-    const colour = [12, 180, 90, 255] as const;
+describe('output budget', () => {
+  it('holds one RGBA quad per pixel, not a float accumulator', () => {
+    expect(OUTPUT_BYTES_PER_PIXEL).toBe(4);
+    expect(outputBytes(1000, 1000)).toBe(4_000_000);
+    expect(MAX_OUTPUT_PIXELS).toBe(Math.floor(OUTPUT_BUDGET_BYTES / OUTPUT_BYTES_PER_PIXEL));
+  });
 
-    for (const tile of planTiles(width, height, 16, 4)) {
-      const patch = solidPatch(tile.padWidth * scale, tile.padHeight * scale, colour);
-      accumulateTile(canvas, patch, tile, scale);
+  it('admits a print-resolution job', () => {
+    // 3136x4672 through a 2x model: 58.6 megapixels. This needed 1.1 GB as a
+    // float accumulator and was refused; as an image it is 234 MB.
+    expect(() => createOutput(6272, 9344)).not.toThrow();
+    expect(outputBytes(6272, 9344)).toBeLessThan(OUTPUT_BUDGET_BYTES);
+  });
+
+  it('still refuses a size it could not encode afterwards', () => {
+    expect(() => createOutput(MAX_OUTPUT_PIXELS + 1, 1)).toThrow(RangeError);
+    expect(() => createOutput(MAX_OUTPUT_PIXELS + 1, 1)).toThrow(/smaller source image or a model with a lower factor/);
+  });
+
+  it('rejects a degenerate size', () => {
+    expect(() => createOutput(0, 10)).toThrow(RangeError);
+  });
+});
+
+describe('tile composition', () => {
+  const colour = [12, 180, 90, 255] as const;
+
+  function composeConstant(width: number, height: number, tileSize: number, overlap: number, scale: number) {
+    const output = createOutput(width * scale, height * scale);
+    for (const tile of planTiles(width, height, tileSize, overlap)) {
+      blendTileInto(output, solidPatch(tile.padWidth * scale, tile.padHeight * scale, colour), tile, scale);
     }
+    return output;
+  }
 
-    expect([...canvas.weight].every((w) => w > 0)).toBe(true);
-
-    const out = resolveCanvas(canvas);
+  it('reconstructs a constant colour across every seam', () => {
+    const out = composeConstant(40, 24, 16, 4, 2);
     for (let i = 0; i < out.data.length; i += 4) {
       expect(out.data[i]).toBe(colour[0]);
       expect(out.data[i + 1]).toBe(colour[1]);
@@ -112,37 +119,44 @@ describe('canvas composition', () => {
     }
   });
 
-  it('leaves uncovered pixels fully transparent', () => {
-    const canvas = createCanvas(4, 4);
-    const out = resolveCanvas(canvas);
-    expect([...out.data].every((byte) => byte === 0)).toBe(true);
-  });
-});
-
-describe('accumulator budget', () => {
-  it('counts four colour sums and a weight per output pixel', () => {
-    expect(CANVAS_BYTES_PER_PIXEL).toBe(20);
-    expect(canvasBytes(1000, 1000)).toBe(20_000_000);
-    expect(MAX_CANVAS_PIXELS).toBe(Math.floor(CANVAS_BUDGET_BYTES / CANVAS_BYTES_PER_PIXEL));
-  });
-
-  it('allocates an ordinary output', () => {
-    expect(createCanvas(64, 64).weight.length).toBe(4096);
+  it('leaves no pixel unwritten, at any tiling', () => {
+    for (const [tileSize, overlap] of [
+      [16, 4],
+      [8, 0],
+      [7, 3],
+      [64, 16],
+    ] as const) {
+      const out = composeConstant(37, 23, tileSize, overlap, 3);
+      const unwritten = [...out.data].filter((_, i) => i % 4 === 3 && out.data[i] === 0).length;
+      expect(unwritten, `tileSize ${tileSize} overlap ${overlap}`).toBe(0);
+    }
   });
 
-  it('refuses an output past the budget before allocating anything', () => {
-    // A 12-megapixel photo through a 4x model: 192 megapixels of accumulator,
-    // which is 3.8 GB. This is the case that took the tab down.
-    expect(() => createCanvas(16_000, 12_000)).toThrow(RangeError);
-    expect(() => createCanvas(16_000, 12_000)).toThrow(/3\.6 GB|GB budget/);
+  it('fades a differing tile in rather than cutting to it', () => {
+    // Two tiles of very different colours: the boundary must be a gradient,
+    // not a step, or the seam would be visible on a real image.
+    const scale = 1;
+    const tiles = planTiles(32, 8, 16, 8);
+    const output = createOutput(32, 8);
+
+    blendTileInto(output, solidPatch(tiles[0]!.padWidth, tiles[0]!.padHeight, [0, 0, 0, 255]), tiles[0]!, scale);
+    blendTileInto(output, solidPatch(tiles[1]!.padWidth, tiles[1]!.padHeight, [255, 255, 255, 255]), tiles[1]!, scale);
+
+    const row = (x: number) => output.data[(0 * output.width + x) * 4] ?? 0;
+    expect(row(0)).toBe(0);
+    expect(row(31)).toBe(255);
+
+    // Somewhere in the band the two are mixed rather than one replacing the other.
+    const mixed = Array.from({ length: 32 }, (_, x) => row(x)).filter((v) => v > 0 && v < 255);
+    expect(mixed.length).toBeGreaterThan(0);
   });
 
-  it('states the factor to lower rather than just failing', () => {
-    expect(() => createCanvas(16_000, 12_000)).toThrow(/smaller source image or a model with a lower factor/);
-  });
-
-  it('admits the largest size inside the budget', () => {
-    expect(MAX_CANVAS_PIXELS).toBeGreaterThan(50_000_000);
-    expect(() => createCanvas(MAX_CANVAS_PIXELS + 1, 1)).toThrow(RangeError);
+  it('writes a single tile with no fade at all', () => {
+    const [tile] = planTiles(10, 10, 64, 8);
+    const output = createOutput(20, 20);
+    blendTileInto(output, solidPatch(20, 20, colour), tile!, 2);
+    for (let i = 0; i < output.data.length; i += 4) {
+      expect(output.data[i]).toBe(colour[0]);
+    }
   });
 });
