@@ -53,6 +53,12 @@
       "crossScore": 94.22,
       "primaryRelative": 0.5889,
       "pbRelative": 0.4748
+    },
+    {
+      "date": "2026-10-05",
+      "crossScore": 94.23,
+      "primaryRelative": 0.5888,
+      "pbRelative": 0.475
     }
   ],
   "XLF": [
@@ -109,6 +115,12 @@
       "crossScore": 85.09,
       "primaryRelative": 0.7293,
       "pbRelative": 0.4243
+    },
+    {
+      "date": "2026-10-05",
+      "crossScore": 85.07,
+      "primaryRelative": 0.7297,
+      "pbRelative": 0.4233
     }
   ],
   "XLB": [
@@ -165,6 +177,12 @@
       "crossScore": 79.19,
       "primaryRelative": 0.8202,
       "pbRelative": 0.4822
+    },
+    {
+      "date": "2026-10-05",
+      "crossScore": 79.7,
+      "primaryRelative": 0.8089,
+      "pbRelative": 0.5065
     }
   ],
   "XLU": [
@@ -221,6 +239,12 @@
       "crossScore": 80.01,
       "primaryRelative": 0.8076,
       "pbRelative": 0.3776
+    },
+    {
+      "date": "2026-10-05",
+      "crossScore": 80.17,
+      "primaryRelative": 0.805,
+      "pbRelative": 0.3752
     }
   ],
   "XLV": [
@@ -277,6 +301,12 @@
       "crossScore": 56.79,
       "primaryRelative": 0.964,
       "pbRelative": 0.8729
+    },
+    {
+      "date": "2026-10-05",
+      "crossScore": 56.82,
+      "primaryRelative": 0.9648,
+      "pbRelative": 0.8706
     }
   ],
   "XLI": [
@@ -333,6 +363,12 @@
       "crossScore": 27.81,
       "primaryRelative": 1.2055,
       "pbRelative": 1.2523
+    },
+    {
+      "date": "2026-10-05",
+      "crossScore": 28.67,
+      "primaryRelative": 1.1998,
+      "pbRelative": 1.2384
     }
   ],
   "IWM": [
@@ -389,6 +425,12 @@
       "crossScore": 85.5,
       "primaryRelative": 0.7231,
       "pbRelative": 0.3869
+    },
+    {
+      "date": "2026-10-05",
+      "crossScore": 85.53,
+      "primaryRelative": 0.7226,
+      "pbRelative": 0.3863
     }
   ],
   "IYR": [
@@ -445,6 +487,12 @@
       "crossScore": 76.01,
       "primaryRelative": 0.869,
       "pbRelative": 0.443
+    },
+    {
+      "date": "2026-10-05",
+      "crossScore": 76.31,
+      "primaryRelative": 0.8645,
+      "pbRelative": 0.4381
     }
   ],
   "EFA": [
@@ -501,6 +549,12 @@
       "crossScore": 82.75,
       "primaryRelative": 0.7654,
       "pbRelative": 0.4411
+    },
+    {
+      "date": "2026-10-05",
+      "crossScore": 83.11,
+      "primaryRelative": 0.7598,
+      "pbRelative": 0.4344
     }
   ],
   "EEM": [
@@ -557,6 +611,12 @@
       "crossScore": 80.25,
       "primaryRelative": 0.7973,
       "pbRelative": 0.5121
+    },
+    {
+      "date": "2026-10-05",
+      "crossScore": 80.69,
+      "primaryRelative": 0.7926,
+      "pbRelative": 0.5083
     }
   ],
   "XLK": [
@@ -613,6 +673,12 @@
       "crossScore": 18.45,
       "primaryRelative": 1.2162,
       "pbRelative": 2.3757
+    },
+    {
+      "date": "2026-10-05",
+      "crossScore": 18.51,
+      "primaryRelative": 1.2153,
+      "pbRelative": 2.3512
     }
   ],
   "SMH": [
@@ -669,6 +735,12 @@
       "crossScore": 0.0,
       "primaryRelative": 2.0576,
       "pbRelative": 2.1103
+    },
+    {
+      "date": "2026-10-05",
+      "crossScore": 0.0,
+      "primaryRelative": 2.0721,
+      "pbRelative": 2.1331
     }
   ]
 }
