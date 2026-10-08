@@ -19,12 +19,12 @@ export type DecisionEngineRow = {
 
 export const decisionEngineMeta = {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-07T02:38:01Z",
-  "asOf": "2026-10-06",
+  "generatedAt": "2026-10-08T02:51:10Z",
+  "asOf": "2026-10-07",
   "benchmark": "SPY",
-  "trainingStart": "2016-10-07",
+  "trainingStart": "2016-10-14",
   "trainingEnd": "2026-04-02",
-  "matureTrainingRows": 8163,
+  "matureTrainingRows": 8147,
   "target": "50% of 3M relative return / 3 months + 50% of 6M relative return / 6 months",
   "targetUnit": "percentage points of ETF-vs-SPY relative return per month",
   "featurePolicy": "price-derived point-in-time features only; valuation excluded",
@@ -38,17 +38,17 @@ export const decisionEngineMeta = {
   },
   "evidenceWeights": {
     "relativeMomentum": 0.0,
-    "trendStructure": 0.537522,
-    "momentumState": 0.047404,
+    "trendStructure": 0.536684,
+    "momentumState": 0.041349,
     "relativePerformance": 0.0,
-    "drawdownRecovery": 0.415075
+    "drawdownRecovery": 0.421968
   },
   "componentWeights": {
     "relativeMomentum": 0.09,
-    "trendStructure": 0.451265,
-    "momentumState": 0.093183,
+    "trendStructure": 0.450678,
+    "momentumState": 0.088944,
     "relativePerformance": 0.045,
-    "drawdownRecovery": 0.320552
+    "drawdownRecovery": 0.325377
   },
   "componentLabels": {
     "relativeMomentum": "Relative Momentum",
@@ -104,105 +104,105 @@ export const decisionEngineMeta = {
       "relativeMomentum": {
         "averageTopBottomMonthlyRelativeSpreadPct": -0.0335,
         "positiveFoldShare": 0.4,
-        "averagePredictionTargetCorrelation": 0.0092,
+        "averagePredictionTargetCorrelation": 0.0097,
         "foldSpreads": [
-          0.3461,
-          -0.4352,
-          -0.2345,
-          0.2017,
-          -0.0457
+          0.351,
+          -0.4568,
+          -0.2549,
+          0.2583,
+          -0.0651
         ]
       },
       "trendStructure": {
-        "averageTopBottomMonthlyRelativeSpreadPct": 1.0945,
+        "averageTopBottomMonthlyRelativeSpreadPct": 1.0971,
         "positiveFoldShare": 1.0,
-        "averagePredictionTargetCorrelation": 0.1439,
+        "averagePredictionTargetCorrelation": 0.1472,
         "foldSpreads": [
-          0.3319,
-          1.4579,
-          0.5841,
-          0.6386,
-          2.4599
+          0.3439,
+          1.4404,
+          0.5973,
+          0.638,
+          2.4659
         ]
       },
       "momentumState": {
-        "averageTopBottomMonthlyRelativeSpreadPct": 0.2413,
+        "averageTopBottomMonthlyRelativeSpreadPct": 0.2113,
         "positiveFoldShare": 0.4,
-        "averagePredictionTargetCorrelation": 0.0194,
+        "averagePredictionTargetCorrelation": 0.022,
         "foldSpreads": [
-          -0.2296,
-          0.8685,
-          -0.0322,
-          -0.4256,
-          1.0254
+          -0.2277,
+          0.7667,
+          -0.0259,
+          -0.4239,
+          0.9675
         ]
       },
       "relativePerformance": {
-        "averageTopBottomMonthlyRelativeSpreadPct": -0.447,
+        "averageTopBottomMonthlyRelativeSpreadPct": -0.4576,
         "positiveFoldShare": 0.0,
-        "averagePredictionTargetCorrelation": -0.069,
+        "averagePredictionTargetCorrelation": -0.0669,
         "foldSpreads": [
-          -1.0491,
-          -0.1784,
-          -0.1842,
-          -0.3036,
-          -0.5194
+          -1.056,
+          -0.2378,
+          -0.1494,
+          -0.3307,
+          -0.5142
         ]
       },
       "drawdownRecovery": {
-        "averageTopBottomMonthlyRelativeSpreadPct": 1.0565,
+        "averageTopBottomMonthlyRelativeSpreadPct": 1.0782,
         "positiveFoldShare": 0.8,
-        "averagePredictionTargetCorrelation": 0.1864,
+        "averagePredictionTargetCorrelation": 0.1894,
         "foldSpreads": [
-          0.9542,
-          1.2804,
-          1.0136,
-          -0.2763,
-          2.3104
+          0.9654,
+          1.2605,
+          1.0773,
+          -0.2152,
+          2.3031
         ]
       }
     },
     "combinedOutOfSample": {
       "learned": {
-        "averageSpreadPct": 0.8869,
+        "averageSpreadPct": 0.944,
         "positiveFolds": 4,
         "foldSpreads": [
-          -0.3387,
-          1.144,
-          0.8282,
-          0.6865,
-          2.1144
+          -0.5547,
+          1.4654,
+          0.9379,
+          0.6149,
+          2.2564
         ]
       },
       "prior": {
-        "averageSpreadPct": 0.7507,
+        "averageSpreadPct": 0.7941,
         "positiveFolds": 5,
         "foldSpreads": [
-          0.6028,
-          0.775,
-          0.2827,
-          0.7171,
-          1.3759
+          0.748,
+          0.8275,
+          0.3084,
+          0.7543,
+          1.3321
         ]
       },
       "relative3m": {
-        "averageSpreadPct": 0.427,
-        "positiveFolds": 2,
+        "averageSpreadPct": 0.4228,
+        "positiveFolds": 3,
         "foldSpreads": [
           1.5008,
-          1.2985,
-          -0.0348,
+          1.1898,
+          0.0531,
           -0.404,
           -0.2255
         ]
       },
       "relative3mTrend": {
-        "averageSpreadPct": 0.4763,
-        "positiveFolds": 2,
+        "averageSpreadPct": 0.472,
+        "positiveFolds": 3,
         "foldSpreads": [
           1.4485,
-          1.306,
-          -0.0821,
+          1.1972,
+          0.005,
           -0.23,
           -0.0608
         ]
@@ -216,240 +216,240 @@ export const decisionEngineMeta = {
 export const decisionEngineRows: DecisionEngineRow[] = [
   {
     "ticker": "PDBC",
-    "asOf": "2026-10-06",
-    "decisionScore": 95.5,
+    "asOf": "2026-10-07",
+    "decisionScore": 94.0,
     "signal": "STRONG",
     "componentScores": {
-      "relativeMomentum": 91.1,
+      "relativeMomentum": 91.7,
       "trendStructure": 97.2,
-      "momentumState": 98.5,
-      "relativePerformance": 71.8,
+      "momentumState": 99.4,
+      "relativePerformance": 36.7,
       "drawdownRecovery": 96.8
     },
     "historicalEdgeMonthlyPct": 0.332
   },
   {
     "ticker": "XLE",
-    "asOf": "2026-10-06",
-    "decisionScore": 90.5,
-    "signal": "STRONG",
-    "componentScores": {
-      "relativeMomentum": 96.8,
-      "trendStructure": 92.2,
-      "momentumState": 87.3,
-      "relativePerformance": 22.3,
-      "drawdownRecovery": 96.8
-    },
-    "historicalEdgeMonthlyPct": 0.277
-  },
-  {
-    "ticker": "XLK",
-    "asOf": "2026-10-06",
+    "asOf": "2026-10-07",
     "decisionScore": 87.8,
     "signal": "STRONG",
     "componentScores": {
-      "relativeMomentum": 9.2,
+      "relativeMomentum": 98.9,
+      "trendStructure": 92.2,
+      "momentumState": 62.0,
+      "relativePerformance": 7.6,
+      "drawdownRecovery": 96.8
+    },
+    "historicalEdgeMonthlyPct": 0.275
+  },
+  {
+    "ticker": "XLK",
+    "asOf": "2026-10-07",
+    "decisionScore": 86.3,
+    "signal": "STRONG",
+    "componentScores": {
+      "relativeMomentum": 13.2,
       "trendStructure": 97.2,
       "momentumState": 76.4,
       "relativePerformance": 99.0,
-      "drawdownRecovery": 98.4
+      "drawdownRecovery": 92.3
     },
-    "historicalEdgeMonthlyPct": 0.317
+    "historicalEdgeMonthlyPct": 0.282
   },
   {
     "ticker": "SMH",
-    "asOf": "2026-10-06",
-    "decisionScore": 86.8,
+    "asOf": "2026-10-07",
+    "decisionScore": 81.7,
     "signal": "STRONG",
     "componentScores": {
-      "relativeMomentum": 2.8,
+      "relativeMomentum": 6.0,
       "trendStructure": 97.2,
-      "momentumState": 93.8,
-      "relativePerformance": 88.4,
+      "momentumState": 31.8,
+      "relativePerformance": 91.1,
       "drawdownRecovery": 93.5
     },
-    "historicalEdgeMonthlyPct": 0.293
-  },
-  {
-    "ticker": "EEM",
-    "asOf": "2026-10-06",
-    "decisionScore": 75.0,
-    "signal": "STRONG",
-    "componentScores": {
-      "relativeMomentum": 69.0,
-      "trendStructure": 77.0,
-      "momentumState": 91.2,
-      "relativePerformance": 52.5,
-      "drawdownRecovery": 72.3
-    },
-    "historicalEdgeMonthlyPct": -0.12
+    "historicalEdgeMonthlyPct": 0.288
   },
   {
     "ticker": "KMLM",
-    "asOf": "2026-10-06",
-    "decisionScore": 74.1,
+    "asOf": "2026-10-07",
+    "decisionScore": 73.7,
     "signal": "CONSTRUCTIVE",
     "componentScores": {
-      "relativeMomentum": 70.0,
-      "trendStructure": 82.2,
-      "momentumState": 81.8,
-      "relativePerformance": 71.2,
-      "drawdownRecovery": 61.9
+      "relativeMomentum": 62.8,
+      "trendStructure": 82.3,
+      "momentumState": 96.1,
+      "relativePerformance": 57.3,
+      "drawdownRecovery": 60.8
     },
-    "historicalEdgeMonthlyPct": -0.066
+    "historicalEdgeMonthlyPct": -0.06
+  },
+  {
+    "ticker": "EEM",
+    "asOf": "2026-10-07",
+    "decisionScore": 73.4,
+    "signal": "CONSTRUCTIVE",
+    "componentScores": {
+      "relativeMomentum": 80.4,
+      "trendStructure": 78.5,
+      "momentumState": 81.8,
+      "relativePerformance": 5.2,
+      "drawdownRecovery": 71.6
+    },
+    "historicalEdgeMonthlyPct": -0.124
   },
   {
     "ticker": "XLV",
-    "asOf": "2026-10-06",
-    "decisionScore": 68.1,
+    "asOf": "2026-10-07",
+    "decisionScore": 62.0,
     "signal": "CONSTRUCTIVE",
     "componentScores": {
-      "relativeMomentum": 77.7,
-      "trendStructure": 74.7,
-      "momentumState": 83.1,
-      "relativePerformance": 5.3,
-      "drawdownRecovery": 60.6
+      "relativeMomentum": 49.7,
+      "trendStructure": 73.9,
+      "momentumState": 88.2,
+      "relativePerformance": 14.1,
+      "drawdownRecovery": 48.3
     },
-    "historicalEdgeMonthlyPct": -0.15
+    "historicalEdgeMonthlyPct": -0.167
   },
   {
     "ticker": "EFA",
-    "asOf": "2026-10-06",
-    "decisionScore": 54.4,
+    "asOf": "2026-10-07",
+    "decisionScore": 53.7,
     "signal": "WATCH",
     "componentScores": {
-      "relativeMomentum": 75.4,
-      "trendStructure": 53.7,
-      "momentumState": 24.4,
-      "relativePerformance": 38.2,
-      "drawdownRecovery": 60.6
+      "relativeMomentum": 97.8,
+      "trendStructure": 49.2,
+      "momentumState": 34.1,
+      "relativePerformance": 10.0,
+      "drawdownRecovery": 59.2
     },
-    "historicalEdgeMonthlyPct": -0.243
-  },
-  {
-    "ticker": "IWM",
-    "asOf": "2026-10-06",
-    "decisionScore": 47.0,
-    "signal": "WATCH",
-    "componentScores": {
-      "relativeMomentum": 92.5,
-      "trendStructure": 53.7,
-      "momentumState": 33.0,
-      "relativePerformance": 70.5,
-      "drawdownRecovery": 25.6
-    },
-    "historicalEdgeMonthlyPct": -0.279
-  },
-  {
-    "ticker": "XLF",
-    "asOf": "2026-10-06",
-    "decisionScore": 44.6,
-    "signal": "WEAK",
-    "componentScores": {
-      "relativeMomentum": 98.0,
-      "trendStructure": 50.7,
-      "momentumState": 66.0,
-      "relativePerformance": 40.8,
-      "drawdownRecovery": 15.4
-    },
-    "historicalEdgeMonthlyPct": -0.302
+    "historicalEdgeMonthlyPct": -0.247
   },
   {
     "ticker": "UUP",
-    "asOf": "2026-10-06",
-    "decisionScore": 42.5,
-    "signal": "WEAK",
+    "asOf": "2026-10-07",
+    "decisionScore": 52.5,
+    "signal": "WATCH",
     "componentScores": {
-      "relativeMomentum": 33.1,
-      "trendStructure": 52.6,
+      "relativeMomentum": 46.7,
+      "trendStructure": 51.7,
       "momentumState": 85.0,
-      "relativePerformance": 15.4,
-      "drawdownRecovery": 22.3
+      "relativePerformance": 45.3,
+      "drawdownRecovery": 47.4
     },
-    "historicalEdgeMonthlyPct": -0.294
+    "historicalEdgeMonthlyPct": -0.254
   },
   {
     "ticker": "GLD",
-    "asOf": "2026-10-06",
-    "decisionScore": 42.1,
+    "asOf": "2026-10-07",
+    "decisionScore": 43.0,
     "signal": "WEAK",
     "componentScores": {
-      "relativeMomentum": 83.7,
-      "trendStructure": 26.3,
-      "momentumState": 1.8,
-      "relativePerformance": 25.6,
-      "drawdownRecovery": 66.8
+      "relativeMomentum": 97.8,
+      "trendStructure": 26.6,
+      "momentumState": 6.3,
+      "relativePerformance": 16.2,
+      "drawdownRecovery": 64.3
+    },
+    "historicalEdgeMonthlyPct": -0.3
+  },
+  {
+    "ticker": "IWM",
+    "asOf": "2026-10-07",
+    "decisionScore": 41.6,
+    "signal": "WEAK",
+    "componentScores": {
+      "relativeMomentum": 93.1,
+      "trendStructure": 49.2,
+      "momentumState": 6.3,
+      "relativePerformance": 49.2,
+      "drawdownRecovery": 25.6
+    },
+    "historicalEdgeMonthlyPct": -0.301
+  },
+  {
+    "ticker": "XLF",
+    "asOf": "2026-10-07",
+    "decisionScore": 40.4,
+    "signal": "WEAK",
+    "componentScores": {
+      "relativeMomentum": 97.8,
+      "trendStructure": 49.4,
+      "momentumState": 22.8,
+      "relativePerformance": 47.7,
+      "drawdownRecovery": 15.8
     },
     "historicalEdgeMonthlyPct": -0.311
   },
   {
-    "ticker": "XLB",
-    "asOf": "2026-10-06",
-    "decisionScore": 42.0,
-    "signal": "WEAK",
-    "componentScores": {
-      "relativeMomentum": 83.7,
-      "trendStructure": 26.1,
-      "momentumState": 33.0,
-      "relativePerformance": 20.4,
-      "drawdownRecovery": 58.4
-    },
-    "historicalEdgeMonthlyPct": -0.302
-  },
-  {
-    "ticker": "XLI",
-    "asOf": "2026-10-06",
-    "decisionScore": 33.7,
-    "signal": "WEAK",
-    "componentScores": {
-      "relativeMomentum": 84.5,
-      "trendStructure": 21.4,
-      "momentumState": 55.2,
-      "relativePerformance": 18.5,
-      "drawdownRecovery": 32.7
-    },
-    "historicalEdgeMonthlyPct": -0.345
-  },
-  {
     "ticker": "IYR",
-    "asOf": "2026-10-06",
-    "decisionScore": 29.8,
+    "asOf": "2026-10-07",
+    "decisionScore": 29.7,
     "signal": "AVOID",
     "componentScores": {
-      "relativeMomentum": 92.5,
-      "trendStructure": 20.7,
-      "momentumState": 73.1,
-      "relativePerformance": 34.9,
-      "drawdownRecovery": 11.7
+      "relativeMomentum": 97.8,
+      "trendStructure": 20.4,
+      "momentumState": 74.1,
+      "relativePerformance": 34.3,
+      "drawdownRecovery": 11.1
     },
-    "historicalEdgeMonthlyPct": -0.381
+    "historicalEdgeMonthlyPct": -0.383
+  },
+  {
+    "ticker": "XLB",
+    "asOf": "2026-10-07",
+    "decisionScore": 27.2,
+    "signal": "AVOID",
+    "componentScores": {
+      "relativeMomentum": 84.6,
+      "trendStructure": 17.7,
+      "momentumState": 6.3,
+      "relativePerformance": 17.9,
+      "drawdownRecovery": 31.3
+    },
+    "historicalEdgeMonthlyPct": -0.368
   },
   {
     "ticker": "TLT",
-    "asOf": "2026-10-06",
-    "decisionScore": 22.6,
+    "asOf": "2026-10-07",
+    "decisionScore": 22.8,
     "signal": "AVOID",
     "componentScores": {
-      "relativeMomentum": 89.1,
-      "trendStructure": 11.2,
-      "momentumState": 73.1,
-      "relativePerformance": 34.9,
+      "relativeMomentum": 91.0,
+      "trendStructure": 11.8,
+      "momentumState": 74.1,
+      "relativePerformance": 34.3,
       "drawdownRecovery": 3.5
     },
-    "historicalEdgeMonthlyPct": -0.432
+    "historicalEdgeMonthlyPct": -0.428
+  },
+  {
+    "ticker": "XLI",
+    "asOf": "2026-10-07",
+    "decisionScore": 20.4,
+    "signal": "AVOID",
+    "componentScores": {
+      "relativeMomentum": 76.1,
+      "trendStructure": 20.8,
+      "momentumState": 1.8,
+      "relativePerformance": 34.3,
+      "drawdownRecovery": 7.5
+    },
+    "historicalEdgeMonthlyPct": -0.417
   },
   {
     "ticker": "XLU",
-    "asOf": "2026-10-06",
-    "decisionScore": 13.0,
+    "asOf": "2026-10-07",
+    "decisionScore": 11.1,
     "signal": "AVOID",
     "componentScores": {
-      "relativeMomentum": 73.5,
+      "relativeMomentum": 43.0,
       "trendStructure": 0.6,
-      "momentumState": 1.8,
-      "relativePerformance": 34.9,
-      "drawdownRecovery": 13.7
+      "momentumState": 12.7,
+      "relativePerformance": 34.3,
+      "drawdownRecovery": 13.1
     },
-    "historicalEdgeMonthlyPct": -0.531
+    "historicalEdgeMonthlyPct": -0.527
   }
 ];
