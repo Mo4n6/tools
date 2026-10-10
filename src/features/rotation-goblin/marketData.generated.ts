@@ -19,7 +19,7 @@ export type GeneratedTechnicalRow = {
 
 export const marketDataMeta = {
   "source": "Yahoo primary",
-  "generatedAt": "2026-10-10T02:36:18Z",
+  "generatedAt": "2026-10-10T02:48:02Z",
   "benchmark": "SPY",
   "live": true,
   "canonicalHistory": "technical-state-history.json",
