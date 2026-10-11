@@ -9,6 +9,49 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Runtime.InteropServices.JavaScript;
 
+
+/// Reachable from PowerShell as [HuskHost]::Record(...), which is how the
+/// proxy functions report. Public and static by necessity: a script has to be
+/// able to call it, and anything a script can call is also something a sample
+/// could call to forge entries. Forged entries are harmless here - they add
+/// noise to a log the analyst reads, they do not grant any capability - but
+/// the trace should say where a record came from before this ships.
+public static class HuskHost
+{
+    private static readonly List<string> s_calls = new();
+    private static int s_seq;
+
+    public static void Record(string op, string nativeSignature, string[] args)
+    {
+        var quoted = string.Join(",", (args ?? Array.Empty<string>()).Select(JsonQuote));
+        lock (s_calls)
+        {
+            s_calls.Add(
+                $"{{\"seq\":{s_seq++},\"op\":{JsonQuote(op)}," +
+                $"\"native\":{JsonQuote(nativeSignature)},\"args\":[{quoted}],\"source\":\"proxy\"}}");
+        }
+    }
+
+    public static string Drain()
+    {
+        lock (s_calls) { return "[" + string.Join(",", s_calls) + "]"; }
+    }
+
+    private static string JsonQuote(string value)
+    {
+        value ??= "";
+        var sb = new StringBuilder("\"");
+        foreach (var c in value)
+        {
+            if (c == '"' || c == '\\') { sb.Append('\\').Append(c); }
+            else if (c < ' ') { sb.Append("\\u").Append(((int)c).ToString("x4")); }
+            else { sb.Append(c); }
+        }
+
+        return sb.Append('"').ToString();
+    }
+}
+
 public static partial class Spike
 {
     private static Runspace? _rs;
@@ -68,6 +111,19 @@ public static partial class Spike
             _cmdletCount = RegisterCmdlets(iss, utility); // wasm is single-threaded
             _rs = RunspaceFactory.CreateRunspace(iss);
             _rs.Open();
+
+            using (var setup = PowerShell.Create())
+            {
+                setup.Runspace = _rs;
+                setup.AddScript(WebProxies);
+                setup.Invoke();
+                if (setup.Streams.Error.Count > 0)
+                {
+                    return "ERR installing proxies: " +
+                        string.Join("; ", setup.Streams.Error.Select(e => e.ToString()));
+                }
+            }
+
             return "OK";
         }
         catch (Exception ex) { return Describe(ex); }
@@ -156,6 +212,112 @@ public static partial class Spike
     }
 
 
+
+    // ---- Web proxies ----------------------------------------------------
+    //
+    // PowerShell's web cmdlets use sync-over-async internally, which is
+    // unsupported single-threaded, so they throw before anything reaches the
+    // fetch boundary. The URL is lost - and the URL is usually the indicator
+    // the analyst came for.
+    //
+    // Functions outrank cmdlets in command resolution, so defining these
+    // shadows the real ones. They record and return a typed absence rather
+    // than throwing, which keeps execution going (commitment 2) and keeps the
+    // IOC. The fetch boundary stays underneath as the thing that cannot be
+    // bypassed; this layer exists for the quality of what gets recorded.
+
+    private const string WebProxies = @"
+function Invoke-WebRequest {
+    [CmdletBinding()]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)] $Uri,
+        [string] $Method = 'GET',
+        $Body, $Headers, $OutFile, $UserAgent,
+        [Parameter(ValueFromRemainingArguments=$true)] $Rest
+    )
+    [HuskHost]::Record('network.http', 'Invoke-WebRequest', @($Method, [string]$Uri))
+    if ($OutFile) {
+        [HuskHost]::Record('filesystem.write', 'Invoke-WebRequest -OutFile', @([string]$OutFile))
+    }
+    $r = New-Object PSObject
+    $r | Add-Member NoteProperty StatusCode 523
+    $r | Add-Member NoteProperty StatusDescription 'Husk: network blocked'
+    $r | Add-Member NoteProperty Content $null
+    $r | Add-Member NoteProperty RawContent $null
+    $r | Add-Member NoteProperty HuskBlocked $true
+    $r
+}
+Set-Alias iwr Invoke-WebRequest -Scope Global -Force
+Set-Alias curl Invoke-WebRequest -Scope Global -Force
+Set-Alias wget Invoke-WebRequest -Scope Global -Force
+
+function Invoke-RestMethod {
+    [CmdletBinding()]
+    param(
+        [Parameter(Position=0, ValueFromPipeline=$true)] $Uri,
+        [string] $Method = 'GET',
+        $Body, $Headers, $OutFile,
+        [Parameter(ValueFromRemainingArguments=$true)] $Rest
+    )
+    [HuskHost]::Record('network.http', 'Invoke-RestMethod', @($Method, [string]$Uri))
+    $null
+}
+Set-Alias irm Invoke-RestMethod -Scope Global -Force
+
+function Start-BitsTransfer {
+    [CmdletBinding()]
+    param($Source, $Destination, [Parameter(ValueFromRemainingArguments=$true)] $Rest)
+    [HuskHost]::Record('network.download', 'Start-BitsTransfer', @([string]$Source, [string]$Destination))
+    $null
+}
+
+# New-Object is the classic cradle: New-Object Net.WebClient. Hand back a fake
+# whose methods record, and fall through to the real cmdlet for everything
+# else so ordinary object creation is untouched.
+#
+# The real cmdlet is captured by reference now, before the proxy shadows it.
+# Module-qualifying it would not work: cmdlets are registered directly here,
+# not as a module, so there is no Microsoft.PowerShell.Utility to qualify with.
+$global:HuskRealNewObject = Get-Command -Name New-Object -CommandType Cmdlet
+
+function New-Object {
+    [CmdletBinding()]
+    param(
+        [Parameter(Position=0)] [string] $TypeName,
+        [Parameter(Position=1)] $ArgumentList,
+        [string] $ComObject,
+        [Parameter(ValueFromRemainingArguments=$true)] $Rest
+    )
+
+    if ($ComObject) {
+        [HuskHost]::Record('process.start', ""New-Object -ComObject $ComObject"", @([string]$ComObject))
+        $c = & $global:HuskRealNewObject -TypeName PSObject
+        $c | Add-Member ScriptMethod Run { param($cmd) [HuskHost]::Record('process.start', 'WScript.Shell.Run', @([string]$cmd)); 0 } -Force
+        $c | Add-Member ScriptMethod Exec { param($cmd) [HuskHost]::Record('process.start', 'WScript.Shell.Exec', @([string]$cmd)); $null } -Force
+        $c | Add-Member ScriptMethod RegWrite { param($k,$v) [HuskHost]::Record('registry.write', 'WScript.Shell.RegWrite', @([string]$k, [string]$v)); $null } -Force
+        $c | Add-Member ScriptMethod RegRead { param($k) [HuskHost]::Record('registry.read', 'WScript.Shell.RegRead', @([string]$k)); $null } -Force
+        return $c
+    }
+
+    if ($TypeName -match '(^|\.)WebClient$') {
+        [HuskHost]::Record('network.client', ""New-Object $TypeName"", @([string]$TypeName))
+        $w = & $global:HuskRealNewObject -TypeName PSObject
+        $w | Add-Member NoteProperty Headers (& $global:HuskRealNewObject -TypeName PSObject) -Force
+        $w | Add-Member ScriptMethod DownloadString { param($u) [HuskHost]::Record('network.http', 'Net.WebClient.DownloadString', @('GET', [string]$u)); $null } -Force
+        $w | Add-Member ScriptMethod DownloadData { param($u) [HuskHost]::Record('network.http', 'Net.WebClient.DownloadData', @('GET', [string]$u)); $null } -Force
+        $w | Add-Member ScriptMethod DownloadFile { param($u,$f) [HuskHost]::Record('network.download', 'Net.WebClient.DownloadFile', @([string]$u, [string]$f)); [HuskHost]::Record('filesystem.write', 'Net.WebClient.DownloadFile', @([string]$f)); $null } -Force
+        $w | Add-Member ScriptMethod UploadString { param($u,$d) [HuskHost]::Record('network.upload', 'Net.WebClient.UploadString', @([string]$u)); $null } -Force
+        return $w
+    }
+
+    if ($PSBoundParameters.ContainsKey('ArgumentList')) {
+        & $global:HuskRealNewObject -TypeName $TypeName -ArgumentList $ArgumentList
+    } else {
+        & $global:HuskRealNewObject -TypeName $TypeName
+    }
+}
+";
+
     // ---- Dropped-file capture -------------------------------------------
     //
     // Every file write a sample performs - [IO.File]::WriteAllText, Out-File,
@@ -167,6 +329,9 @@ public static partial class Spike
     private static HashSet<string> _baseline = new();
 
     /// Paths that exist before the sample runs, so they are not "dropped".
+    [JSExport]
+    internal static string ProxyCalls() => HuskHost.Drain();
+
     [JSExport]
     internal static int SnapshotFs()
     {

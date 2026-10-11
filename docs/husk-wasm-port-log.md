@@ -439,15 +439,77 @@ than an IOC.
 That is the dishonest-failure mode `husk-spec.md` §1 warns about, arriving
 from the other direction.
 
+## Web proxies — working, with a named blind spot
+
+PowerShell functions outrank cmdlets in command resolution, so defining
+`Invoke-WebRequest`, `Invoke-RestMethod`, `Start-BitsTransfer` and `New-Object`
+as functions shadows the real ones. They record and return a typed absence
+instead of throwing, so execution continues and the URL survives.
+
+The real `New-Object` is captured by reference at install time
+(`Get-Command -CommandType Cmdlet`) before the proxy shadows it. Module
+qualification does **not** work here: cmdlets are registered directly rather
+than as modules, so there is no `Microsoft.PowerShell.Utility` to qualify with.
+
+Measured against a cradle-shaped sample:
+
+```
+[proxy] network.client    New-Object Net.WebClient              ["Net.WebClient"]
+[proxy] network.http      Net.WebClient.DownloadString          ["GET","http://…/stage2.ps1"]
+[proxy] network.download  Net.WebClient.DownloadFile            ["http://…/p.exe","/tmp/p.exe"]
+[proxy] filesystem.write  Net.WebClient.DownloadFile            ["/tmp/p.exe"]
+[proxy] network.http      Invoke-WebRequest                     ["GET","http://…/iwr"]
+[proxy] network.http      Invoke-WebRequest                     ["GET","http://…/alias"]
+[proxy] network.http      Invoke-RestMethod                     ["GET","http://…/api"]
+[proxy] process.start     New-Object -ComObject WScript.Shell   ["WScript.Shell"]
+[proxy] process.start     WScript.Shell.Run                     ["powershell -enc ZQBj"]
+[proxy] registry.write    WScript.Shell.RegWrite                ["HKCU:\…\Run\evil","payload"]
+real server hits: 0
+```
+
+`DownloadFile` emits both `network.download` and `filesystem.write`, as the op
+vocabulary intends. `New-Object System.Text.StringBuilder` still returns a real
+StringBuilder, so the fall-through is intact.
+
+### The blind spot, measured
+
+Three ways around the proxy layer were tested:
+
+```
+[Net.WebClient]::new().DownloadString(…)        THREW MethodInvocationException
+(& (Get-Command New-Object -CommandType Cmdlet) Net.WebClient).DownloadString(…)
+                                                THREW MethodInvocationException
+Remove-Item function:New-Object; New-Object …   THREW CommandNotFoundException
+
+proxy-recorded: 0    boundary-recorded: 0    real server hits: 0
+```
+
+**Safety holds** — nothing escaped, because real `Net.WebClient` does not work
+on wasm anyway. **Telemetry does not**: a bypass produces *silence* rather than
+a record. A sample using `[Net.WebClient]::new()` yields no IOC at all.
+
+So the honest statement is: proxies are **telemetry, not containment**. They
+cover the cradles commodity droppers actually use, and they are bypassable by
+anything that reaches .NET directly. The `fetch` boundary underneath is the
+containment layer, and it is not bypassable — but it only sees calls that get
+far enough to make an HTTP request, which these do not.
+
+Silence is the wrong failure. This is the same "missed syscall is invisible"
+problem that argued against the engine in the first place, now measured rather
+than predicted.
+
+### The fix direction
+
+Record at the .NET member-invocation level rather than the cmdlet level. We
+have the PowerShell fork, so the chokepoint `husk-spec.md` commitment 3
+describes is reachable: patch the binder so every member call on a
+host-reaching type is recorded regardless of how the script got there. That
+turns a bypass from silence into a record, which is the property the whole
+design rests on.
+
 ## Next
 
-- **Proxy the web surface.** Register proxy functions for `Invoke-WebRequest`,
-  `Invoke-RestMethod` and the `Net.WebClient` methods that record the URL and
-  return a typed absence instead of throwing. Two layers is the right shape
-  anyway: proxies for telemetry quality (URL, method, headers), the `fetch`
-  boundary underneath as the unbypassable safety net.
-- **Process capture.** `Start-Process` has nothing behind it yet.
-- **Registry.** Same.
+- **Binder-level capture** (above) — the thing that closes the blind spot.
+- **Process and registry** beyond the WScript.Shell fakes.
 - **Corpus measurement** against the 244 + 864 fixtures.
-- **Trimming.** 196 assemblies, 12 MB gzipped, most of Roslyn and Markdig dead
-  weight for deobfuscation.
+- **Trimming.** 196 assemblies, 12 MB gzipped.

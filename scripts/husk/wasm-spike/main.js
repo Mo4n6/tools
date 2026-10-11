@@ -76,7 +76,13 @@ globalThis.snapshotFs = () => e.Spike.SnapshotFs();
 globalThis.droppedFiles = () => JSON.parse(e.Spike.DroppedFiles());
 globalThis.readDropped = (path) => e.Spike.ReadDropped(path);
 
-globalThis.hostCalls = () => hostLog.slice();
+globalThis.proxyCalls = () => JSON.parse(e.Spike.ProxyCalls());
+
+/** Both layers in one timeline: proxy records first, boundary records under. */
+globalThis.hostCalls = () => {
+  const proxied = JSON.parse(e.Spike.ProxyCalls());
+  return [...proxied, ...hostLog.map((h) => ({ ...h, source: 'boundary' }))];
+};
 globalThis.setNetworkMode = (mode) => {
   if (mode !== 'blocked' && mode !== 'live') {
     throw new Error(`unknown network mode: ${mode}`);
