@@ -358,6 +358,13 @@ One is the fourth capture layer:
     "Cmdlet-level capture" below for why the other three layers could not do
     this.
 
+And two are the budget:
+
+15. **`engine/parser/Compiler.cs` and
+    `engine/interpreter/PowerShellInstructions.cs` — `HuskHostHook.Tick()` at
+    every sequence point.** Both paths, because PowerShell interprets a script
+    block before it compiles one. See "Budgets" below.
+
 ## Measured, with all patches applied
 
 |                   |                  |
@@ -804,6 +811,77 @@ real `New-PSDrive`, with the directories samples actually write to.
 And `HuskHost.Drain` now really drains. It did not, so every run in a batch
 inherited the previous one's IOCs — a report belongs to one sample.
 
+## Budgets — a delay loop no longer hangs the tab
+
+A browser tab has one thread and Husk runs the pipeline on it, so **nothing
+outside can interrupt a `while ($true) {}`**: a timer cannot fire while
+`Invoke` owns the thread, and `PowerShell.Stop()` has no thread to run on.
+There is no watchdog available. The limit has to be inside the engine.
+
+`HuskHostHook.Tick()` is emitted at every **sequence point** — the one place
+the engine passes through on each statement — and throws over budget. Two
+numbers, both the host's to set: 20 million statements, and 10 seconds.
+
+Three details decided this:
+
+**Both execution paths need it.** The first attempt hooked only
+`UpdatePositionExpr.Reduce()`, which is the _compiled_ path, and a 2-statement
+budget let a 4-statement script run to completion. PowerShell interprets a
+script block before it compiles one, and a delay loop never runs often enough
+to get compiled — so the interpreted path, `UpdatePositionInstruction.Run`, is
+the one that actually needed the check.
+
+**It throws `PipelineStoppedException`, deliberately.** The compiler emits
+`catch (PipelineStoppedException) => rethrow` around every script `try` and
+`trap` (Compiler.cs:5290, 5433), so a sample cannot swallow it. Verified:
+`while ($true) { try { $i++ } catch { } }` stops at the time budget rather
+than spinning forever. Any ordinary terminating error would have been caught
+by that `catch` and the loop would have carried on.
+
+**A budget stop is reported as a partial result, not an error.** Everything up
+to the cutoff is still evidence, and surfacing it as
+"PipelineStoppedException" would read like an engine fault.
+
+### Sleeps are the one hole Tick cannot cover
+
+A sleep happens _inside_ a statement, so no amount of per-statement checking
+interrupts it. Measured before the fix: `Start-Sleep -Seconds 3` really did
+take 3 seconds, and `-Seconds 600` would have frozen the tab for ten minutes
+with no way out but killing it — losing every IOC captured up to that point.
+
+Two routes, both now capped at `SleepCapMilliseconds` (100 ms by default):
+
+|                                     | before | after                            |
+| ----------------------------------- | ------ | -------------------------------- |
+| `Start-Sleep -Seconds 600`          | 600 s  | 131 ms                           |
+| `[Threading.Thread]::Sleep(600000)` | 600 s  | 55 ms                            |
+| `Start-Sleep -Milliseconds 50`      | 50 ms  | 70 ms (under the cap, untouched) |
+
+The .NET route is refused at the binder: `System.Threading.*` joins the
+classification table as `timing.sleep`, and only the members that actually
+block (`Sleep`, `Delay`, `Wait`, `SpinWait`, …) are classified, because Thread
+and Task have plenty that do not.
+
+The cmdlet route is **clamped, not skipped**. `HuskHostHook.ClampCmdlet`
+rewrites `Start-Sleep`'s bound `Seconds`/`Milliseconds`/`Duration` property
+before `BeginProcessing`, from `CommandProcessorBase` — so a sample cannot
+reach around it the way it could delete a proxy function. Skipping the cmdlet
+outright was the wrong lever: `IsBlocked` also covers `registry.*`, and the
+virtual registry provider very much does need to run.
+
+**This is visible to a sample that times itself**, and that is a trade rather
+than something Husk can avoid. A sample that measures its own sleep sees 131
+milliseconds where it asked for ten minutes and may bail. The alternative is
+an analyst with a frozen tab. Both routes are recorded, so the report says the
+sample asked to sleep for 600 seconds and that Husk did not.
+
+### Cost
+
+None measurable. `Tick()` is a latch test, an increment and a compare, with
+the clock read once every 1024 statements. The corpus run is unchanged at 6 s
+and 39 s for 244 and 864 fixtures, and recovery is unchanged at 97.5% and
+100.0%.
+
 ## Remaining work, in order
 
 Each item says why it matters, what "done" looks like, and what is already
@@ -932,7 +1010,7 @@ capability, but it pollutes the analyst's evidence.
 ones, or the method is not script-reachable. Simplest fix: move the proxies to
 C# cmdlets so nothing public is needed.
 
-### 5. Perf check on the binder wrapper
+### 5. Perf check on the binder wrapper and the budget tick
 
 **Why:** `InvokeMethod` is wrapped on every bind. The namespace fast-path
 should make it free, but that is asserted rather than measured.
@@ -1009,8 +1087,8 @@ measurement harness.
 - `file://` cannot work (ES module CORS). The tree-walker keeps that property.
 - WebClient and the web cmdlets are proxied, not implemented; a sample that
   inspects the returned object closely will notice.
-- No step or wall-clock budget on the engine. An anti-analysis loop will hang
-  the tab — the tree-walker's budget problem, inherited and not yet solved.
+- A sample that times its own sleep can tell it was clamped. See "Sleeps are
+  the one hole Tick cannot cover" — the trade is deliberate.
 - Threads are off. If anything later needs them, it costs COOP/COEP and
   therefore static hosting.
 - The 5.1 fidelity patches are a _partial_ emulation of .NET Framework

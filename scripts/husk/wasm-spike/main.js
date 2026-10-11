@@ -79,6 +79,7 @@ globalThis.readDropped = (path) => e.Spike.ReadDropped(path);
 
 globalThis.proxyCalls = () => JSON.parse(e.Spike.ProxyCalls());
 globalThis.registryDump = () => JSON.parse(e.Spike.RegistryDump());
+globalThis.setBudget = (steps, ms) => e.Spike.SetBudget(steps, ms);
 
 /** Both layers in one timeline: proxy records first, boundary records under. */
 globalThis.hostCalls = () => {

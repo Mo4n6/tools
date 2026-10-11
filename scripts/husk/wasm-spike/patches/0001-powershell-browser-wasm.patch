@@ -280,10 +280,10 @@ index d9758ce..ec9f774 100644
                      }
                  }
 diff --git a/src/System.Management.Automation/engine/CommandProcessorBase.cs b/src/System.Management.Automation/engine/CommandProcessorBase.cs
-index ddadf9f..6a8a451 100644
+index ddadf9f..8f4c7c6 100644
 --- a/src/System.Management.Automation/engine/CommandProcessorBase.cs
 +++ b/src/System.Management.Automation/engine/CommandProcessorBase.cs
-@@ -487,6 +487,35 @@ namespace System.Management.Automation
+@@ -487,6 +487,39 @@ namespace System.Management.Automation
          /// <exception cref="PipelineStoppedException">
          /// a terminating error occurred, or the pipeline was otherwise stopped
          /// </exception>
@@ -310,16 +310,20 @@ index ddadf9f..6a8a451 100644
 +                return;
 +            }
 +
-+            HuskHostHook.RecordCmdlet(
-+                Command.MyInvocation?.MyCommand?.Name,
-+                Command.MyInvocation?.BoundParameters,
-+                ref _huskLastRecord);
++            string name = Command.MyInvocation?.MyCommand?.Name;
++            HuskHostHook.RecordCmdlet(name, Command.MyInvocation?.BoundParameters, ref _huskLastRecord);
++
++            // A sleep happens inside a statement, so the step budget cannot
++            // interrupt it. Clamping the bound parameter before the cmdlet
++            // runs is the only place to stop `Start-Sleep -Seconds 600` from
++            // freezing the tab.
++            HuskHostHook.ClampCmdlet(name, Command);
 +        }
 +
          internal virtual void DoBegin()
          {
              // Note that DoPrepare() and DoBegin() should NOT be combined.
-@@ -534,6 +563,14 @@ namespace System.Management.Automation
+@@ -534,6 +567,14 @@ namespace System.Management.Automation
                              Context.Debugger.CheckCommand(Command.MyInvocation);
                          }
  
@@ -397,10 +401,10 @@ index 55486c6..3e8e7d6 100644
              {
 diff --git a/src/System.Management.Automation/engine/HuskHostHook.cs b/src/System.Management.Automation/engine/HuskHostHook.cs
 new file mode 100644
-index 0000000..975c678
+index 0000000..a3bf14e
 --- /dev/null
 +++ b/src/System.Management.Automation/engine/HuskHostHook.cs
-@@ -0,0 +1,438 @@
+@@ -0,0 +1,602 @@
 +// Licensed to the .NET Foundation under one or more agreements.
 +// The .NET Foundation licenses this file to you under the MIT license.
 +//
@@ -463,6 +467,8 @@ index 0000000..975c678
 +            ["System.IO.Directory"] = "filesystem",
 +            ["System.IO.FileStream"] = "filesystem.write",
 +            ["System.Diagnostics.Process"] = "process.start",
++            ["System.Threading.Thread"] = "timing.sleep",
++            ["System.Threading.Tasks.Task"] = "timing.sleep",
 +            ["System.Reflection.Assembly"] = "assembly.load",
 +            ["System.AppDomain"] = "assembly.load",
 +        };
@@ -478,6 +484,7 @@ index 0000000..975c678
 +                    || typeName.StartsWith("System.IO.", StringComparison.Ordinal)
 +                    || typeName.StartsWith("System.Diagnostics.", StringComparison.Ordinal)
 +                    || typeName.StartsWith("System.Reflection.", StringComparison.Ordinal)
++                    || typeName.StartsWith("System.Threading.", StringComparison.Ordinal)
 +                    || typeName.StartsWith("Microsoft.Win32.", StringComparison.Ordinal)
 +                    || typeName.Equals("System.AppDomain", StringComparison.Ordinal));
 +        }
@@ -520,6 +527,15 @@ index 0000000..975c678
 +                    "UploadString" or "UploadData" or "UploadFile" => "network.upload",
 +                    _ => "network.http",
 +                },
++                "timing.sleep" => method.Name switch
++                {
++                    // Only the members that actually block. Thread and Task
++                    // have plenty that do not, and classifying those would
++                    // refuse calls a sample legitimately needs.
++                    "Sleep" or "Delay" or "Wait" or "WaitAll" or "WaitAny"
++                        or "SpinWait" or "SpinUntil" => "timing.sleep",
++                    _ => null,
++                },
 +                "filesystem" => method.Name switch
 +                {
 +                    var n when n.StartsWith("Write", StringComparison.Ordinal)
@@ -535,7 +551,7 @@ index 0000000..975c678
 +                _ => family,
 +            };
 +
-+            return true;
++            return op is not null;
 +        }
 +
 +        /// <summary>
@@ -774,6 +790,157 @@ index 0000000..975c678
 +            }
 +        }
 +
++
++        // ---------------------------------------------------------------
++        // Budgets
++        // ---------------------------------------------------------------
++        //
++        // A browser tab has one thread, and Husk runs the pipeline on it. So
++        // there is no watchdog that can interrupt a `while ($true) {}` from
++        // outside: a timer cannot fire while Invoke owns the thread. The limit
++        // has to be inside the engine, checked as the script runs.
++        //
++        // Delay loops and dead-man counters are ordinary anti-analysis, not
++        // edge cases. Without this an analyst's tab hangs and the only way out
++        // is to kill it, losing every IOC captured up to that point.
++        //
++        // Tick() is emitted per statement, so it is on the hottest path in the
++        // engine: a latch test, an increment, a compare, and the clock read
++        // only once every 1024 statements.
++
++        private static long s_steps;
++        private static long s_stepLimit;
++        private static long s_deadline;
++        private static bool s_exceeded;
++
++        /// <summary>Why the run stopped, or null if it was not stopped by a budget.</summary>
++        public static string BudgetReason { get; private set; }
++
++        /// <summary>True when the last run ended because it ran out of budget.</summary>
++        public static bool BudgetExceeded => s_exceeded;
++
++        /// <summary>
++        /// Zero for either limit means unlimited. The host chooses the numbers;
++        /// the engine only enforces them.
++        /// </summary>
++        public static void SetBudget(long steps, long milliseconds)
++        {
++            s_stepLimit = steps > 0 ? steps : 0;
++            s_milliseconds = milliseconds > 0 ? milliseconds : 0;
++        }
++
++        private static long s_milliseconds;
++
++        /// <summary>Called by the host before each sample. Resets the counters.</summary>
++        public static void BeginRun()
++        {
++            s_steps = 0;
++            s_exceeded = false;
++            BudgetReason = null;
++            s_deadline = s_milliseconds > 0 ? Environment.TickCount64 + s_milliseconds : 0;
++        }
++
++        /// <summary>
++        /// Emitted by the compiler at every sequence point. Throws
++        /// PipelineStoppedException over budget, deliberately: the compiler
++        /// emits `catch (PipelineStoppedException) => rethrow` around every
++        /// script try and trap, so a sample cannot swallow it with
++        /// `while ($true) { try { … } catch { } }` the way it could swallow an
++        /// ordinary terminating error.
++        /// </summary>
++        public static void Tick()
++        {
++            if (s_exceeded)
++            {
++                throw new PipelineStoppedException();
++            }
++
++            long steps = ++s_steps;
++            if (s_stepLimit != 0 && steps > s_stepLimit)
++            {
++                Exceed($"step budget exhausted after {s_stepLimit} statements");
++            }
++            else if (s_deadline != 0 && (steps & 0x3FF) == 0 && Environment.TickCount64 > s_deadline)
++            {
++                Exceed($"time budget exhausted after {s_milliseconds} ms");
++            }
++        }
++
++        private static void Exceed(string reason)
++        {
++            s_exceeded = true;
++            BudgetReason = reason;
++            throw new PipelineStoppedException();
++        }
++
++
++        /// <summary>
++        /// How long a sample is allowed to actually sleep, in milliseconds.
++        /// </summary>
++        ///
++        /// A sleep is the one hole Tick() cannot cover: it happens *inside* a
++        /// statement, so no amount of per-statement checking interrupts it,
++        /// and `Start-Sleep -Seconds 600` freezes the tab for ten minutes with
++        /// no way out but killing it. Measured: a 3-second sleep really does
++        /// take 3 seconds here.
++        ///
++        /// Clamped rather than skipped, and recorded either way, because a
++        /// sample that times itself can tell. That is a trade the analyst
++        /// should know about and not one Husk can avoid - the alternative is
++        /// losing every IOC captured so far.
++        public static int SleepCapMilliseconds = 100;
++
++        /// <summary>
++        /// Adjusts a cmdlet's bound parameters before it runs. Called from
++        /// CommandProcessorBase, so a sample cannot reach around it the way it
++        /// could delete a proxy function.
++        /// </summary>
++        public static void ClampCmdlet(string cmdletName, object command)
++        {
++            if (command is null
++                || !string.Equals(cmdletName, "Start-Sleep", StringComparison.OrdinalIgnoreCase))
++            {
++                return;
++            }
++
++            try
++            {
++                Type type = command.GetType();
++                // Each cap is in the unit of the property it clamps.
++                Clamp(type.GetProperty("Seconds"), command, SleepCapMilliseconds / 1000.0);
++                Clamp(type.GetProperty("Milliseconds"), command, SleepCapMilliseconds);
++                Clamp(type.GetProperty("Duration"), command, SleepCapMilliseconds);
++            }
++            catch (Exception)
++            {
++                // A shape we did not expect is not worth taking the run down
++                // for; the worst case is a sleep that runs its full length.
++            }
++        }
++
++        /// <param name="cap">The cap in the property's own unit, not in milliseconds.</param>
++        private static void Clamp(PropertyInfo property, object command, double cap)
++        {
++            if (property is null || !property.CanWrite) { return; }
++
++            object current = property.GetValue(command);
++            if (current is null) { return; }
++
++            if (current is TimeSpan span)
++            {
++                if (span.TotalMilliseconds > cap)
++                {
++                    property.SetValue(command, TimeSpan.FromMilliseconds(cap));
++                }
++
++                return;
++            }
++
++            if (Convert.ToDouble(current) <= cap) { return; }
++
++            property.SetValue(command, Convert.ChangeType(cap, property.PropertyType));
++        }
++
 +        /// <summary>True when an op should be refused rather than run.</summary>
 +        ///
 +        /// Two different reasons, deliberately collapsed into one answer.
@@ -790,7 +957,8 @@ index 0000000..975c678
 +
 +            return (BlockNetwork && op.StartsWith("network.", StringComparison.Ordinal))
 +                || op.StartsWith("registry.", StringComparison.Ordinal)
-+                || op.StartsWith("process.", StringComparison.Ordinal);
++                || op.StartsWith("process.", StringComparison.Ordinal)
++                || op.Equals("timing.sleep", StringComparison.Ordinal);
 +        }
 +
 +        /// <summary>Classification, for the binder.</summary>
@@ -908,6 +1076,56 @@ index 1ad23a4..301c3ff 100644
          }
  
          private static string[] s_productFolderDirectories;
+diff --git a/src/System.Management.Automation/engine/interpreter/PowerShellInstructions.cs b/src/System.Management.Automation/engine/interpreter/PowerShellInstructions.cs
+index 5592af6..d4dab37 100644
+--- a/src/System.Management.Automation/engine/interpreter/PowerShellInstructions.cs
++++ b/src/System.Management.Automation/engine/interpreter/PowerShellInstructions.cs
+@@ -32,6 +32,15 @@ namespace System.Management.Automation.Interpreter
+             var context = frame.ExecutionContext;
+ 
+             functionContext._currentSequencePointIndex = _sequencePoint;
++
++            // wasm port: the step and time budget, on the interpreted path.
++            //
++            // PowerShell interprets a script block before it compiles one, and
++            // a delay loop never runs often enough to get compiled - so this
++            // is the path that actually needs the limit. The compiled path has
++            // the same call, emitted by UpdatePositionExpr.Reduce.
++            HuskHostHook.Tick();
++
+             if (_checkBreakpoints)
+             {
+                 if (context._debuggingMode > 0)
+diff --git a/src/System.Management.Automation/engine/parser/Compiler.cs b/src/System.Management.Automation/engine/parser/Compiler.cs
+index e8ee819..386cb47 100644
+--- a/src/System.Management.Automation/engine/parser/Compiler.cs
++++ b/src/System.Management.Automation/engine/parser/Compiler.cs
+@@ -7018,6 +7018,9 @@ namespace System.Management.Automation.Language
+         private readonly int _sequencePoint;
+         private readonly bool _checkBreakpoints;
+ 
++        private static readonly MethodInfo s_huskTick =
++            typeof(HuskHostHook).GetMethod(nameof(HuskHostHook.Tick));
++
+         public UpdatePositionExpr(IScriptExtent extent, int sequencePoint, SymbolDocumentInfo debugSymbolDocument, bool checkBreakpoints)
+         {
+             _extent = extent;
+@@ -7039,6 +7042,15 @@ namespace System.Management.Automation.Language
+                     Expression.Field(Compiler.s_functionContext, CachedReflectionInfo.FunctionContext__currentSequencePointIndex),
+                     ExpressionCache.Constant(_sequencePoint)));
+ 
++            // wasm port: the step and time budget.
++            //
++            // A browser tab has one thread and the pipeline runs on it, so
++            // nothing outside can interrupt a `while ($true) {}` - a timer
++            // cannot fire while Invoke owns the thread. A sequence point is
++            // the one place the engine passes through on every statement, so
++            // this is where the limit has to live.
++            exprs.Add(Expression.Call(s_huskTick));
++
+             if (_checkBreakpoints)
+             {
+                 exprs.Add(
 diff --git a/src/System.Management.Automation/engine/parser/tokenizer.cs b/src/System.Management.Automation/engine/parser/tokenizer.cs
 index 3d0aa3a..11017dd 100644
 --- a/src/System.Management.Automation/engine/parser/tokenizer.cs

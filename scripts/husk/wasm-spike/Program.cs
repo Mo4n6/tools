@@ -382,10 +382,22 @@ public static partial class Spike
                 }
             }
 
+            // Only now, so the host's own setup is not charged against the
+            // sample's budget. The numbers are the analyst's to change: 20
+            // million statements is far more than any real sample needs and
+            // still trips a delay loop in a second or two, and 10 seconds is
+            // about as long as anyone will wait on a tab before killing it.
+            HuskHostHook.SetBudget(steps: 20_000_000, milliseconds: 10_000);
+
             return "OK";
         }
         catch (Exception ex) { return Describe(ex); }
     }
+
+    /// Lets the analyst raise or lift the budget for one stubborn sample.
+    [JSExport]
+    internal static void SetBudget(int steps, int milliseconds)
+        => HuskHostHook.SetBudget(steps, milliseconds);
 
     /// Does mono-wasm give us real threads? SMA's pipeline model wants them.
     /// If this throws, no amount of source patching makes pipelines run.
@@ -733,6 +745,7 @@ function New-Object {
     internal static string RunFixture(string script)
     {
         HuskHost.TakeLayers();
+        HuskHostHook.BeginRun();
         string output;
         string error = "";
         try
@@ -749,6 +762,14 @@ function New-Object {
             }
         }
         catch (Exception ex) { output = ""; error = ex.GetType().Name + ": " + ex.Message; }
+
+        // A budget stop is not the sample's error, and reporting it as
+        // "PipelineStoppedException" would read like an engine fault. It is a
+        // partial result: everything up to the cutoff is still evidence.
+        if (HuskHostHook.BudgetExceeded)
+        {
+            error = "husk: " + HuskHostHook.BudgetReason;
+        }
 
         var layers = string.Join(",", HuskHost.TakeLayers().Select(HuskHost.JsonQuotePublic));
         return "{\"output\":" + HuskHost.JsonQuotePublic(output) +

