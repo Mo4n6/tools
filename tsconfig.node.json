@@ -7,9 +7,18 @@
     "moduleResolution": "NodeNext",
     "allowSyntheticDefaultImports": true,
     "allowJs": true,
+    "allowImportingTsExtensions": true,
     "checkJs": true,
     "lib": ["ES2022"],
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "server/**/*.ts", "scripts/**/*.mjs"]
+  "include": [
+    "vite.config.ts",
+    "server/**/*.ts",
+    "scripts/**/*.mjs",
+    "scripts/**/*.ts",
+    // The Girih miner runs the app's solver engine under Node.
+    "src/features/girih/engine/**/*.ts"
+  ],
+  "exclude": ["src/**/*.test.ts"]
 }
