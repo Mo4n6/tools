@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Management.Automation;
+using System.Management.Automation.Host;
 using System.Management.Automation.Runspaces;
 using System.Reflection;
 using System.Collections.Generic;
@@ -35,10 +36,29 @@ public static class HuskHost
         }
     }
 
+    private static readonly List<string> s_layers = new();
+
+    public static void RecordLayer(string text)
+    {
+        lock (s_layers) { s_layers.Add(text ?? ""); }
+    }
+
+    public static string[] TakeLayers()
+    {
+        lock (s_layers)
+        {
+            var copy = s_layers.ToArray();
+            s_layers.Clear();
+            return copy;
+        }
+    }
+
     public static string Drain()
     {
         lock (s_calls) { return "[" + string.Join(",", s_calls) + "]"; }
     }
+
+    public static string JsonQuotePublic(string value) => JsonQuote(value);
 
     private static string JsonQuote(string value)
     {
@@ -55,10 +75,111 @@ public static class HuskHost
     }
 }
 
+
+/// A PSHost that captures instead of writing to a terminal.
+///
+/// The default console host P/Invokes libpsl-native for terminal handling, so
+/// in a browser every Write-Host throws DllNotFoundException - and Write-Host
+/// is the payload in most obfuscated samples. Capturing is also what an
+/// analyst wants: the text a sample tried to print is evidence.
+public sealed class HuskHostUi : PSHostUserInterface
+{
+    private readonly StringBuilder _out = new();
+
+    public string Drain()
+    {
+        lock (_out) { var s = _out.ToString(); _out.Clear(); return s; }
+    }
+
+    private void Append(string value)
+    {
+        lock (_out) { _out.Append(value); }
+    }
+
+    public override PSHostRawUserInterface RawUI => null;
+
+    public override void Write(string value) => Append(value);
+
+    public override void Write(ConsoleColor foregroundColor, ConsoleColor backgroundColor, string value)
+        => Append(value);
+
+    public override void WriteLine(string value) => Append(value + "\n");
+
+    public override void WriteLine() => Append("\n");
+
+    public override void WriteErrorLine(string value) => Append(value + "\n");
+
+    public override void WriteDebugLine(string message) => Append(message + "\n");
+
+    public override void WriteVerboseLine(string message) => Append(message + "\n");
+
+    public override void WriteWarningLine(string message) => Append(message + "\n");
+
+    public override void WriteProgress(long sourceId, ProgressRecord record) { }
+
+    // A sample that prompts gets an empty answer rather than a hang. Blocking
+    // for input would stall the tab with no one to type into it.
+    public override string ReadLine() => string.Empty;
+
+    public override System.Security.SecureString ReadLineAsSecureString()
+        => new System.Security.SecureString();
+
+    public override Dictionary<string, PSObject> Prompt(
+        string caption, string message, System.Collections.ObjectModel.Collection<FieldDescription> descriptions)
+        => new();
+
+    public override int PromptForChoice(
+        string caption, string message,
+        System.Collections.ObjectModel.Collection<ChoiceDescription> choices, int defaultChoice)
+        => defaultChoice;
+
+    public override PSCredential PromptForCredential(
+        string caption, string message, string userName, string targetName)
+        => null;
+
+    public override PSCredential PromptForCredential(
+        string caption, string message, string userName, string targetName,
+        PSCredentialTypes allowedCredentialTypes, PSCredentialUIOptions options)
+        => null;
+}
+
+public sealed class HuskPSHost : PSHost
+{
+    private readonly Guid _id = Guid.NewGuid();
+
+    public HuskHostUi Ui { get; } = new();
+
+    public override string Name => "Husk";
+
+    public override Version Version => new(1, 0);
+
+    public override Guid InstanceId => _id;
+
+    public override PSHostUserInterface UI => Ui;
+
+    public override System.Globalization.CultureInfo CurrentCulture
+        => System.Globalization.CultureInfo.InvariantCulture;
+
+    public override System.Globalization.CultureInfo CurrentUICulture
+        => System.Globalization.CultureInfo.InvariantCulture;
+
+    public override void SetShouldExit(int exitCode) { }
+
+    public override void EnterNestedPrompt() { }
+
+    public override void ExitNestedPrompt() { }
+
+    public override void NotifyBeginApplication() { }
+
+    public override void NotifyEndApplication() { }
+}
+
 public static partial class Spike
 {
     private static Runspace? _rs;
+    private static HuskPSHost? _host;
     private static int _cmdletCount;
+    private static int _aliasCount;
 
     /// What the wasm runtime actually reports for the paths SMA derives
     /// $PSHOME from. Guessing at these cost two build cycles.
@@ -91,6 +212,44 @@ public static partial class Spike
             Environment.SetEnvironmentVariable("PSModulePath", Path.Combine(home, "Modules"));
             Environment.SetEnvironmentVariable("POWERSHELL_TELEMETRY_OPTOUT", "1");
 
+            // A browser has no Windows environment, and obfuscators lean on it
+            // hard: $env:ComSpec[4,15,25] and friends are a standard way to
+            // rebuild "IEX" without writing it. An empty value turns into
+            // "Cannot index into a null array" and the sample dies there.
+            //
+            // These are the analyst-editable host constants husk-spec.md section 5
+            // describes; the values are plausible defaults, not real ones.
+            foreach (var (key, value) in new[]
+            {
+                ("ComSpec", @"C:\Windows\system32\cmd.exe"),
+                ("COMPUTERNAME", "DESKTOP-HUSK01"),
+                ("USERNAME", "analyst"),
+                ("USERDOMAIN", "WORKGROUP"),
+                ("USERPROFILE", @"C:\Users\analyst"),
+                ("HOMEDRIVE", "C:"),
+                ("HOMEPATH", @"\Users\analyst"),
+                ("APPDATA", @"C:\Users\analyst\AppData\Roaming"),
+                ("LOCALAPPDATA", @"C:\Users\analyst\AppData\Local"),
+                ("TEMP", @"C:\Users\analyst\AppData\Local\Temp"),
+                ("TMP", @"C:\Users\analyst\AppData\Local\Temp"),
+                ("ALLUSERSPROFILE", @"C:\ProgramData"),
+                ("PUBLIC", @"C:\Users\Public"),
+                ("ProgramData", @"C:\ProgramData"),
+                ("ProgramFiles", @"C:\Program Files"),
+                ("CommonProgramFiles", @"C:\Program Files\Common Files"),
+                ("SystemRoot", @"C:\Windows"),
+                ("SystemDrive", "C:"),
+                ("windir", @"C:\Windows"),
+                ("OS", "Windows_NT"),
+                ("PATHEXT", ".COM;.EXE;.BAT;.CMD;.VBS;.JS;.WSF;.PS1"),
+                ("PROCESSOR_ARCHITECTURE", "AMD64"),
+                ("NUMBER_OF_PROCESSORS", "4"),
+                ("PSModulePath", @"C:\Program Files\WindowsPowerShell\Modules"),
+            })
+            {
+                Environment.SetEnvironmentVariable(key, value);
+            }
+
             // CreateDefault2 loads only Microsoft.PowerShell.Core, so SMA does
             // not go looking for modules on a filesystem that is not there.
             // CreateDefault2 imports the core snap-in, which reads $PSHOME
@@ -121,7 +280,26 @@ public static partial class Spike
             {
                 try { _cmdletCount += RegisterCmdlets(iss, Assembly.Load(name)); }
                 catch (Exception) { /* not in this bundle; carry on */ }
-            } // wasm is single-threaded
+            }
+
+            _aliasCount = RegisterFiveOneAliases(iss); // wasm is single-threaded
+            // Windows PowerShell 5.1 automatic variables that 7.x dropped.
+            // The corpus was generated with Invoke-Obfuscation against 5.1, and
+            // (Get-Variable '*MDR*').Name[3,11,2] -join '' - which spells "iex"
+            // out of $MaximumDriveCount - is one of its standard cradles.
+            foreach (var (name, value) in new[]
+            {
+                ("MaximumDriveCount", 4096),
+                ("MaximumVariableCount", 4096),
+                ("MaximumFunctionCount", 4096),
+                ("MaximumAliasCount", 4096),
+                ("MaximumErrorCount", 256),
+                ("MaximumHistoryCount", 4096),
+            })
+            {
+                iss.Variables.Add(new SessionStateVariableEntry(name, value, $"5.1 compatibility: {name}"));
+            }
+
             // The binder chokepoint. Proxy functions are telemetry; this is
             // the thing a sample cannot route around, because every .NET
             // method call in PowerShell passes through it.
@@ -129,7 +307,8 @@ public static partial class Spike
                 HuskHost.RecordFrom("binder", op, native, args);
             HuskHostHook.BlockNetwork = true;
 
-            _rs = RunspaceFactory.CreateRunspace(iss);
+            _host = new HuskPSHost();
+            _rs = RunspaceFactory.CreateRunspace(_host, iss);
             _rs.Open();
 
             using (var setup = PowerShell.Create())
@@ -194,7 +373,7 @@ public static partial class Spike
             var errs = ps.Streams.Error.Count > 0
                 ? " | ERRORS: " + string.Join("; ", ps.Streams.Error.Select(e => e.ToString()))
                 : "";
-            return string.Join("\n", results.Select(r => r?.ToString() ?? "")) + errs;
+            return Join(string.Join("\n", results.Select(r => r?.ToString() ?? "")), Printed(ps)) + errs;
         }
         catch (Exception ex) { return Describe(ex); }
     }
@@ -209,8 +388,88 @@ public static partial class Spike
             if (type.IsAbstract || !type.IsPublic) { continue; }
             var attr = type.GetCustomAttribute<CmdletAttribute>();
             if (attr is null) { continue; }
-            iss.Commands.Add(new SessionStateCmdletEntry(
-                $"{attr.VerbName}-{attr.NounName}", type, helpFileName: null));
+            var name = $"{attr.VerbName}-{attr.NounName}";
+            iss.Commands.Add(new SessionStateCmdletEntry(name, type, helpFileName: null));
+            _registered.Add(name);
+            added++;
+        }
+        return added;
+    }
+
+    /// Every cmdlet name registered off an assembly, so the alias table can
+    /// skip aliases whose target is not in this bundle.
+    private static readonly HashSet<string> _registered =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// The Windows PowerShell 5.1 default aliases.
+    ///
+    /// Registering cmdlets off the assembly gets the cmdlets but not the
+    /// aliases its module manifest would have declared, and obfuscators reach
+    /// for aliases constantly - `LS Variable:x` to read a variable without
+    /// writing Get-Variable, `%`, `?`, `iex`, `sal` to re-alias a cmdlet under
+    /// a name no detection rule looks for. A missing alias is not a wrong
+    /// answer, it is the sample failing at command resolution.
+    private static readonly (string Alias, string Cmdlet)[] FiveOneAliases =
+    {
+        ("%", "ForEach-Object"), ("?", "Where-Object"), ("ac", "Add-Content"),
+        ("cat", "Get-Content"), ("cd", "Set-Location"), ("chdir", "Set-Location"),
+        ("clc", "Clear-Content"), ("clear", "Clear-Host"), ("cli", "Clear-Item"),
+        ("clp", "Clear-ItemProperty"), ("cls", "Clear-Host"), ("clv", "Clear-Variable"),
+        ("compare", "Compare-Object"), ("copy", "Copy-Item"), ("cp", "Copy-Item"),
+        ("cpi", "Copy-Item"), ("cpp", "Copy-ItemProperty"), ("curl", "Invoke-WebRequest"),
+        ("cvpa", "Convert-Path"), ("dbp", "Disable-PSBreakpoint"), ("del", "Remove-Item"),
+        ("diff", "Compare-Object"), ("dir", "Get-ChildItem"), ("ebp", "Enable-PSBreakpoint"),
+        ("echo", "Write-Output"), ("epal", "Export-Alias"), ("epcsv", "Export-Csv"),
+        ("erase", "Remove-Item"), ("fc", "Format-Custom"), ("fl", "Format-List"),
+        ("foreach", "ForEach-Object"), ("ft", "Format-Table"), ("fw", "Format-Wide"),
+        ("gal", "Get-Alias"), ("gbp", "Get-PSBreakpoint"), ("gc", "Get-Content"),
+        ("gci", "Get-ChildItem"), ("gcm", "Get-Command"), ("gcs", "Get-PSCallStack"),
+        ("gdr", "Get-PSDrive"), ("ghy", "Get-History"), ("gi", "Get-Item"),
+        ("gl", "Get-Location"), ("gm", "Get-Member"), ("gmo", "Get-Module"),
+        ("gp", "Get-ItemProperty"), ("gps", "Get-Process"), ("group", "Group-Object"),
+        ("gsv", "Get-Service"), ("gu", "Get-Unique"), ("gv", "Get-Variable"),
+        ("h", "Get-History"), ("history", "Get-History"), ("iex", "Invoke-Expression"),
+        ("ihy", "Invoke-History"), ("ii", "Invoke-Item"), ("ipal", "Import-Alias"),
+        ("ipcsv", "Import-Csv"), ("ipmo", "Import-Module"), ("irm", "Invoke-RestMethod"),
+        ("iwr", "Invoke-WebRequest"), ("kill", "Stop-Process"), ("ls", "Get-ChildItem"),
+        ("measure", "Measure-Object"), ("mi", "Move-Item"), ("mount", "New-PSDrive"),
+        ("move", "Move-Item"), ("mp", "Move-ItemProperty"), ("mv", "Move-Item"),
+        ("nal", "New-Alias"), ("ndr", "New-PSDrive"), ("ni", "New-Item"),
+        ("nmo", "New-Module"), ("nv", "New-Variable"), ("oh", "Out-Host"),
+        ("popd", "Pop-Location"), ("ps", "Get-Process"), ("pushd", "Push-Location"),
+        ("pwd", "Get-Location"), ("r", "Invoke-History"), ("rbp", "Remove-PSBreakpoint"),
+        ("rd", "Remove-Item"), ("rdr", "Remove-PSDrive"), ("ren", "Rename-Item"),
+        ("ri", "Remove-Item"), ("rm", "Remove-Item"), ("rmdir", "Remove-Item"),
+        ("rmo", "Remove-Module"), ("rni", "Rename-Item"), ("rnp", "Rename-ItemProperty"),
+        ("rp", "Remove-ItemProperty"), ("rv", "Remove-Variable"), ("rvpa", "Resolve-Path"),
+        ("sal", "Set-Alias"), ("saps", "Start-Process"), ("sasv", "Start-Service"),
+        ("sbp", "Set-PSBreakpoint"), ("sc", "Set-Content"), ("select", "Select-Object"),
+        ("set", "Set-Variable"), ("si", "Set-Item"), ("sl", "Set-Location"),
+        ("sleep", "Start-Sleep"), ("sort", "Sort-Object"), ("sp", "Set-ItemProperty"),
+        ("spps", "Stop-Process"), ("spsv", "Stop-Service"), ("start", "Start-Process"),
+        ("sv", "Set-Variable"), ("tee", "Tee-Object"), ("type", "Get-Content"),
+        ("where", "Where-Object"), ("write", "Write-Output"),
+    };
+
+    private static int RegisterFiveOneAliases(InitialSessionState iss)
+    {
+        // CreateDefault2 already declares some of these, several of them
+        // AllScope, and re-adding one without that option throws during
+        // Open ("the AllScope option cannot be removed from the alias 'cd'")
+        // and takes the whole runspace down. Adding only what is missing
+        // sidesteps having to know which ones those are.
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in iss.Commands)
+        {
+            existing.Add(entry.Name);
+        }
+
+        var added = 0;
+        foreach (var (alias, cmdlet) in FiveOneAliases)
+        {
+            if (existing.Contains(alias) || !_registered.Contains(cmdlet)) { continue; }
+            iss.Commands.Add(new SessionStateAliasEntry(alias, cmdlet));
+            existing.Add(alias);
             added++;
         }
         return added;
@@ -247,6 +506,19 @@ public static partial class Spike
     // bypassed; this layer exists for the quality of what gets recorded.
 
     private const string WebProxies = @"
+# Invoke-Expression is the eval() of this tool: every time a sample hands
+# text back to the engine, that text is a decoded layer. Record it, then run
+# it so nested layers unwrap too.
+function Invoke-Expression {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true, Position=0, ValueFromPipeline=$true)] [string] $Command
+    )
+    [HuskHost]::RecordLayer($Command)
+    & $global:HuskRealIex -Command $Command
+}
+Set-Alias iex Invoke-Expression -Scope Global -Force
+
 function Invoke-WebRequest {
     [CmdletBinding()]
     param(
@@ -299,6 +571,7 @@ function Start-BitsTransfer {
 # Module-qualifying it would not work: cmdlets are registered directly here,
 # not as a module, so there is no Microsoft.PowerShell.Utility to qualify with.
 $global:HuskRealNewObject = Get-Command -Name New-Object -CommandType Cmdlet
+$global:HuskRealIex = Get-Command -Name Invoke-Expression -CommandType Cmdlet
 
 function New-Object {
     [CmdletBinding()]
@@ -351,6 +624,78 @@ function New-Object {
     /// Paths that exist before the sample runs, so they are not "dropped".
     [JSExport]
     internal static string ProxyCalls() => HuskHost.Drain();
+
+    /// Everything the script tried to print, as opposed to what it returned.
+    ///
+    /// Write-Host does not reach PSHost.UI when the engine is driven through
+    /// the SDK: WriteHostCommand emits an InformationRecord, and with no
+    /// console host draining the information stream it lands in
+    /// ps.Streams.Information instead. A sample's Write-Host payload is the
+    /// evidence, so both sources are folded into the output: the information
+    /// stream, and the host buffer for the calls that do reach $Host.UI.Write.
+    private static string Printed(PowerShell ps)
+    {
+        // With $InformationPreference at Continue the engine both records the
+        // InformationRecord and relays it to $Host.UI, so taking both sources
+        // unconditionally prints every Write-Host twice. The host buffer is the
+        // better of the two when it has anything — it preserves the newlines
+        // Write-Host emitted — so the information stream is the fallback for
+        // records the host never saw.
+        var written = _host?.Ui.Drain() ?? "";
+        if (written.Length > 0)
+        {
+            return written;
+        }
+
+        var parts = new List<string>();
+        foreach (var record in ps.Streams.Information)
+        {
+            var text = record?.MessageData?.ToString();
+            if (!string.IsNullOrEmpty(text))
+            {
+                parts.Add(text);
+            }
+        }
+
+        return string.Join("\n", parts);
+    }
+
+    private static string Join(string first, string second)
+    {
+        if (first.Length == 0) { return second; }
+        if (second.Length == 0) { return first; }
+        return first + "\n" + second;
+    }
+
+    /// Runs one corpus fixture and returns its output plus every layer that
+    /// Invoke-Expression was handed, as JSON. Errors are reported rather than
+    /// thrown: a fixture that fails is a data point, not a crash.
+    [JSExport]
+    internal static string RunFixture(string script)
+    {
+        HuskHost.TakeLayers();
+        string output;
+        string error = "";
+        try
+        {
+            using var ps = PowerShell.Create();
+            ps.Runspace = _rs!;
+            ps.AddScript(script);
+            var results = ps.Invoke();
+            output = Join(string.Join("\n", results.Select(r => r?.ToString() ?? "")), Printed(ps));
+
+            if (ps.Streams.Error.Count > 0)
+            {
+                error = ps.Streams.Error[0].ToString();
+            }
+        }
+        catch (Exception ex) { output = ""; error = ex.GetType().Name + ": " + ex.Message; }
+
+        var layers = string.Join(",", HuskHost.TakeLayers().Select(HuskHost.JsonQuotePublic));
+        return "{\"output\":" + HuskHost.JsonQuotePublic(output) +
+               ",\"error\":" + HuskHost.JsonQuotePublic(error) +
+               ",\"layers\":[" + layers + "]}";
+    }
 
     [JSExport]
     internal static int SnapshotFs()

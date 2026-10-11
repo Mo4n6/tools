@@ -50,6 +50,190 @@ index 6be8d3c..2f41b5b 100644
              s_nativeDllSubFolder ??= GetNativeDllSubFolderName(out s_nativeDllExtension);
              string folder = Path.GetDirectoryName(assembly.Location);
              string fullName = Path.Combine(folder, s_nativeDllSubFolder, libraryName) + s_nativeDllExtension;
+diff --git a/src/System.Management.Automation/CoreCLR/CorePsPlatform.cs b/src/System.Management.Automation/CoreCLR/CorePsPlatform.cs
+index dc5db5f..0bc810c 100644
+--- a/src/System.Management.Automation/CoreCLR/CorePsPlatform.cs
++++ b/src/System.Management.Automation/CoreCLR/CorePsPlatform.cs
+@@ -376,11 +376,25 @@ namespace System.Management.Automation
+ 
+         internal static bool NonWindowsIsHardLink(FileSystemInfo fileInfo)
+         {
++            // Husk: libpsl-native is not loadable in a browser, so an unguarded
++            // call here throws DllNotFoundException and takes the whole run down.
++            // Every one of these asks a question about a real machine, and there
++            // is not one; the inert answer keeps evaluation going.
++            if (OperatingSystem.IsBrowser())
++            {
++                return false;
++            }
++
+             return Unix.IsHardLink(fileInfo);
+         }
+ 
+         internal static string NonWindowsGetUserFromPid(int path)
+         {
++            if (OperatingSystem.IsBrowser())
++            {
++                return string.Empty;
++            }
++
+             return Unix.NativeMethods.GetUserFromPid(path);
+         }
+ 
+@@ -401,28 +415,55 @@ namespace System.Management.Automation
+ 
+         internal static bool NonWindowsCreateSymbolicLink(string path, string target)
+         {
++            if (OperatingSystem.IsBrowser())
++            {
++                return false;
++            }
++
+             // Linux doesn't care if target is a directory or not
+             return Unix.NativeMethods.CreateSymLink(path, target) == 0;
+         }
+ 
+         internal static bool NonWindowsCreateHardLink(string path, string strTargetPath)
+         {
++            if (OperatingSystem.IsBrowser())
++            {
++                return false;
++            }
++
+             return Unix.NativeMethods.CreateHardLink(path, strTargetPath) == 0;
+         }
+ 
+         internal static unsafe bool NonWindowsSetDate(DateTime dateToUse)
+         {
++            if (OperatingSystem.IsBrowser())
++            {
++                return false;
++            }
++
+             Unix.NativeMethods.UnixTm tm = Unix.NativeMethods.DateTimeToUnixTm(dateToUse);
+             return Unix.NativeMethods.SetDate(&tm) == 0;
+         }
+ 
+         internal static bool NonWindowsIsSameFileSystemItem(string pathOne, string pathTwo)
+         {
++            if (OperatingSystem.IsBrowser())
++            {
++                // No device or inode to compare; the paths are all we have.
++                return string.Equals(pathOne, pathTwo, StringComparison.Ordinal);
++            }
++
+             return Unix.NativeMethods.IsSameFileSystemItem(pathOne, pathTwo);
+         }
+ 
+         internal static bool NonWindowsGetInodeData(string path, out ValueTuple<ulong, ulong> inodeData)
+         {
++            if (OperatingSystem.IsBrowser())
++            {
++                inodeData = (0, 0);
++                return false;
++            }
++
+             var result = Unix.NativeMethods.GetInodeData(path, out ulong device, out ulong inode);
+ 
+             inodeData = (device, inode);
+@@ -431,6 +472,14 @@ namespace System.Management.Automation
+ 
+         internal static bool NonWindowsIsExecutable(string path)
+         {
++            if (OperatingSystem.IsBrowser())
++            {
++                // Nothing in the emulated filesystem is a real executable. A
++                // sample's `& 'whoami'` therefore resolves to nothing rather
++                // than running anything, which is the point.
++                return false;
++            }
++
+             return Unix.NativeMethods.IsExecutable(path);
+         }
+ 
+@@ -441,16 +490,31 @@ namespace System.Management.Automation
+ 
+         internal static int NonWindowsGetProcessParentPid(int pid)
+         {
++            if (OperatingSystem.IsBrowser())
++            {
++                return 0;
++            }
++
+             return IsMacOS ? Unix.NativeMethods.GetPPid(pid) : Unix.GetProcFSParentPid(pid);
+         }
+ 
+         internal static bool NonWindowsKillProcess(int pid)
+         {
++            if (OperatingSystem.IsBrowser())
++            {
++                return false;
++            }
++
+             return Unix.NativeMethods.KillProcess(pid);
+         }
+ 
+         internal static int NonWindowsWaitPid(int pid, bool nohang)
+         {
++            if (OperatingSystem.IsBrowser())
++            {
++                return -1;
++            }
++
+             return Unix.NativeMethods.WaitPid(pid, nohang);
+         }
+ 
+@@ -704,6 +768,11 @@ namespace System.Management.Automation
+             // This is a helper that attempts to map errno into a PowerShell ErrorCategory
+             internal static ErrorCategory GetErrorCategory(int errno)
+             {
++                if (OperatingSystem.IsBrowser())
++                {
++                    return ErrorCategory.NotSpecified;
++                }
++
+                 return (ErrorCategory)Unix.NativeMethods.GetErrorCategory(errno);
+             }
+ 
+@@ -712,6 +781,11 @@ namespace System.Management.Automation
+             /// <returns>A boolean that represents whether the item is a hardlink.</returns>
+             public static bool IsHardLink(FileSystemInfo fs)
+             {
++                if (OperatingSystem.IsBrowser())
++                {
++                    return false;
++                }
++
+                 if (!fs.Exists || (fs.Attributes & FileAttributes.Directory) == FileAttributes.Directory)
+                 {
+                     return false;
+@@ -817,6 +891,14 @@ namespace System.Management.Automation
+             /// <returns>An instance of the CommonStat for the path.</returns>
+             public static CommonStat GetLStat(string path)
+             {
++                if (OperatingSystem.IsBrowser())
++                {
++                    // A zeroed stat, not a throw: the browser filesystem has no
++                    // inodes or modes to report, and a listing that aborts here
++                    // loses the file names, which are the evidence.
++                    return new CommonStat();
++                }
++
+                 NativeMethods.CommonStatStruct css;
+                 if (NativeMethods.GetCommonLStat(path, out css) == 0)
+                 {
+@@ -831,6 +913,11 @@ namespace System.Management.Automation
+             /// <returns>An instance of the CommonStat for the path.</returns>
+             public static CommonStat GetStat(string path)
+             {
++                if (OperatingSystem.IsBrowser())
++                {
++                    return new CommonStat();
++                }
++
+                 NativeMethods.CommonStatStruct css;
+                 if (NativeMethods.GetCommonStat(path, out css) == 0)
+                 {
 diff --git a/src/System.Management.Automation/SourceGenerators/PSVersionInfoGenerator/PSVersionInfoGenerator.csproj b/src/System.Management.Automation/SourceGenerators/PSVersionInfoGenerator/PSVersionInfoGenerator.csproj
 index 828bd16..403ba11 100644
 --- a/src/System.Management.Automation/SourceGenerators/PSVersionInfoGenerator/PSVersionInfoGenerator.csproj
@@ -67,10 +251,51 @@ index 828bd16..403ba11 100644
      <!-- This section is to force the version of non-direct dependencies -->
      <PackageReference Include="Microsoft.NETCore.Platforms" Version="1.1.2" />
 diff --git a/src/System.Management.Automation/engine/CoreAdapter.cs b/src/System.Management.Automation/engine/CoreAdapter.cs
-index 55486c6..47d184e 100644
+index 55486c6..3e8e7d6 100644
 --- a/src/System.Management.Automation/engine/CoreAdapter.cs
 +++ b/src/System.Management.Automation/engine/CoreAdapter.cs
-@@ -4227,6 +4227,15 @@ namespace System.Management.Automation
+@@ -3132,10 +3132,40 @@ namespace System.Management.Automation
+             }
+         }
+ 
++        /// <summary>
++        /// Husk: hide overloads that .NET Framework 4.8 does not have, so method
++        /// resolution matches Windows PowerShell 5.1.
++        ///
++        /// This matters for exactly one method in practice, and it decides what a
++        /// payload decodes to. `'4a:4b'.Split(':x')` binds to
++        /// Split(string, StringSplitOptions) on .NET Core and splits on the whole
++        /// separator, finding nothing; on .NET Framework that overload does not
++        /// exist, so it binds to Split(char[]) and splits on either character.
++        /// Obfuscators pass a bag of separator characters as one string and rely
++        /// on the second reading - the first yields one undecodable token.
++        /// </summary>
++        private static bool HiddenOnWindowsPowerShell(MethodInfo method)
++        {
++            if (!OperatingSystem.IsBrowser()
++                || method.DeclaringType != typeof(string)
++                || !method.Name.Equals("Split", StringComparison.Ordinal))
++            {
++                return false;
++            }
++
++            ParameterInfo[] parameters = method.GetParameters();
++            return parameters.Length > 0 && parameters[0].ParameterType == typeof(string);
++        }
++
+         private static void PopulateMethodReflectionTable(Type type, MethodInfo[] methods, CacheTable typeMethods)
+         {
+             foreach (MethodInfo method in methods)
+             {
++                if (HiddenOnWindowsPowerShell(method))
++                {
++                    continue;
++                }
++
+                 if (method.DeclaringType == type)
+                 {
+                     string methodName = method.Name;
+@@ -4227,6 +4257,15 @@ namespace System.Management.Automation
          {
              object result;
  
@@ -302,7 +527,7 @@ index 0000000..a788bab
 +    }
 +}
 diff --git a/src/System.Management.Automation/engine/SessionState.cs b/src/System.Management.Automation/engine/SessionState.cs
-index e65f65f..8ae8163 100644
+index e65f65f..844601b 100644
 --- a/src/System.Management.Automation/engine/SessionState.cs
 +++ b/src/System.Management.Automation/engine/SessionState.cs
 @@ -337,10 +337,13 @@ namespace System.Management.Automation
@@ -321,6 +546,29 @@ index e65f65f..8ae8163 100644
                      ScopedItemOptions.Constant | ScopedItemOptions.AllScope,
                      RunspaceInit.PIDDescription);
              this.GlobalScope.SetVariable(v.Name, v, asValue: false, force: true, this, CommandOrigin.Internal, fastPath: true);
+@@ -366,6 +369,22 @@ namespace System.Management.Automation
+ 
+             // $PSHOME
+             string applicationBase = Utils.DefaultPowerShellAppBase;
++#if UNIX
++            // Husk: obfuscators spell "iex" by indexing into $PSHOME -
++            // &($pSHOME[4]+$psHOME[30]+'x') over
++            // C:\Windows\System32\WindowsPowerShell\v1.0 - and emit several
++            // index variants of it. Against a browser application base those
++            // indices spell nonsense, so the sample dies at command resolution
++            // rather than decoding. The variable is Constant, so a host cannot
++            // override it after the fact; only this line can. Nothing else in
++            // the engine reads it - path resolution goes through
++            // Utils.DefaultPowerShellAppBase, which is unchanged.
++            if (OperatingSystem.IsBrowser())
++            {
++                applicationBase = @"C:\Windows\System32\WindowsPowerShell\v1.0";
++            }
++#endif
++
+             v = new PSVariable(SpecialVariables.PSHome, applicationBase,
+                     ScopedItemOptions.Constant | ScopedItemOptions.AllScope,
+                     RunspaceInit.PSHOMEDescription);
 diff --git a/src/System.Management.Automation/engine/Utils.cs b/src/System.Management.Automation/engine/Utils.cs
 index 1ad23a4..301c3ff 100644
 --- a/src/System.Management.Automation/engine/Utils.cs
@@ -347,6 +595,23 @@ index 1ad23a4..301c3ff 100644
          }
  
          private static string[] s_productFolderDirectories;
+diff --git a/src/System.Management.Automation/engine/parser/tokenizer.cs b/src/System.Management.Automation/engine/parser/tokenizer.cs
+index 3d0aa3a..11017dd 100644
+--- a/src/System.Management.Automation/engine/parser/tokenizer.cs
++++ b/src/System.Management.Automation/engine/parser/tokenizer.cs
+@@ -1473,7 +1473,11 @@ namespace System.Management.Automation.Language
+                 case 'b':
+                     return '\b';
+                 case 'e':
+-                    return '\u001b';
++                    // Husk: `e is ESC in PowerShell 6+ and a literal 'e' in
++                    // Windows PowerShell 5.1, which is what samples are written
++                    // against. `Wri`e-`Host` has to tokenize as Write-Host, not
++                    // as a command name with two invisible ESCs in it.
++                    return OperatingSystem.IsBrowser() ? 'e' : '\u001b';
+                 case 'f':
+                     return '\f';
+                 case 'n':
 diff --git a/src/System.Management.Automation/engine/runtime/Binding/Binders.cs b/src/System.Management.Automation/engine/runtime/Binding/Binders.cs
 index 0a4fafd..d8daede 100644
 --- a/src/System.Management.Automation/engine/runtime/Binding/Binders.cs
@@ -400,6 +665,56 @@ index 0a4fafd..d8daede 100644
          {
              List<ParameterExpression> temps = new List<ParameterExpression>();
              List<Expression> initTemps = new List<Expression>();
+diff --git a/src/System.Management.Automation/namespaces/EnvironmentProvider.cs b/src/System.Management.Automation/namespaces/EnvironmentProvider.cs
+index 1ea71d1..427306c 100644
+--- a/src/System.Management.Automation/namespaces/EnvironmentProvider.cs
++++ b/src/System.Management.Automation/namespaces/EnvironmentProvider.cs
+@@ -85,6 +85,24 @@ namespace Microsoft.PowerShell.Commands
+ 
+             string value = Environment.GetEnvironmentVariable(name);
+ 
++            // wasm port: environment variables are case-insensitive on Windows
++            // and case-sensitive everywhere else, including the browser. PowerShell
++            // obfuscators randomise the case of $env: lookups on purpose -
++            // $enV:COMSpEC[4,26,25] is a standard way to spell "iex" - so a
++            // case-sensitive miss turns a working sample into "Cannot index into
++            // a null array". Match Windows semantics here.
++            if (value is null && !OperatingSystem.IsWindows())
++            {
++                foreach (DictionaryEntry candidate in Environment.GetEnvironmentVariables())
++                {
++                    if (string.Equals((string)candidate.Key, name, StringComparison.OrdinalIgnoreCase))
++                    {
++                        value = (string)candidate.Value;
++                        break;
++                    }
++                }
++            }
++
+             if (value != null)
+             {
+                 result = new DictionaryEntry(name, value);
+diff --git a/src/System.Management.Automation/utils/PsUtils.cs b/src/System.Management.Automation/utils/PsUtils.cs
+index 53809e5..087a5d6 100644
+--- a/src/System.Management.Automation/utils/PsUtils.cs
++++ b/src/System.Management.Automation/utils/PsUtils.cs
+@@ -103,6 +103,16 @@ namespace System.Management.Automation
+         internal static uint GetNativeThreadId()
+         {
+ #if UNIX
++            // Husk: the browser has no pthreads to ask, and libpsl-native is not
++            // loadable there. Every InformationRecord carries a native thread id,
++            // so an unguarded P/Invoke here makes Write-Host and Write-Information
++            // throw DllNotFoundException. The managed id is the honest answer on a
++            // single-threaded runtime.
++            if (OperatingSystem.IsBrowser())
++            {
++                return (uint)Environment.CurrentManagedThreadId;
++            }
++
+             return Platform.NonWindowsGetThreadId();
+ #else
+             return Interop.Windows.GetCurrentThreadId();
 diff --git a/src/System.Management.Automation/utils/tracing/SysLogProvider.cs b/src/System.Management.Automation/utils/tracing/SysLogProvider.cs
 index f3ee184..a3de5ea 100755
 --- a/src/System.Management.Automation/utils/tracing/SysLogProvider.cs

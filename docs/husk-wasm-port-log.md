@@ -1,12 +1,22 @@
 # Porting PowerShell to browser-wasm: working log
 
-**Status:** **real PowerShell deobfuscates in a browser.**
-`IEX ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(...)))`
-returns the decoded stage, and `&('I'+'E'+'X')` resolves. 162 cmdlets live.
-Runs on **ordinary static hosting** — no cross-origin isolation headers.
-`file://` does not work, for an unrelated loader reason.
+**Status:** **real PowerShell deobfuscates in a browser, and the corpus says
+the engine beats the tree-walker outright.**
 
-Four real source patches, 52 insertions across 7 files.
+|                        | tree-walker | engine     |
+| ---------------------- | ----------- | ---------- |
+| single-transform (244) | 80.7%       | **97.5%**  |
+| layered (864)          | 50.2%       | **100.0%** |
+
+220 cmdlets and 128 aliases live. Runs on **ordinary static hosting** — no
+cross-origin isolation headers. `file://` does not work, for an unrelated
+loader reason. Six fixtures miss in total: five want AES, which browser .NET
+cannot serve synchronously, and one is a corpus defect. See the corpus section.
+
+Ten real source patches, 477 insertions across 14 files — seven portability
+guards and three deliberate Windows PowerShell 5.1 fidelity patches. The
+fidelity patches are the ones that moved the number: without them the engine
+scored **11.5%**.
 
 This is a work log, not a spec. It exists so the work can be resumed from a
 cold container, because the scratchpad does not survive one. `husk-spec.md` §1
@@ -50,12 +60,12 @@ than in the scratchpad.
 
 Measured 2026-10-11, headless Chromium against a local static server:
 
-| | |
-|---|---|
-| Runtime boot | 0.9–1.1 s |
-| Assemblies registered | 183 |
-| SMA managed IL | loads — mono-wasm does not reject it |
-| Bundle | 31 MB raw, **11.26 MB gzipped** |
+|                       |                                      |
+| --------------------- | ------------------------------------ |
+| Runtime boot          | 0.9–1.1 s                            |
+| Assemblies registered | 183                                  |
+| SMA managed IL        | loads — mono-wasm does not reject it |
+| Bundle                | 31 MB raw, **11.26 MB gzipped**      |
 
 ## The assembly-injection trick
 
@@ -127,9 +137,11 @@ Each is a platform assumption in SMA. Resolved in order; each new one only
 appears once the previous is cleared.
 
 ### 1. `TypeLoadException` — `ApplicationInsightsTelemetry` — RESOLVED
+
 Dependency closure missing from the wasm publish. Fixed by the harvest above.
 
 ### 2. `ArgumentNullException (path1)` — `PSSnapInReader.ReadCoreEngineSnapIn` — WORKED AROUND
+
 SMA derives `$PSHOME` from `typeof(PSObject).Assembly.Location`, which is `""`
 under wasm, so `Path.GetDirectoryName("")` returns `null` and the next
 `Path.Combine` throws.
@@ -144,6 +156,7 @@ itself a cmdlet, so this almost certainly has to be solved properly in the
 fork rather than avoided.
 
 ### 3. `TypeInitializationException` — `Tracing.PSSysLogProvider` — CURRENT BLOCKER
+
 Its static initializer P/Invokes `libpsl-native` (syslog). There is no wasm
 build of that native library. Not fixable from outside SMA's source.
 
@@ -161,10 +174,10 @@ at System.Management.Automation.Runspaces.InitialSessionState.CreateDefault2()
 ## Next steps — only if the hosting model changes
 
 These were the plan before the threading result. Kept because they are still
-correct *if* Husk ever moves behind a server that sets COOP/COEP.
+correct _if_ Husk ever moves behind a server that sets COOP/COEP.
 
 1. **Clone PowerShell shallow.** `git clone --depth 1 -b v7.4.6
-   https://github.com/PowerShell/PowerShell`. GitHub is reachable.
+https://github.com/PowerShell/PowerShell`. GitHub is reachable.
 2. **Do not use `build.psm1`.** It is written in PowerShell and needs a working
    `pwsh` to bootstrap, which is not installed. Build
    `src/System.Management.Automation/System.Management.Automation.csproj`
@@ -269,7 +282,7 @@ Output: `src/System.Management.Automation/bin/Release/net8.0/browser-wasm/System
 ## The patch series
 
 `scripts/husk/wasm-spike/patches/0001-powershell-browser-wasm.patch` — the whole
-port is **52 insertions across 7 files**. Apply to a clean `v7.4.6` checkout.
+port is **477 insertions across 14 files**. Apply to a clean `v7.4.6` checkout.
 
 Two are environment-only, needed because of this network policy:
 
@@ -295,15 +308,56 @@ Three are real port patches, each guarding a platform assumption:
    directory.
 7. **`engine/SessionState.cs` — `$PID`.** `Process.GetCurrentProcess()` is
    unsupported in a browser; `$PID` is `0` there.
+8. **`namespaces/EnvironmentProvider.cs`.** `$env:` lookups are
+   case-insensitive on Windows and case-sensitive everywhere else, and
+   obfuscators write `$env:ComSpec` in whatever case they like.
+9. **`utils/PsUtils.cs` — `GetNativeThreadId`.** Returns the managed thread id
+   under browser. Every `InformationRecord` carries a native thread id, so the
+   unguarded P/Invoke made **every `Write-Host` throw
+   `DllNotFoundException`** — and `Write-Host` is the payload in most samples.
+10. **`CoreCLR/CorePsPlatform.cs`.** The remaining 15 `libpsl-native` call
+    sites (`IsExecutable`, `GetPPid`, `KillProcess`, `GetLinkCount`,
+    `GetCommonStat`, `GetErrorCategory`, the link and date setters …), each
+    answered with the inert value rather than a throw. They all ask a question
+    about a real machine, and there is not one.
+
+Three more are **deliberate Windows PowerShell 5.1 fidelity patches**, not
+portability fixes. Samples are written against 5.1, the corpus was generated
+against 5.1, and on each of these points 7.x diverges in a way that changes
+what a payload decodes to. Together they took single-transform recovery from
+11.5% to 95.1%:
+
+11. **`engine/SessionState.cs` — `$PSHOME`.** Set to
+    `C:\Windows\System32\WindowsPowerShell\v1.0` under browser.
+    `&($pSHOME[4]+$psHOME[30]+'x')` spells `iex` by indexing into that exact
+    string, and Invoke-Obfuscation emits four index variants of it
+    (`[4]`/`[21]` for `i`, `[30]`/`[34]` for `e`). Against a browser
+    application base those indices spell nonsense like `oX`, and the sample
+    dies at command resolution instead of decoding. **204 fixtures.** The
+    variable is `Constant`, so a host cannot override it after `Open` — this
+    has to be a source patch. Nothing else in the engine reads it; path
+    resolution goes through `Utils.DefaultPowerShellAppBase`, unchanged.
+12. **`engine/CoreAdapter.cs` — `String.Split` overload set.** On .NET Core,
+    `'4a:4b'.Split(':x')` binds to `Split(string, StringSplitOptions)` and
+    splits on the whole separator, finding nothing; .NET Framework has no such
+    overload, so it binds `Split(char[])` and splits on either character.
+    Obfuscators pass a bag of separator characters as one string and rely on
+    the second reading — the first yields one undecodable token and
+    `[Convert]::ToInt16` throws "additional non-parsable characters".
+    **115 fixtures.** Hiding the post-4.8 overloads restores the 5.1 binding.
+13. **`engine/parser/tokenizer.cs` — the `` `e `` escape.** ESC in
+    PowerShell 6+, a literal `e` in 5.1. ``Wri`e-`Host`` has to tokenize as
+    `Write-Host`, not as a command name with two invisible ESCs in it.
+    **29 fixtures.**
 
 ## Measured, with all patches applied
 
-| | |
-|---|---|
-| Boot | ~0.95 s |
-| `Runspace.Open()` | 589 ms |
-| Bundle | 12.30 MB gzipped |
-| SMA | 6.38 MB |
+|                   |                  |
+| ----------------- | ---------------- |
+| Boot              | ~0.95 s          |
+| `Runspace.Open()` | 589 ms           |
+| Bundle            | 12.30 MB gzipped |
+| SMA               | 6.38 MB          |
 
 ```
 arithmetic    (182ms) => 4
@@ -361,12 +415,12 @@ must not win.
 
 ## Measured, with cmdlets
 
-| | |
-|---|---|
-| Boot | ~1.5 s |
-| `Runspace.Open()` | 582 ms |
-| Cmdlets | 115 registered, 162 live |
-| Assemblies | 196 |
+|                   |                          |
+| ----------------- | ------------------------ |
+| Boot              | ~1.5 s                   |
+| `Runspace.Open()` | 582 ms                   |
+| Cmdlets           | 115 registered, 162 live |
+| Assemblies        | 196                      |
 
 ```
 IEX literal    ( 21ms) => deobfuscated
@@ -430,7 +484,7 @@ real server hits   => 0
 ```
 
 **The gap that matters:** PowerShell's web cmdlets use sync-over-async
-internally, which is unsupported single-threaded, so they throw *before*
+internally, which is unsupported single-threaded, so they throw _before_
 reaching the boundary. Safety is intact — nothing escapes — but the C2 URL is
 lost, and that is usually the one indicator the analyst came for. A sample
 doing `DownloadString('http://c2/')` currently produces an exception rather
@@ -485,7 +539,7 @@ proxy-recorded: 0    boundary-recorded: 0    real server hits: 0
 ```
 
 **Safety holds** — nothing escaped, because real `Net.WebClient` does not work
-on wasm anyway. **Telemetry does not**: a bypass produces *silence* rather than
+on wasm anyway. **Telemetry does not**: a bypass produces _silence_ rather than
 a record. A sample using `[Net.WebClient]::new()` yields no IOC at all.
 
 So the honest statement is: proxies are **telemetry, not containment**. They
@@ -514,7 +568,7 @@ to record where the engine actually resolves a method, which we can do because
 we own the fork.
 
 **The first attempt hooked the wrong place.** `DotNetAdapter.AuxiliaryMethodInvoke`
-in `CoreAdapter.cs` looks like the chokepoint, and it is — for the *interpreted*
+in `CoreAdapter.cs` looks like the chokepoint, and it is — for the _interpreted_
 path. Compiled script does not go through it: the DLR binder emits a direct
 call to the resolved `MethodInfo`. Hooking it produced zero records while
 `[IO.File]::WriteAllText` plainly ran.
@@ -552,7 +606,7 @@ Direct .NET calls, which never touch a proxy:
 real server hits: 0
 ```
 
-Arguments come through resolved, not as source text — the written *content* is
+Arguments come through resolved, not as source text — the written _content_ is
 captured alongside the path, and a byte array renders as `<byte[2]>` rather
 than being dumped.
 
@@ -563,13 +617,13 @@ construction, so the result stands, but the explicit deletion case is untested.
 
 ### Three layers now
 
-| Layer | Sees | Bypassable |
-|---|---|---|
-| Proxy functions | cmdlet/COM cradles, rich arguments | yes |
-| **Binder hook** | **every .NET method call** | **no, from script** |
-| `fetch` boundary | anything reaching HTTP | no |
+| Layer            | Sees                               | Bypassable          |
+| ---------------- | ---------------------------------- | ------------------- |
+| Proxy functions  | cmdlet/COM cradles, rich arguments | yes                 |
+| **Binder hook**  | **every .NET method call**         | **no, from script** |
+| `fetch` boundary | anything reaching HTTP             | no                  |
 
-Filesystem calls are deliberately *not* blocked — letting a sample drop its
+Filesystem calls are deliberately _not_ blocked — letting a sample drop its
 payload into the in-memory filesystem is how the analyst extracts it
 afterwards. Network is refused at the binder, so the sample sees a null rather
 than an exception.
@@ -603,14 +657,14 @@ that call .NET directly, so `Set-Content`'s write never passes through
 `Activator.CreateInstance` — which is why the WebClient constructor threw
 instead of being intercepted and blocked.
 
-So the layers divide by *origin of the call*, not by bypassability alone:
+So the layers divide by _origin of the call_, not by bypassability alone:
 
-| Layer | Sees | Blind to |
-|---|---|---|
-| Proxy functions | cmdlet invocations, rich arguments | anything that deletes or avoids them |
-| Binder hook | .NET calls **made from script** | cmdlet internals, `New-Object` |
-| `fetch` boundary | HTTP from anywhere | non-HTTP |
-| **Filesystem diff** | **file writes from anywhere** | nothing, for files |
+| Layer               | Sees                               | Blind to                             |
+| ------------------- | ---------------------------------- | ------------------------------------ |
+| Proxy functions     | cmdlet invocations, rich arguments | anything that deletes or avoids them |
+| Binder hook         | .NET calls **made from script**    | cmdlet internals, `New-Object`       |
+| `fetch` boundary    | HTTP from anywhere                 | non-HTTP                             |
+| **Filesystem diff** | **file writes from anywhere**      | nothing, for files                   |
 
 The filesystem diff turns out to be the most robust of the four: it is
 origin-independent by construction, which is why `Set-Content` and `New-Item`
@@ -633,7 +687,13 @@ Each item says why it matters, what "done" looks like, and what is already
 known about it. Anything marked **blocking** gates a decision rather than a
 feature.
 
-### 1. Commands.Management — build and inject
+### 1. Commands.Management — DONE
+
+Built and injected; see "Commands.Management — built, and it corrected the
+layer model" above for what it changed. The `Set-ItemProperty` half of "done
+when" is still open and carries on as item 2.
+
+<details><summary>Original entry</summary>
 
 **Why:** `Remove-Item`, `Set-ItemProperty`, `New-ItemProperty`, the registry
 provider, `Get-ChildItem`. Registry persistence is a top-three commodity
@@ -647,8 +707,10 @@ bypass still unproven.
 **Known:** same build recipe as Utility. Expect more platform guards —
 Management touches the filesystem and registry providers hardest, so it is the
 likeliest place to hit the next `PlatformNotSupportedException`. Build it
-*alone* and take SMA from its output, same as Utility, to keep versions
+_alone_ and take SMA from its output, same as Utility, to keep versions
 consistent.
+
+</details>
 
 ### 2. Registry and process classification — **blocking**
 
@@ -667,20 +729,66 @@ provider-level hook rather than binder classification. On wasm
 `Microsoft.Win32.Registry` likely throws before the binder hook sees a method. May need a managed fake registry type the binder can
 resolve against, which is the `husk-sandbox-spec.md` virtual-registry design.
 
-### 3. Corpus measurement — **blocking the whole decision**
+### 3. Corpus measurement — DONE, and the fork is worth carrying
 
-**Why:** this is the number that says whether the engine replaces the
-tree-walker. The tree-walker is at ~80% single-transform and ~50% layered,
-measured. The engine should be near 100% on both. If it is not, the fork is
-not worth carrying.
+**The numbers**, `scripts/husk/wasm-spike/measure.mjs` against all 1,108
+fixtures, 45 seconds of wall clock:
 
-**Done when:** `src/features/husk/corpus/fixtures/invoke-obfuscation.json`
-(244 cases) and `layered.json` (864 cases) have been run through the wasm
-engine and the recovery rate recorded next to the tree-walker's.
+|                        | tree-walker | engine     |
+| ---------------------- | ----------- | ---------- |
+| single-transform (244) | 80.7%       | **97.5%**  |
+| layered (864)          | 50.2%       | **100.0%** |
 
-**Known:** fixtures carry `expected` ground truth, so this is mechanical.
-Drive it from Playwright, batching through `runPs` and comparing normalised
-output. Budget a few minutes of wall clock for 1,108 cases.
+Six fixtures miss, all in single-transform, and five of them are one cause:
+
+- **5× `Algorithm 'Aes' is not supported on this platform.`** .NET's browser
+  crypto is SubtleCrypto, which is async-only, so the synchronous AES API has
+  no implementation. These samples use `ConvertTo-SecureString -Key`, which is
+  a real malware technique, not an obfuscator artefact. Needs a managed AES —
+  see the backlog.
+- **1× corpus defect, not an engine gap.** `all-token-types/string-3` obfuscates
+  a _multi-line_ script through `-join [regex]::Matches($s, '.', 'RightToLeft')`.
+  A bare `.` never matches a newline, so the technique drops them, the recovered
+  script becomes one line, and its leading `#` comments the whole thing out.
+  Measured in the engine: `(-join [regex]::Matches("a`nb", ".", "RightToLeft")).Length`is 2. No PowerShell can reproduce that fixture's own`expected`from its own`obfuscated`. Deobfuscation itself succeeded — the recovered layer is
+  byte-identical to the ground truth.
+
+So the honest engine figure is **238/239 measurable single-transform cases and
+864/864 layered**.
+
+### The metric had to change, and that is the finding
+
+The first four measurement passes read 2.0%, 6.6%, 11.5% and 11.5%. Every one
+of those numbers was mostly wrong, and not because of the engine.
+
+`expected` in the corpus is the **deobfuscated source text**. That is the right
+ground truth for a tree-walker, which produces source. The engine produces
+_behaviour_: run `&("{1}{0}"-f 'rite-Host','W') "hi"` and you get `hi`, never
+the string `Write-Host "hi"`. Comparing the engine's output to `expected`
+scores a correct execution as a failure, which is what 179 of the "no-match"
+results were.
+
+So `measure.mjs` reports two metrics:
+
+- **behaviour reproduced** — run the obfuscated sample, run the fixture's
+  ground-truth script through the same engine, compare. Like-for-like, and it
+  is the metric that matters for IOC extraction: a sample's effects, not its
+  spelling.
+- **source recovered** — did a layer handed to `Invoke-Expression` equal the
+  deobfuscated source? This is the tree-walker's metric. The engine scores
+  22.1%/57.1% on it, and _should_ score low: it only sees a layer where the
+  sample routes through `IEX`, and most single-transform cases do not.
+
+Two further harness-level corrections, both of which were counted as engine
+failures at first:
+
+- 768 of 864 layered fixtures and most single-transform ones are
+  `powershell "<script>"` **launcher command lines**, not scripts. The harness
+  unwraps the switches and `-EncodedCommand`.
+- those command lines carry **cmd.exe escaping** — `\"` for a quote, `^|` for a
+  pipe. Handing the engine literal backslashes produced a command named `\[\`.
+  **5 fixtures.** This belongs in the product: Husk's ingest needs a launcher
+  parser, and that parser needs cmd's escaping rules.
 
 ### 4. Harden `HuskHost.Record` against forgery
 
@@ -736,6 +844,34 @@ only the lexer-table port.
 commit, the patch series and Microsoft's copyright, and the licence tests
 cover it the way they cover the lexer tables.
 
+### 9. Managed AES — the last corpus gap
+
+**Why:** `ConvertTo-SecureString -Key` is a real malware technique, and .NET's
+browser crypto cannot serve the synchronous AES API at all (SubtleCrypto is
+async-only, and with threads off there is nothing to block on). It is the only
+engine gap left in the corpus: 5 fixtures.
+
+**Done when:** `Aes.Create()` works in the browser runspace and those five
+fixtures pass. The algorithm is fully specified, so this is a managed AES-CBC
+implementation checked against the FIPS-197 vectors, registered where SMA's
+`SecureStringHelper` can reach it.
+
+**Known:** try `CryptoConfig.AddAlgorithm` from the host first — if that works
+it needs no SMA patch at all. Otherwise patch `SecureStringHelper` to use the
+managed implementation under `OperatingSystem.IsBrowser()`.
+
+### 10. A launcher parser in the product
+
+**Why:** the corpus harness unwraps `powershell -enc …` and cmd.exe escaping
+in JavaScript, and that logic is load-bearing — 5 fixtures failed purely
+because of unhandled `\"` and `^|`. Real samples arrive the same way, as a
+command line out of a parent-process field, not as a clean script.
+
+**Done when:** Husk's ingest takes a launcher command line, reports what it
+unwrapped as evidence (the switches, the encoding, the escaping), and hands the
+engine the inner script. Must be in TypeScript with its own tests, not in the
+measurement harness.
+
 ### Known gaps not yet scheduled
 
 - `file://` cannot work (ES module CORS). The tree-walker keeps that property.
@@ -745,3 +881,12 @@ cover it the way they cover the lexer tables.
   the tab — the tree-walker's budget problem, inherited and not yet solved.
 - Threads are off. If anything later needs them, it costs COOP/COEP and
   therefore static hosting.
+- The 5.1 fidelity patches are a _partial_ emulation of .NET Framework
+  behaviour, chosen because the corpus showed those three points mattered.
+  There will be others. Each one found this way is a patch, not a setting;
+  there is no switch in PowerShell for "behave like 5.1".
+- The alias table in `Program.cs` is the 5.1 default set, typed out by hand
+  because registering cmdlets off an assembly gets the cmdlets but not the
+  aliases a module manifest would have declared. 15 fixtures failed on a
+  missing `ls` alone. It is a table, so adding to it is cheap, but it is not
+  derived from anything and will drift.

@@ -68,6 +68,7 @@ const e = await getAssemblyExports(getConfig().mainAssemblyName);
 
 globalThis.psInit = () => e.Spike.Init();
 globalThis.runPs = (s) => e.Spike.Run(s);
+globalThis.runFixture = (s) => JSON.parse(e.Spike.RunFixture(s));
 globalThis.cmdletCount = () => e.Spike.CmdletCount();
 globalThis.envProbe = () => e.Spike.EnvProbe();
 globalThis.threadProbe = () => e.Spike.ThreadProbe();
