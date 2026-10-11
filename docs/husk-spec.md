@@ -57,6 +57,14 @@ mode but not AOT. Plausible on .NET 8+; no known working build.
 in under 3 seconds. That would be worth revisiting for fidelity — but the
 ceiling would still be set by information availability, not by us.
 
+**Revisited.** Once the objective grew to capturing host calls rather than only
+deobfuscating, reason 3 became decisive rather than merely persuasive: a real
+runtime gives perfect fidelity and partial capture, and a missed syscall is
+invisible where a missing member is a recorded gap. The decision stands, and the
+falsifier above no longer reverses it. Real PowerShell is still worth having —
+as a **differential oracle** rather than as the engine, which is how the
+tokenizer reached 100%. See [`husk-sandbox-spec.md`](husk-sandbox-spec.md) §1.
+
 ## 2) The honest ceiling
 
 100% deobfuscation is not achievable, and targeting it makes the tool less
@@ -420,10 +428,22 @@ What is real, and what the UI should carry instead:
 
 ## 10) Open questions
 
-- Ship threshold: phases 1+3 early, or hold for phase 2 depth? Spec assumes
-  early.
-- Whether the lexer is a selective port of `tokenizer.cs` or built from the
-  3.0 specification with the source consulted for edge cases.
+Both resolved; kept with their answers rather than deleted, because the
+reasoning is what makes the next decision easier.
+
+- ~~Ship threshold: phases 1+3 early, or hold for phase 2 depth?~~ Shipped
+  early, as assumed. Correct call: real samples found a ReDoS, two regex
+  crashes and three multi-megabyte failures that no amount of phase 2 depth
+  would have surfaced.
+- ~~Whether the lexer is a selective port of `tokenizer.cs` or built from the
+  3.0 specification with the source consulted for edge cases.~~ Ported, via
+  generators, from the authoritative tables. Reached 100% agreement against the
+  oracle. Building from the specification would not have caught the sparse
+  `TokenKind` enum or the `s_tokenText`-versus-lookup-table distinction, both of
+  which were found by diffing rather than by reading.
+
+Open questions for the host layer are in
+[`husk-sandbox-spec.md`](husk-sandbox-spec.md) §10.
 
 ## 11) Prior art
 
