@@ -26,6 +26,12 @@ export type HostCategory =
   | 'evasion'
   | 'timing';
 
+/**
+ * `evasion.sandbox` is the odd one out: it is not something a sample does to a
+ * machine, it is something it does to Husk. A script that tries to unblock the
+ * network or silence the capture layers is telling the analyst exactly what it
+ * is, and that is worth more than the setting it failed to change.
+ */
 export const HOST_OPS = {
   filesystem: ['read', 'write', 'append', 'delete', 'copy', 'move', 'mkdir', 'list', 'exists'],
   registry: ['read', 'write', 'delete', 'enumerate'],
@@ -34,7 +40,7 @@ export const HOST_OPS = {
   persistence: ['run-key', 'scheduled-task', 'service', 'wmi-subscription', 'startup-folder'],
   assembly: ['load', 'define-type', 'pinvoke', 'alloc-exec'],
   wmi: ['query', 'invoke', 'subscribe'],
-  evasion: ['amsi', 'etw', 'defender', 'vm-check', 'debugger-check'],
+  evasion: ['amsi', 'etw', 'defender', 'vm-check', 'debugger-check', 'sandbox'],
   timing: ['sleep', 'kill-date'],
 } as const satisfies Record<HostCategory, readonly string[]>;
 

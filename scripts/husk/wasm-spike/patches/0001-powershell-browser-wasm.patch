@@ -401,10 +401,10 @@ index 55486c6..3e8e7d6 100644
              {
 diff --git a/src/System.Management.Automation/engine/HuskHostHook.cs b/src/System.Management.Automation/engine/HuskHostHook.cs
 new file mode 100644
-index 0000000..a3bf14e
+index 0000000..06bceb5
 --- /dev/null
 +++ b/src/System.Management.Automation/engine/HuskHostHook.cs
-@@ -0,0 +1,602 @@
+@@ -0,0 +1,711 @@
 +// Licensed to the .NET Foundation under one or more agreements.
 +// The .NET Foundation licenses this file to you under the MIT license.
 +//
@@ -432,8 +432,72 @@ index 0000000..a3bf14e
 +    /// </summary>
 +    public static class HuskHostHook
 +    {
++
++        // ---------------------------------------------------------------
++        // Sealing
++        // ---------------------------------------------------------------
++        //
++        // Measured before this existed: three lines of PowerShell disarmed the
++        // whole sandbox.
++        //
++        //   [System.Management.Automation.HuskHostHook]::BlockNetwork = $false
++        //   [System.Management.Automation.HuskHostHook]::OnHostCall = $null
++        //   [System.Management.Automation.HuskHostHook]::SetBudget(0, 0)
++        //
++        // A sample is PowerShell script with the full type system in front of
++        // it, and the unqualified name not resolving was never protection -
++        // the namespace-qualified one did.
++        //
++        // The configuration is now write-once: the host calls Seal() after
++        // setting it up and keeps the key it returns, and every later change
++        // needs that key. This is a bar, not a wall. A sample willing to use
++        // reflection can still reach a private static, and there is no way to
++        // stop that from inside the same process. What makes the sandbox
++        // trustworthy is the boundary *outside* the CLR - the fetch hook in
++        // JavaScript, and the fact that there is no real machine behind any of
++        // this - plus the fact that trying leaves a record.
++
++        private static object s_key;
++        private static bool s_locked;
++
++        /// <summary>
++        /// Locks the configuration and returns the key needed to change it
++        /// again. Callable once; a second call returns null and changes
++        /// nothing, so a sample cannot re-seal with a key of its own.
++        /// </summary>
++        public static object Seal()
++        {
++            if (s_locked) { return null; }
++
++            s_locked = true;
++            s_key = new object();
++            return s_key;
++        }
++
++        private static bool Allowed(object key, string member)
++        {
++            if (!s_locked || ReferenceEquals(key, s_key)) { return true; }
++
++            // The attempt is itself an IOC. Nothing but a sample looking for a
++            // sandbox tries to turn one off, so this is worth more to the
++            // analyst than the setting it was trying to change.
++            try
++            {
++                OnHostCall?.Invoke(
++                    "evasion.sandbox",
++                    "HuskHostHook." + member,
++                    new[] { "refused: configuration is sealed" });
++            }
++            catch (Exception)
++            {
++                // Never throw out of a refusal.
++            }
++
++            return false;
++        }
++
 +        /// <summary>Called with (op, nativeSignature, renderedArguments).</summary>
-+        public static Action<string, string, string[]> OnHostCall;
++        public static Action<string, string, string[]> OnHostCall { get; private set; }
 +
 +        /// <summary>
 +        /// The same, for the cmdlet layer. Separate so the analyst can tell
@@ -442,7 +506,7 @@ index 0000000..a3bf14e
 +        /// two see different things and have different blind spots, and a
 +        /// timeline that blurs them is harder to trust, not easier.
 +        /// </summary>
-+        public static Action<string, string, string[]> OnCmdletCall;
++        public static Action<string, string, string[]> OnCmdletCall { get; private set; }
 +
 +        /// <summary>
 +        /// When true, intercepted calls whose op is in the blocked set return
@@ -450,7 +514,7 @@ index 0000000..a3bf14e
 +        /// blocked: letting a sample drop its payload into the in-memory
 +        /// filesystem is how the analyst gets to extract it afterwards.
 +        /// </summary>
-+        public static bool BlockNetwork = true;
++        public static bool BlockNetwork { get; private set; } = true;
 +
 +        // Declaring type full name -> (method name prefix -> op). Checked only
 +        // after a namespace fast-path, because this runs on every method call
@@ -559,6 +623,13 @@ index 0000000..a3bf14e
 +        /// the resolved method, so the interpreted path in CoreAdapter never
 +        /// runs for compiled script - this is the one that actually fires.
 +        /// </summary>
++        /// <remarks>
++        /// Public, unlike the configuration above, because compiled script
++        /// calls it directly from a generated expression tree. A sample can
++        /// therefore call it too and forge a record. That adds noise; it
++        /// cannot remove evidence, which is the attack that matters, and every
++        /// record carries the source it came from.
++        /// </remarks>
 +        public static void RecordRuntime(string op, string nativeSignature, object[] arguments)
 +        {
 +            Action<string, string, string[]> sink = OnHostCall;
@@ -694,7 +765,7 @@ index 0000000..a3bf14e
 +        /// from the pipeline may have changed the path. Comparing against it
 +        /// records each distinct call once and a repeated one not at all.
 +        /// </param>
-+        public static void RecordCmdlet(string cmdletName, IDictionary boundParameters, ref string lastSignature)
++        internal static void RecordCmdlet(string cmdletName, IDictionary boundParameters, ref string lastSignature)
 +        {
 +            Action<string, string, string[]> sink = OnCmdletCall;
 +            if (sink is null || string.IsNullOrEmpty(cmdletName))
@@ -823,17 +894,51 @@ index 0000000..a3bf14e
 +        /// Zero for either limit means unlimited. The host chooses the numbers;
 +        /// the engine only enforces them.
 +        /// </summary>
-+        public static void SetBudget(long steps, long milliseconds)
++        public static void SetBudget(long steps, long milliseconds, object key = null)
 +        {
++            if (!Allowed(key, nameof(SetBudget))) { return; }
++
 +            s_stepLimit = steps > 0 ? steps : 0;
 +            s_milliseconds = milliseconds > 0 ? milliseconds : 0;
++        }
++
++        /// <summary>Wires the capture sinks. Host only, once sealed.</summary>
++        public static void SetSinks(
++            Action<string, string, string[]> hostCall,
++            Action<string, string, string[]> cmdletCall,
++            object key = null)
++        {
++            if (!Allowed(key, nameof(SetSinks))) { return; }
++
++            OnHostCall = hostCall;
++            OnCmdletCall = cmdletCall;
++        }
++
++        /// <summary>Host only, once sealed. The analyst's network switch.</summary>
++        public static void SetBlockNetwork(bool blocked, object key = null)
++        {
++            if (!Allowed(key, nameof(SetBlockNetwork))) { return; }
++
++            BlockNetwork = blocked;
++        }
++
++        /// <summary>Host only, once sealed.</summary>
++        public static void SetSleepCap(int milliseconds, object key = null)
++        {
++            if (!Allowed(key, nameof(SetSleepCap))) { return; }
++
++            SleepCapMilliseconds = milliseconds > 0 ? milliseconds : 0;
 +        }
 +
 +        private static long s_milliseconds;
 +
 +        /// <summary>Called by the host before each sample. Resets the counters.</summary>
-+        public static void BeginRun()
++        public static void BeginRun(object key = null)
 +        {
++            // Guarded like the rest: a sample that could call BeginRun in a
++            // loop would reset its own budget forever.
++            if (!Allowed(key, nameof(BeginRun))) { return; }
++
 +            s_steps = 0;
 +            s_exceeded = false;
 +            BudgetReason = null;
@@ -888,14 +993,14 @@ index 0000000..a3bf14e
 +        /// sample that times itself can tell. That is a trade the analyst
 +        /// should know about and not one Husk can avoid - the alternative is
 +        /// losing every IOC captured so far.
-+        public static int SleepCapMilliseconds = 100;
++        public static int SleepCapMilliseconds { get; private set; } = 100;
 +
 +        /// <summary>
 +        /// Adjusts a cmdlet's bound parameters before it runs. Called from
 +        /// CommandProcessorBase, so a sample cannot reach around it the way it
 +        /// could delete a proxy function.
 +        /// </summary>
-+        public static void ClampCmdlet(string cmdletName, object command)
++        internal static void ClampCmdlet(string cmdletName, object command)
 +        {
 +            if (command is null
 +                || !string.Equals(cmdletName, "Start-Sleep", StringComparison.OrdinalIgnoreCase))
@@ -942,6 +1047,10 @@ index 0000000..a3bf14e
 +        }
 +
 +        /// <summary>True when an op should be refused rather than run.</summary>
++        ///
++        /// Public because the compiler calls it while building an expression
++        /// tree. Reading it tells a sample nothing it cannot find out by
++        /// trying the call.
 +        ///
 +        /// Two different reasons, deliberately collapsed into one answer.
 +        /// Network is a *policy* choice the analyst makes. Registry and process

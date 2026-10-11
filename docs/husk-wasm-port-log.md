@@ -1000,15 +1000,73 @@ failures at first:
   **5 fixtures.** This belongs in the product: Husk's ingest needs a launcher
   parser, and that parser needs cmd's escaping rules.
 
-### 4. Harden `HuskHost.Record` against forgery
+### 4. Harden the capture surface — DONE, and it was worse than forgery
 
-**Why:** it is `public static` and reachable from PowerShell, so a sample can
-call `[HuskHost]::Record(...)` and inject fake entries. Harmless to
-capability, but it pollutes the analyst's evidence.
+The entry worried about a sample injecting fake records. The measured reality
+was that **a sample could disarm the sandbox in three lines**:
 
-**Done when:** proxy-sourced records are distinguishable from script-forged
-ones, or the method is not script-reachable. Simplest fix: move the proxies to
-C# cmdlets so nothing public is needed.
+```powershell
+[System.Management.Automation.HuskHostHook]::BlockNetwork = $false
+[System.Management.Automation.HuskHostHook]::OnHostCall = $null
+[System.Management.Automation.HuskHostHook]::SetBudget(0, 0)
+```
+
+All three worked. The unqualified `[HuskHostHook]` not resolving looked like
+protection and was not — the namespace-qualified name resolved fine. A sample
+could also raise the sleep cap, forge a `binder`-sourced record through the
+public `HuskHost.RecordFrom`, and — worst — call `[HuskHost]::Drain()`, which
+returned the records _and emptied them_. Erasing the evidence is the only one
+of these that costs the analyst something irrecoverable.
+
+Closed, in two ways:
+
+**The engine's configuration is write-once.** The host calls
+`HuskHostHook.Seal()` at the end of `Init` and keeps the key it returns;
+`SetSinks`, `SetBlockNetwork`, `SetBudget`, `SetSleepCap` and `BeginRun` all
+require that key afterwards. `Seal()` is callable once, so a sample cannot
+re-seal with a key of its own. The fields became properties with private
+setters, so there is no assignable surface left.
+
+**The evidence is host-only.** `RecordFrom`, `Drain`, `TakeLayers` and the JSON
+helper are `internal` in the spike assembly, so script cannot find them at all.
+`Record` and `RecordLayer` stay public because the proxies are PowerShell
+script and have to reach them — and `Record` hard-codes the source `proxy`, so
+a forged record is labelled as coming from the one layer an analyst should
+already treat as least trustworthy. The source label is the thing a record must
+not be able to lie about.
+
+**A refused attempt is recorded as `evasion.sandbox`.** Nothing but a sample
+looking for a sandbox tries to turn one off, so the attempt is worth more to
+the analyst than the setting it failed to change. The op is new in
+`src/features/husk/host/ops.ts`, and it is the odd one out there: it is not
+something a sample does to a machine, it is something it does to Husk.
+
+Measured, `probes/host-calls.ps1`:
+
+| attempt                     | result                                         |
+| --------------------------- | ---------------------------------------------- |
+| `SetBlockNetwork($false)`   | refused, `BlockNetwork` still `True`, recorded |
+| `SetSinks($null, $null)`    | refused, capture still wired, recorded         |
+| `SetBudget(0, 0)`           | refused, recorded                              |
+| `SetSleepCap(600000)`       | refused, cap still 100, recorded               |
+| `Seal()` again              | returns `$null`; cannot re-seal                |
+| `[HuskHost]::RecordFrom(…)` | not found                                      |
+| `[HuskHost]::Drain()`       | not found                                      |
+| a file write afterwards     | still captured                                 |
+
+**This is a bar, not a wall, and the distinction matters.** A sample willing to
+use reflection can still reach a private static, and nothing inside the same
+process can stop that. What makes Husk trustworthy is the boundary _outside_
+the CLR — the `fetch` hook in JavaScript, which .NET cannot reach around, and
+the fact that there is no real machine behind any of this. The seal turns a
+three-line disarm into something that takes deliberate reflection and leaves a
+record either way.
+
+**Still open:** `HuskHost.Record` and `RecordLayer` remain script-reachable, so
+a sample can still add noise to the `proxy` layer. Closing that means moving
+the proxy functions into C# cmdlets, which is a bigger change than it looks —
+`Invoke-WebRequest`'s parameter set alone is substantial — and it buys less
+than the two fixes above.
 
 ### 5. Perf check on the binder wrapper and the budget tick
 

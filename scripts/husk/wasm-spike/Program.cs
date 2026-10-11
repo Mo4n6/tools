@@ -22,10 +22,21 @@ public static class HuskHost
     private static readonly List<string> s_calls = new();
     private static int s_seq;
 
+    /// Public because the proxy functions are PowerShell script. A sample can
+    /// call it and inject a record, which adds noise rather than removing
+    /// evidence, and the source is always "proxy" - the layer whose records an
+    /// analyst should already treat as the least trustworthy. Closing this
+    /// properly means moving the proxies into C# cmdlets; see the port log.
     public static void Record(string op, string nativeSignature, string[] args)
         => RecordFrom("proxy", op, nativeSignature, args);
 
-    public static void RecordFrom(string source, string op, string nativeSignature, string[] args)
+    /// Internal: the source label is the one thing a record must not be able
+    /// to lie about. `Record` below is public because the proxy functions are
+    /// PowerShell and have to reach it, and it hard-codes "proxy" - so a
+    /// forged record is labelled as coming from the one layer that is already
+    /// known to be forgeable. Letting script pass its own source let a sample
+    /// forge a "binder" record, which is evidence an analyst would trust.
+    internal static void RecordFrom(string source, string op, string nativeSignature, string[] args)
     {
         var quoted = string.Join(",", (args ?? Array.Empty<string>()).Select(JsonQuote));
         lock (s_calls)
@@ -43,7 +54,7 @@ public static class HuskHost
         lock (s_layers) { s_layers.Add(text ?? ""); }
     }
 
-    public static string[] TakeLayers()
+    internal static string[] TakeLayers()
     {
         lock (s_layers)
         {
@@ -53,7 +64,10 @@ public static class HuskHost
         }
     }
 
-    public static string Drain()
+    /// Internal: a sample called `[HuskHost]::Drain()` and the records came
+    /// back to it, emptied. Erasing the evidence is the one attack that
+    /// actually costs the analyst something, so this is host-only.
+    internal static string Drain()
     {
         // Really drains. A report belongs to one sample, and leaving records
         // behind made every run in a batch inherit the previous one's IOCs.
@@ -65,7 +79,7 @@ public static class HuskHost
         }
     }
 
-    public static string JsonQuotePublic(string value) => JsonQuote(value);
+    internal static string JsonQuotePublic(string value) => JsonQuote(value);
 
     private static string JsonQuote(string value)
     {
@@ -359,11 +373,10 @@ public static partial class Spike
             // The binder chokepoint. Proxy functions are telemetry; this is
             // the thing a sample cannot route around, because every .NET
             // method call in PowerShell passes through it.
-            HuskHostHook.OnHostCall = (op, native, args) =>
-                HuskHost.RecordFrom("binder", op, native, args);
-            HuskHostHook.OnCmdletCall = (op, native, args) =>
-                HuskHost.RecordFrom("cmdlet", op, native, args);
-            HuskHostHook.BlockNetwork = true;
+            HuskHostHook.SetSinks(
+                hostCall: (op, native, args) => HuskHost.RecordFrom("binder", op, native, args),
+                cmdletCall: (op, native, args) => HuskHost.RecordFrom("cmdlet", op, native, args));
+            HuskHostHook.SetBlockNetwork(true);
 
             _host = new HuskPSHost();
             _rs = RunspaceFactory.CreateRunspace(_host, iss);
@@ -389,6 +402,12 @@ public static partial class Spike
             // about as long as anyone will wait on a tab before killing it.
             HuskHostHook.SetBudget(steps: 20_000_000, milliseconds: 10_000);
 
+            // Last, because everything above is configuration. A sample used
+            // to be able to undo all of it in three lines of PowerShell; see
+            // HuskHostHook's "Sealing" comment for what this does and does
+            // not protect.
+            _key = HuskHostHook.Seal();
+
             return "OK";
         }
         catch (Exception ex) { return Describe(ex); }
@@ -397,7 +416,11 @@ public static partial class Spike
     /// Lets the analyst raise or lift the budget for one stubborn sample.
     [JSExport]
     internal static void SetBudget(int steps, int milliseconds)
-        => HuskHostHook.SetBudget(steps, milliseconds);
+        => HuskHostHook.SetBudget(steps, milliseconds, _key);
+
+    /// The key to the sealed configuration, held so the analyst's own controls
+    /// still work after Init. Private, and the only reference anywhere.
+    private static object? _key;
 
     /// Does mono-wasm give us real threads? SMA's pipeline model wants them.
     /// If this throws, no amount of source patching makes pipelines run.
@@ -745,7 +768,7 @@ function New-Object {
     internal static string RunFixture(string script)
     {
         HuskHost.TakeLayers();
-        HuskHostHook.BeginRun();
+        HuskHostHook.BeginRun(_key);
         string output;
         string error = "";
         try

@@ -44,3 +44,15 @@ $t = Get-Date; [Threading.Thread]::Sleep(600000); "Thread.Sleep 600s took $([int
 
 # Budgets. A delay loop is ordinary anti-analysis; this must not hang the tab.
 $i = 0; while ($true) { try { $i++ } catch { } }
+
+# Tampering. Measured before the configuration was sealed: three lines of
+# PowerShell unblocked the network, silenced every capture layer and lifted the
+# budget. Each attempt must now be refused *and* recorded as evasion.sandbox.
+$h = [System.Management.Automation.HuskHostHook]
+$h::SetBlockNetwork($false); "network still blocked: $($h::BlockNetwork)"
+$h::SetSinks($null, $null); "capture still wired: $($h::OnHostCall -ne $null)"
+$h::SetBudget(0, 0); "budget untouched"
+$h::SetSleepCap(600000); "sleep cap still $($h::SleepCapMilliseconds)"
+"reseal refused: $($h::Seal() -eq $null)"
+try { [HuskHost]::Drain() } catch { "evidence not drainable: $($_.Exception.GetType().Name)" }
+[IO.File]::WriteAllText("C:\after-tamper.txt", "capture survives tampering")
