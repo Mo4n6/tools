@@ -1,9 +1,12 @@
 # Porting PowerShell to browser-wasm: working log
 
-**Status:** stopped. The runtime boots and SMA loads, but PowerShell cannot
-execute on single-threaded wasm, and the multi-threaded alternative requires
-cross-origin isolation headers that static hosting cannot send. See
-**Threading** below — that is the finding, the rest is how it was reached.
+**Status:** **real PowerShell executes in a browser.** `2+2` returns `4`,
+`[array]::Reverse` round-trips, the `-f` operator works. It took five small
+patches to PowerShell (52 insertions across 7 files) and `WasmEnableThreads`,
+which costs cross-origin isolation headers and therefore static hosting.
+
+Cmdlets are not loaded yet, so `Invoke-Expression` is still missing. That is
+the next piece of work, not a blocker found.
 
 This is a work log, not a spec. It exists so the work can be resumed from a
 cold container, because the scratchpad does not survive one. `husk-spec.md` §1
@@ -154,6 +157,148 @@ at System.Management.Automation.Runspaces.InitialSessionState.CreateDefault2()
 ```
 
 ---
+
+## Next steps — only if the hosting model changes
+
+These were the plan before the threading result. Kept because they are still
+correct *if* Husk ever moves behind a server that sets COOP/COEP.
+
+1. **Clone PowerShell shallow.** `git clone --depth 1 -b v7.4.6
+   https://github.com/PowerShell/PowerShell`. GitHub is reachable.
+2. **Do not use `build.psm1`.** It is written in PowerShell and needs a working
+   `pwsh` to bootstrap, which is not installed. Build
+   `src/System.Management.Automation/System.Management.Automation.csproj`
+   directly with `dotnet build` and a `browser-wasm` RID.
+3. **Patch the platform assumptions** as they surface. Expected first patches:
+   - `Utils.GetApplicationBase` — fall back to `AppContext.BaseDirectory` when
+     `Assembly.Location` is empty.
+   - `PSSysLogProvider` — stub the syslog P/Invoke under `OperatingSystem.IsBrowser()`.
+   - Anything else reaching `libpsl-native`.
+4. **Keep a patch series**, not a mutated checkout, so it can be rebased onto
+   a newer PowerShell.
+
+## Threading: the gate, and how it opens
+
+Single-threaded wasm cannot run PowerShell. Probed before patching anything:
+
+```
+Thread.Start     = PlatformNotSupportedException
+Task.Run + Wait  = timeout            <- fatal
+```
+
+`PowerShell.Invoke()` blocks the caller while the pipeline completes, and
+`Runspace.Open()` uses wait handles the same way, so every one of those
+deadlocks when the continuation is queued to the blocking thread.
+
+**`<WasmEnableThreads>true</WasmEnableThreads>` fixes it**, provided the page
+is cross-origin isolated:
+
+```
+crossOriginIsolated = true | SharedArrayBuffer = function
+Thread.Start     = OK
+Task.Run + Wait  = OK
+```
+
+The server must send all three:
+
+```
+Cross-Origin-Opener-Policy:   same-origin
+Cross-Origin-Embedder-Policy: require-corp
+Cross-Origin-Resource-Policy: same-origin
+```
+
+**This is the cost of the engine route.** GitHub Pages cannot send those
+headers — already documented in the README for Glass — and a `file://` copy
+certainly cannot. Husk would have to be served from something that can.
+
+## Building SMA for browser-wasm
+
+`pwsh` is already on the box at `/usr/bin/pwsh`; check before installing
+anything. PowerShell's build needs it for the generation steps.
+
+```bash
+cd PowerShell
+pwsh -NoProfile -c 'Import-Module ./build.psm1 -Force; Start-ResGen; Start-TypeGen'
+```
+
+Both are required. Without them the build emits **7,714 × CS0103** for missing
+`*Strings` resource classes, because `dotnet build` on the csproj alone skips
+PowerShell's own codegen. That was 4,321 errors reduced to 264 by running them.
+
+Then:
+
+```bash
+dotnet build src/System.Management.Automation/System.Management.Automation.csproj \
+  -c Release -r browser-wasm --self-contained false -p:OutputType=Library \
+  -p:EnableTrimAnalyzer=false -p:SuppressTrimAnalysisWarnings=true \
+  -p:TreatWarningsAsErrors=false -p:WarningsAsErrors= \
+  -p:EnableAotAnalyzer=false -p:EnableSingleFileAnalyzer=false
+```
+
+`OutputType=Library` is needed because the wasm RID otherwise demands a `Main`.
+The analyzer switches turn off IL trim warnings that PowerShell promotes to
+errors (264 of them, all advisory).
+
+Output: `src/System.Management.Automation/bin/Release/net8.0/browser-wasm/System.Management.Automation.dll`, **6.38 MB**.
+
+## The patch series
+
+`scripts/husk/wasm-spike/patches/0001-powershell-browser-wasm.patch` — the whole
+port is **52 insertions across 7 files**. Apply to a clean `v7.4.6` checkout.
+
+Two are environment-only, needed because of this network policy:
+
+1. `global.json` — SDK pin 8.0.403 → installed 8.0.131 with `rollForward`.
+2. `nuget.config` — PowerShell's private Azure feed is blocked; nuget.org has
+   everything the SMA project references.
+3. `PSVersionInfoGenerator.csproj` — Roslyn 4.9.2 → 4.8.0, because SDK 8.0.131
+   ships the 4.8 compiler and the newer SDK is not installable here.
+
+Three are real port patches, each guarding a platform assumption:
+
+4. **`engine/Utils.cs` — `GetApplicationBase`.** Returns
+   `Path.GetDirectoryName(assembly.Location)`; `Location` is `""` for
+   assemblies loaded from the boot manifest, so this returns `null` and every
+   downstream `Path.Combine` throws. Falls back to `AppContext.BaseDirectory`,
+   which is `/` under mono-wasm. **This one patch cleared two separate
+   blockers** — `PowerShellConfig..ctor` and `ReadCoreEngineSnapIn`.
+5. **`utils/tracing/SysLogProvider.cs`.** Four `libpsl-native` P/Invokes
+   (`OpenLog`, `SysLog` ×2, `CloseLog`) guarded by `OperatingSystem.IsBrowser()`.
+   No wasm build of that library exists.
+6. **`CoreCLR/CorePsAssemblyLoadContext.cs` — `NativeDllHandler`.** Returns
+   `IntPtr.Zero` under browser instead of building a probe path from a null
+   directory.
+7. **`engine/SessionState.cs` — `$PID`.** `Process.GetCurrentProcess()` is
+   unsupported in a browser; `$PID` is `0` there.
+
+## Measured, with all patches applied
+
+| | |
+|---|---|
+| Boot | ~0.95 s |
+| `Runspace.Open()` | 589 ms |
+| Bundle | 12.30 MB gzipped |
+| SMA | 6.38 MB |
+
+```
+arithmetic    (182ms) => 4
+concat        ( 11ms) => abcd
+reverse       ( 69ms) => string        [array]::Reverse round-trip
+-f operator   ( 10ms) => IEX
+IEX           --      => not recognized
+```
+
+## Next: cmdlets
+
+`Invoke-Expression` lives in `Microsoft.PowerShell.Commands.Utility`, which has
+not been built or injected. `InitialSessionState.CreateDefault2()` succeeds but
+registers nothing, because `$PSHOME` is `/` and there is no module layout
+there. The language engine works; the cmdlet surface does not.
+
+Build `Microsoft.PowerShell.Commands.Utility` (and likely
+`Microsoft.PowerShell.Commands.Management`) the same way, inject them, and
+register the cmdlets explicitly on the `InitialSessionState` rather than
+relying on `$PSHOME` discovery. Expect the same guard-the-platform-call loop.
 
 ## Next steps — only if the hosting model changes
 

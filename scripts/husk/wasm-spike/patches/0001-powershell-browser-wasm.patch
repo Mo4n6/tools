@@ -1,0 +1,164 @@
+diff --git a/global.json b/global.json
+index ff3b5e0..4eb49b0 100644
+--- a/global.json
++++ b/global.json
+@@ -1,5 +1,6 @@
+ {
+   "sdk": {
+-    "version": "8.0.403"
++    "version": "8.0.131",
++    "rollForward": "latestFeature"
+   }
+-}
++}
+\ No newline at end of file
+diff --git a/nuget.config b/nuget.config
+index db65daa..245c709 100644
+--- a/nuget.config
++++ b/nuget.config
+@@ -1,10 +1,10 @@
+ <?xml version="1.0" encoding="utf-8"?>
++<!-- wasm port: PowerShell's private Azure DevOps feeds are unreachable behind
++     this environment's network policy. nuget.org carries every package the
++     SMA project actually references. -->
+ <configuration>
+   <packageSources>
+     <clear />
+-    <add key="powershell" value="https://pkgs.dev.azure.com/powershell/PowerShell/_packaging/powershell-dotnet-9/nuget/v3/index.json" />
++    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+   </packageSources>
+-  <disabledPackageSources>
+-    <clear />
+-  </disabledPackageSources>
+ </configuration>
+diff --git a/src/System.Management.Automation/CoreCLR/CorePsAssemblyLoadContext.cs b/src/System.Management.Automation/CoreCLR/CorePsAssemblyLoadContext.cs
+index 6be8d3c..2f41b5b 100644
+--- a/src/System.Management.Automation/CoreCLR/CorePsAssemblyLoadContext.cs
++++ b/src/System.Management.Automation/CoreCLR/CorePsAssemblyLoadContext.cs
+@@ -241,6 +241,14 @@ namespace System.Management.Automation
+         /// </summary>
+         internal static IntPtr NativeDllHandler(Assembly assembly, string libraryName)
+         {
++            // wasm port: there are no native libraries to probe for, and
++            // assemblies loaded from the boot manifest have no Location, so
++            // the path build below would throw rather than miss.
++            if (OperatingSystem.IsBrowser())
++            {
++                return IntPtr.Zero;
++            }
++
+             s_nativeDllSubFolder ??= GetNativeDllSubFolderName(out s_nativeDllExtension);
+             string folder = Path.GetDirectoryName(assembly.Location);
+             string fullName = Path.Combine(folder, s_nativeDllSubFolder, libraryName) + s_nativeDllExtension;
+diff --git a/src/System.Management.Automation/SourceGenerators/PSVersionInfoGenerator/PSVersionInfoGenerator.csproj b/src/System.Management.Automation/SourceGenerators/PSVersionInfoGenerator/PSVersionInfoGenerator.csproj
+index 828bd16..403ba11 100644
+--- a/src/System.Management.Automation/SourceGenerators/PSVersionInfoGenerator/PSVersionInfoGenerator.csproj
++++ b/src/System.Management.Automation/SourceGenerators/PSVersionInfoGenerator/PSVersionInfoGenerator.csproj
+@@ -14,7 +14,10 @@
+   </PropertyGroup>
+ 
+   <ItemGroup>
+-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.9.2" PrivateAssets="all" />
++    <!-- wasm port: SDK 8.0.131 ships Roslyn 4.8, and the newer SDK that carries
++         4.9 cannot be installed here (dotnet CDN blocked). The generator only
++         emits version constants, so the older analyzer API is sufficient. -->
++    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
+     <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" PrivateAssets="all" />
+     <!-- This section is to force the version of non-direct dependencies -->
+     <PackageReference Include="Microsoft.NETCore.Platforms" Version="1.1.2" />
+diff --git a/src/System.Management.Automation/engine/SessionState.cs b/src/System.Management.Automation/engine/SessionState.cs
+index e65f65f..8ae8163 100644
+--- a/src/System.Management.Automation/engine/SessionState.cs
++++ b/src/System.Management.Automation/engine/SessionState.cs
+@@ -337,10 +337,13 @@ namespace System.Management.Automation
+             this.GlobalScope.SetVariable(v.Name, v, asValue: false, force: true, this, CommandOrigin.Internal, fastPath: true);
+ 
+             // $PID
+-            Process currentProcess = Process.GetCurrentProcess();
++            // wasm port: System.Diagnostics.Process is unsupported in a
++            // browser. $PID still has to exist and be an int, because scripts
++            // read it; 0 is the conventional "no process" value.
++            int processId = OperatingSystem.IsBrowser() ? 0 : Process.GetCurrentProcess().Id;
+             v = new PSVariable(
+                     SpecialVariables.PID,
+-                    currentProcess.Id,
++                    processId,
+                     ScopedItemOptions.Constant | ScopedItemOptions.AllScope,
+                     RunspaceInit.PIDDescription);
+             this.GlobalScope.SetVariable(v.Name, v, asValue: false, force: true, this, CommandOrigin.Internal, fastPath: true);
+diff --git a/src/System.Management.Automation/engine/Utils.cs b/src/System.Management.Automation/engine/Utils.cs
+index 1ad23a4..301c3ff 100644
+--- a/src/System.Management.Automation/engine/Utils.cs
++++ b/src/System.Management.Automation/engine/Utils.cs
+@@ -484,7 +484,20 @@ namespace System.Management.Automation
+         {
+             // Use the location of SMA.dll as the application base.
+             Assembly assembly = typeof(PSObject).Assembly;
+-            return Path.GetDirectoryName(assembly.Location);
++            string location = assembly.Location;
++
++            // wasm port: assemblies loaded from the browser boot manifest have
++            // no on-disk location, so Location is "" and GetDirectoryName("")
++            // returns null. Everything downstream feeds that straight into
++            // Path.Combine, so $PSHOME has to resolve to something real.
++            // AppContext.BaseDirectory is "/" under mono-wasm, which is a
++            // valid root in the in-memory filesystem.
++            if (string.IsNullOrEmpty(location))
++            {
++                return AppContext.BaseDirectory;
++            }
++
++            return Path.GetDirectoryName(location);
+         }
+ 
+         private static string[] s_productFolderDirectories;
+diff --git a/src/System.Management.Automation/utils/tracing/SysLogProvider.cs b/src/System.Management.Automation/utils/tracing/SysLogProvider.cs
+index f3ee184..a3de5ea 100755
+--- a/src/System.Management.Automation/utils/tracing/SysLogProvider.cs
++++ b/src/System.Management.Automation/utils/tracing/SysLogProvider.cs
+@@ -101,7 +101,14 @@ namespace System.Management.Automation.Tracing
+             // FUTURE: If logging is redesigned, make these details static or a singleton since there should only be one
+             // instance active.
+             _nativeSyslogIdent = Marshal.StringToHGlobalAnsi(applicationId);
+-            NativeMethods.OpenLog(_nativeSyslogIdent, _facility);
++
++            // wasm port: libpsl-native has no browser build, so every P/Invoke
++            // in this class is guarded. Syslog is a sink we do not want in a
++            // browser anyway - the host captures what matters.
++            if (!OperatingSystem.IsBrowser())
++            {
++                NativeMethods.OpenLog(_nativeSyslogIdent, _facility);
++            }
+             _keywordFilter = (ulong)keywords;
+             _levelFilter = (byte)level;
+             _channelFilter = (byte)channels;
+@@ -294,7 +301,7 @@ namespace System.Management.Automation.Tracing
+                                            parentActivityId.ToString("B"),
+                                            Activity.ToString("B"));
+ 
+-            NativeMethods.SysLog(NativeMethods.SysLogPriority.Info, message);
++            if (!OperatingSystem.IsBrowser()) { NativeMethods.SysLog(NativeMethods.SysLogPriority.Info, message); }
+         }
+ 
+         /// <summary>
+@@ -310,7 +317,7 @@ namespace System.Management.Automation.Tracing
+             string message = string.Format(CultureInfo.InvariantCulture,
+                                            "({0:X}:{1:X}:{2:X}) [Activity] {3}",
+                                            PSVersionInfo.GitCommitId, threadId, PSChannel.Operational, activity.ToString("B"));
+-            NativeMethods.SysLog(NativeMethods.SysLogPriority.Info, message);
++            if (!OperatingSystem.IsBrowser()) { NativeMethods.SysLog(NativeMethods.SysLogPriority.Info, message); }
+         }
+ 
+         /// <summary>
+@@ -350,7 +357,10 @@ namespace System.Management.Automation.Tracing
+                     priority = NativeMethods.SysLogPriority.Info;
+                 }
+                 // log it.
+-                NativeMethods.SysLog(priority, sb.ToString());
++                if (!OperatingSystem.IsBrowser())
++                {
++                    NativeMethods.SysLog(priority, sb.ToString());
++                }
+             }
+         }
+ 

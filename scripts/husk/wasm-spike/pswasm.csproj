@@ -11,6 +11,10 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <!-- Plain .dll instead of webcil, so an assembly can be injected by hand. -->
     <WasmEnableWebcil>false</WasmEnableWebcil>
+    <!-- PowerShell.Invoke blocks the caller while the pipeline completes, which
+         deadlocks single-threaded. Needs SharedArrayBuffer, so the host must
+         send COOP/COEP. Experimental in .NET 8. -->
+    <WasmEnableThreads>true</WasmEnableThreads>
     <EventSourceSupport>false</EventSourceSupport>
   </PropertyGroup>
   <ItemGroup>
