@@ -1334,6 +1334,488 @@ index 1ea71d1..427306c 100644
              if (value != null)
              {
                  result = new DictionaryEntry(name, value);
+diff --git a/src/System.Management.Automation/security/HuskAes.cs b/src/System.Management.Automation/security/HuskAes.cs
+new file mode 100644
+index 0000000..6d44721
+--- /dev/null
++++ b/src/System.Management.Automation/security/HuskAes.cs
+@@ -0,0 +1,447 @@
++// Licensed to the .NET Foundation under one or more agreements.
++// The .NET Foundation licenses this file to you under the MIT license.
++//
++// wasm port addition: AES-CBC in managed code.
++//
++// .NET's browser cryptography is SubtleCrypto, which is asynchronous only, and
++// with threads off there is nothing to block on - so the synchronous AES API
++// has no implementation at all. Aes.Create() succeeds and then
++// CreateDecryptor throws PlatformNotSupportedException.
++//
++// That matters because `ConvertTo-SecureString -Key` goes through
++// SecureStringHelper, and that is a real technique rather than an obfuscator
++// artefact: a payload carrying an encrypted second stage and the key to
++// decrypt it. Without this, those samples stop at the decrypt and the stage
++// they were hiding is never seen.
++//
++// This is a straight FIPS-197 implementation - no T-tables, no unrolling -
++// because it is used to decrypt a few hundred bytes of payload, and being
++// obviously correct matters more than being fast. It is checked against
++// System.Security.Cryptography.Aes on a platform where that works.
++//
++// It is NOT constant-time and must not be used to protect anything. It exists
++// to read what a sample was hiding, and the sample already knows its own key.
++
++using System.IO;
++using System.Security.Cryptography;
++
++namespace System.Management.Automation.Internal
++{
++    /// <summary>The AES block cipher, in managed code.</summary>
++    internal static class HuskAes
++    {
++        private static readonly byte[] s_sbox = BuildSBox();
++        private static readonly byte[] s_inverseSbox = BuildInverseSBox(s_sbox);
++
++        /// <summary>
++        /// Generated rather than typed out: the S-box is the multiplicative
++        /// inverse in GF(2^8) followed by an affine transform, and generating
++        /// it cannot go wrong in the way that transcribing 256 hex bytes can.
++        /// </summary>
++        private static byte[] BuildSBox()
++        {
++            var sbox = new byte[256];
++            sbox[0] = 0x63;
++
++            byte p = 1, q = 1;
++            do
++            {
++                // p *= 3 in GF(2^8).
++                p = (byte)(p ^ (p << 1) ^ ((p & 0x80) != 0 ? 0x1B : 0));
++
++                // q /= 3 in GF(2^8).
++                q ^= (byte)(q << 1);
++                q ^= (byte)(q << 2);
++                q ^= (byte)(q << 4);
++                if ((q & 0x80) != 0) { q ^= 0x09; }
++
++                sbox[p] = (byte)(q ^ Rotl(q, 1) ^ Rotl(q, 2) ^ Rotl(q, 3) ^ Rotl(q, 4) ^ 0x63);
++            }
++            while (p != 1);
++
++            return sbox;
++        }
++
++        private static byte Rotl(byte value, int places)
++            => (byte)((value << places) | (value >> (8 - places)));
++
++        private static byte[] BuildInverseSBox(byte[] sbox)
++        {
++            var inverse = new byte[256];
++            for (int i = 0; i < 256; i++)
++            {
++                inverse[sbox[i]] = (byte)i;
++            }
++
++            return inverse;
++        }
++
++        /// <summary>Multiplies by 2 in GF(2^8).</summary>
++        private static byte XTime(byte value)
++            => (byte)((value << 1) ^ ((value & 0x80) != 0 ? 0x1B : 0));
++
++        private static byte Multiply(byte a, byte b)
++        {
++            byte result = 0;
++            while (b != 0)
++            {
++                if ((b & 1) != 0) { result ^= a; }
++                a = XTime(a);
++                b >>= 1;
++            }
++
++            return result;
++        }
++
++        /// <summary>
++        /// The expanded key, as (Rounds + 1) × 16 bytes. The layout matches the
++        /// state's, so AddRoundKey is a flat 16-byte exclusive or.
++        /// </summary>
++        internal static byte[] ExpandKey(byte[] key, out int rounds)
++        {
++            int words = key.Length / 4;
++            rounds = words + 6;
++            int total = 4 * (rounds + 1);
++
++            var expanded = new byte[total * 4];
++            Buffer.BlockCopy(key, 0, expanded, 0, key.Length);
++
++            byte rcon = 1;
++            for (int i = words; i < total; i++)
++            {
++                int at = i * 4;
++                int previous = at - 4;
++                byte t0 = expanded[previous], t1 = expanded[previous + 1];
++                byte t2 = expanded[previous + 2], t3 = expanded[previous + 3];
++
++                if (i % words == 0)
++                {
++                    // RotWord, SubWord, then the round constant.
++                    (t0, t1, t2, t3) = (
++                        (byte)(s_sbox[t1] ^ rcon),
++                        s_sbox[t2],
++                        s_sbox[t3],
++                        s_sbox[t0]);
++                    rcon = XTime(rcon);
++                }
++                else if (words > 6 && i % words == 4)
++                {
++                    (t0, t1, t2, t3) = (s_sbox[t0], s_sbox[t1], s_sbox[t2], s_sbox[t3]);
++                }
++
++                int back = at - (words * 4);
++                expanded[at] = (byte)(expanded[back] ^ t0);
++                expanded[at + 1] = (byte)(expanded[back + 1] ^ t1);
++                expanded[at + 2] = (byte)(expanded[back + 2] ^ t2);
++                expanded[at + 3] = (byte)(expanded[back + 3] ^ t3);
++            }
++
++            return expanded;
++        }
++
++        private static void AddRoundKey(byte[] state, byte[] expanded, int round)
++        {
++            int at = round * 16;
++            for (int i = 0; i < 16; i++)
++            {
++                state[i] ^= expanded[at + i];
++            }
++        }
++
++        private static void SubBytes(byte[] state, byte[] box)
++        {
++            for (int i = 0; i < 16; i++)
++            {
++                state[i] = box[state[i]];
++            }
++        }
++
++        /// <summary>
++        /// Row r rotates left by r. The state is column-major - index is
++        /// row + 4 × column - so a row is every fourth byte.
++        /// </summary>
++        private static void ShiftRows(byte[] state, bool inverse)
++        {
++            var copy = new byte[16];
++            Buffer.BlockCopy(state, 0, copy, 0, 16);
++
++            for (int row = 1; row < 4; row++)
++            {
++                for (int column = 0; column < 4; column++)
++                {
++                    int from = inverse ? (column - row + 8) % 4 : (column + row) % 4;
++                    state[row + (4 * column)] = copy[row + (4 * from)];
++                }
++            }
++        }
++
++        private static void MixColumns(byte[] state)
++        {
++            for (int column = 0; column < 4; column++)
++            {
++                int at = column * 4;
++                byte a0 = state[at], a1 = state[at + 1], a2 = state[at + 2], a3 = state[at + 3];
++
++                state[at] = (byte)(XTime(a0) ^ XTime(a1) ^ a1 ^ a2 ^ a3);
++                state[at + 1] = (byte)(a0 ^ XTime(a1) ^ XTime(a2) ^ a2 ^ a3);
++                state[at + 2] = (byte)(a0 ^ a1 ^ XTime(a2) ^ XTime(a3) ^ a3);
++                state[at + 3] = (byte)(XTime(a0) ^ a0 ^ a1 ^ a2 ^ XTime(a3));
++            }
++        }
++
++        private static void InverseMixColumns(byte[] state)
++        {
++            for (int column = 0; column < 4; column++)
++            {
++                int at = column * 4;
++                byte a0 = state[at], a1 = state[at + 1], a2 = state[at + 2], a3 = state[at + 3];
++
++                state[at] = (byte)(Multiply(a0, 0x0E) ^ Multiply(a1, 0x0B) ^ Multiply(a2, 0x0D) ^ Multiply(a3, 0x09));
++                state[at + 1] = (byte)(Multiply(a0, 0x09) ^ Multiply(a1, 0x0E) ^ Multiply(a2, 0x0B) ^ Multiply(a3, 0x0D));
++                state[at + 2] = (byte)(Multiply(a0, 0x0D) ^ Multiply(a1, 0x09) ^ Multiply(a2, 0x0E) ^ Multiply(a3, 0x0B));
++                state[at + 3] = (byte)(Multiply(a0, 0x0B) ^ Multiply(a1, 0x0D) ^ Multiply(a2, 0x09) ^ Multiply(a3, 0x0E));
++            }
++        }
++
++        internal static void EncryptBlock(byte[] state, byte[] expanded, int rounds)
++        {
++            AddRoundKey(state, expanded, 0);
++            for (int round = 1; round < rounds; round++)
++            {
++                SubBytes(state, s_sbox);
++                ShiftRows(state, inverse: false);
++                MixColumns(state);
++                AddRoundKey(state, expanded, round);
++            }
++
++            SubBytes(state, s_sbox);
++            ShiftRows(state, inverse: false);
++            AddRoundKey(state, expanded, rounds);
++        }
++
++        internal static void DecryptBlock(byte[] state, byte[] expanded, int rounds)
++        {
++            AddRoundKey(state, expanded, rounds);
++            for (int round = rounds - 1; round > 0; round--)
++            {
++                ShiftRows(state, inverse: true);
++                SubBytes(state, s_inverseSbox);
++                AddRoundKey(state, expanded, round);
++                InverseMixColumns(state);
++            }
++
++            ShiftRows(state, inverse: true);
++            SubBytes(state, s_inverseSbox);
++            AddRoundKey(state, expanded, 0);
++        }
++    }
++
++    /// <summary>
++    /// AES-CBC with PKCS7 padding, as an ICryptoTransform so that
++    /// SecureStringHelper's CryptoStream plumbing is unchanged.
++    /// </summary>
++    internal sealed class HuskAesTransform : ICryptoTransform
++    {
++        private const int Block = 16;
++
++        private readonly byte[] _expanded;
++        private readonly int _rounds;
++        private readonly bool _encrypting;
++        private readonly byte[] _chain;
++        private readonly byte[] _held = new byte[Block];
++        private bool _holding;
++
++        internal HuskAesTransform(byte[] key, byte[] iv, bool encrypting)
++        {
++            if (key is null) { throw new ArgumentNullException(nameof(key)); }
++            if (key.Length is not (16 or 24 or 32))
++            {
++                throw new ArgumentException("AES key must be 128, 192 or 256 bits.", nameof(key));
++            }
++
++            if (iv is null || iv.Length != Block)
++            {
++                throw new ArgumentException("AES-CBC needs a 16-byte initialization vector.", nameof(iv));
++            }
++
++            _expanded = HuskAes.ExpandKey(key, out _rounds);
++            _encrypting = encrypting;
++            _chain = (byte[])iv.Clone();
++        }
++
++        public bool CanReuseTransform => false;
++
++        public bool CanTransformMultipleBlocks => true;
++
++        public int InputBlockSize => Block;
++
++        public int OutputBlockSize => Block;
++
++        public int TransformBlock(
++            byte[] inputBuffer, int inputOffset, int inputCount, byte[] outputBuffer, int outputOffset)
++        {
++            if (inputCount % Block != 0)
++            {
++                throw new CryptographicException("AES-CBC input must be a whole number of blocks.");
++            }
++
++            if (_encrypting)
++            {
++                for (int at = 0; at < inputCount; at += Block)
++                {
++                    EncryptOne(inputBuffer, inputOffset + at, outputBuffer, outputOffset + at);
++                }
++
++                return inputCount;
++            }
++
++            // Decryption holds the last block back.
++            //
++            // CryptoStream does not reserve it for TransformFinalBlock, as the
++            // name suggests: it feeds everything through TransformBlock and
++            // then calls TransformFinalBlock with nothing. So a padded
++            // decryptor has to do the reserving itself, or the padding is
++            // handed to the caller as if it were plaintext. Measured that way
++            // first - every round trip came back with its PKCS7 bytes still
++            // attached.
++            int written = 0;
++            if (_holding && inputCount > 0)
++            {
++                DecryptOne(_held, 0, outputBuffer, outputOffset + written);
++                written += Block;
++                _holding = false;
++            }
++
++            int blocks = inputCount / Block;
++            for (int i = 0; i < blocks - 1; i++)
++            {
++                DecryptOne(inputBuffer, inputOffset + (i * Block), outputBuffer, outputOffset + written);
++                written += Block;
++            }
++
++            if (blocks >= 1)
++            {
++                Buffer.BlockCopy(inputBuffer, inputOffset + ((blocks - 1) * Block), _held, 0, Block);
++                _holding = true;
++            }
++
++            return written;
++        }
++
++        public byte[] TransformFinalBlock(byte[] inputBuffer, int inputOffset, int inputCount)
++        {
++            if (_encrypting)
++            {
++                // PKCS7: always at least one byte of padding, so a plaintext
++                // that is already a whole number of blocks gains a full block.
++                int padding = Block - (inputCount % Block);
++                var padded = new byte[inputCount + padding];
++                Buffer.BlockCopy(inputBuffer, inputOffset, padded, 0, inputCount);
++                for (int i = inputCount; i < padded.Length; i++) { padded[i] = (byte)padding; }
++
++                var encrypted = new byte[padded.Length];
++                for (int at = 0; at < padded.Length; at += Block)
++                {
++                    EncryptOne(padded, at, encrypted, at);
++                }
++
++                Array.Clear(padded, 0, padded.Length);
++                return encrypted;
++            }
++
++            int total = (_holding ? Block : 0) + inputCount;
++            if (total == 0)
++            {
++                return Array.Empty<byte>();
++            }
++
++            if (total % Block != 0)
++            {
++                throw new CryptographicException("AES-CBC input must be a whole number of blocks.");
++            }
++
++            var plain = new byte[total];
++            int written = 0;
++            if (_holding)
++            {
++                DecryptOne(_held, 0, plain, written);
++                written += Block;
++                _holding = false;
++            }
++
++            for (int at = 0; at < inputCount; at += Block)
++            {
++                DecryptOne(inputBuffer, inputOffset + at, plain, written);
++                written += Block;
++            }
++
++            int declared = plain[^1];
++            if (declared < 1 || declared > Block || declared > plain.Length)
++            {
++                throw new CryptographicException("Padding is invalid and cannot be removed.");
++            }
++
++            for (int i = plain.Length - declared; i < plain.Length; i++)
++            {
++                if (plain[i] != declared)
++                {
++                    throw new CryptographicException("Padding is invalid and cannot be removed.");
++                }
++            }
++
++            var result = new byte[plain.Length - declared];
++            Buffer.BlockCopy(plain, 0, result, 0, result.Length);
++            Array.Clear(plain, 0, plain.Length);
++            return result;
++        }
++
++        private void EncryptOne(byte[] source, int sourceOffset, byte[] target, int targetOffset)
++        {
++            var state = new byte[Block];
++            Buffer.BlockCopy(source, sourceOffset, state, 0, Block);
++            for (int i = 0; i < Block; i++) { state[i] ^= _chain[i]; }
++
++            HuskAes.EncryptBlock(state, _expanded, _rounds);
++            Buffer.BlockCopy(state, 0, _chain, 0, Block);
++            Buffer.BlockCopy(state, 0, target, targetOffset, Block);
++        }
++
++        private void DecryptOne(byte[] source, int sourceOffset, byte[] target, int targetOffset)
++        {
++            var state = new byte[Block];
++            Buffer.BlockCopy(source, sourceOffset, state, 0, Block);
++
++            // The ciphertext block is the next chain value, so keep it before
++            // the decrypt overwrites the state.
++            var cipher = (byte[])state.Clone();
++            HuskAes.DecryptBlock(state, _expanded, _rounds);
++            for (int i = 0; i < Block; i++) { state[i] ^= _chain[i]; }
++
++            Buffer.BlockCopy(cipher, 0, _chain, 0, Block);
++            Buffer.BlockCopy(state, 0, target, targetOffset, Block);
++        }
++
++        public void Dispose()
++        {
++            Array.Clear(_expanded, 0, _expanded.Length);
++            Array.Clear(_chain, 0, _chain.Length);
++        }
++    }
++
++    /// <summary>
++    /// Picks the implementation. Everywhere but the browser this is the real
++    /// one; the managed path exists only because the browser has no other.
++    /// </summary>
++    internal static class HuskCrypto
++    {
++        internal static ICryptoTransform CreateEncryptor(Aes aes, byte[] key, byte[] iv)
++            => OperatingSystem.IsBrowser()
++                ? new HuskAesTransform(key, iv, encrypting: true)
++                : aes.CreateEncryptor(key, iv);
++
++        internal static ICryptoTransform CreateDecryptor(Aes aes, byte[] key, byte[] iv)
++            => OperatingSystem.IsBrowser()
++                ? new HuskAesTransform(key, iv, encrypting: false)
++                : aes.CreateDecryptor(key, iv);
++    }
++}
+diff --git a/src/System.Management.Automation/security/SecureStringHelper.cs b/src/System.Management.Automation/security/SecureStringHelper.cs
+index 2f7c991..a27e95e 100644
+--- a/src/System.Management.Automation/security/SecureStringHelper.cs
++++ b/src/System.Management.Automation/security/SecureStringHelper.cs
+@@ -265,7 +265,10 @@ namespace Microsoft.PowerShell
+                 byte[] data = GetData(input);
+                 try
+                 {
+-                    using (ICryptoTransform encryptor = aes.CreateEncryptor(key, iv))
++                    // wasm port: the browser has no synchronous AES, so this
++                    // goes to a managed implementation there. See HuskAes.cs.
++                    using (ICryptoTransform encryptor =
++                        System.Management.Automation.Internal.HuskCrypto.CreateEncryptor(aes, key, iv))
+                     using (var sourceStream = new MemoryStream(data))
+                     using (var encryptedStream = new MemoryStream())
+                     {
+@@ -341,7 +344,11 @@ namespace Microsoft.PowerShell
+             //
+             using (var aes = Aes.Create())
+             {
+-                using (ICryptoTransform decryptor = aes.CreateDecryptor(key, IV ?? aes.IV))
++                // wasm port: as in Encrypt above. Without it a sample carrying
++                // an encrypted second stage stops here, at the one moment the
++                // stage it was hiding would have become visible.
++                using (ICryptoTransform decryptor =
++                    System.Management.Automation.Internal.HuskCrypto.CreateDecryptor(aes, key, IV ?? aes.IV))
+                 using (var encryptedStream = new MemoryStream(ByteArrayFromString(input)))
+                 using (var targetStream = new MemoryStream())
+                 {
 diff --git a/src/System.Management.Automation/utils/PsUtils.cs b/src/System.Management.Automation/utils/PsUtils.cs
 index 53809e5..087a5d6 100644
 --- a/src/System.Management.Automation/utils/PsUtils.cs

@@ -10,14 +10,15 @@ the engine beats the tree-walker outright.**
 
 220 cmdlets and 128 aliases live. Runs on **ordinary static hosting** — no
 cross-origin isolation headers. `file://` does not work, for an unrelated
-loader reason. Six fixtures miss in total: five want AES, which browser .NET
-cannot serve synchronously, and one is a corpus defect. See the corpus section.
+loader reason. Five fixtures miss in total, and none of them for a reason
+patching PowerShell can fix: four depend on .NET Framework's own reflection
+member order and one is a corpus defect. See the corpus section.
 
-Thirteen real source patches, 1,052 insertions across 18 files — seven
+Fifteen real source patches, 1,508 insertions across 20 files — seven
 portability guards, three deliberate Windows PowerShell 5.1 fidelity patches,
-a cmdlet-level capture layer, and the step and time budgets. The fidelity
-patches are the ones that moved the corpus number: without them the engine
-scored **11.5%**.
+a cmdlet-level capture layer, the step and time budgets, and a managed AES.
+The fidelity patches are the ones that moved the corpus number: without them
+the engine scored **11.5%**.
 
 This is a work log, not a spec. It exists so the work can be resumed from a
 cold container, because the scratchpad does not survive one. `husk-spec.md` §1
@@ -283,7 +284,7 @@ Output: `src/System.Management.Automation/bin/Release/net8.0/browser-wasm/System
 ## The patch series
 
 `scripts/husk/wasm-spike/patches/0001-powershell-browser-wasm.patch` — the whole
-port is **1,052 insertions across 18 files**. Apply to a clean `v7.4.6`
+port is **1,508 insertions across 20 files**. Apply to a clean `v7.4.6`
 checkout.
 
 Three are environment-only, needed because of this network policy:
@@ -367,7 +368,12 @@ And one is the budget:
     every sequence point.** Both paths, because PowerShell interprets a script
     block before it compiles one. See "Budgets" below.
 
-Plus `engine/HuskHostHook.cs` itself, which is new and holds all of the above:
+And one is the crypto:
+
+16. **`security/HuskAes.cs` (new) and `security/SecureStringHelper.cs` — a
+    managed AES-CBC.** Because the browser has none. See "Managed AES" below.
+
+Plus `engine/HuskHostHook.cs` itself, which is new and holds much of the above:
 the classification tables, the cmdlet table, the budget, the sleep clamp and
 the seal.
 
@@ -952,16 +958,28 @@ fixtures, 45 seconds of wall clock:
 
 |                        | tree-walker | engine     |
 | ---------------------- | ----------- | ---------- |
-| single-transform (244) | 80.7%       | **97.5%**  |
+| single-transform (244) | 80.7%       | **98.0%**  |
 | layered (864)          | 50.2%       | **100.0%** |
 
-Six fixtures miss, all in single-transform, and five of them are one cause:
+Five fixtures miss, all in single-transform, and **not one of them for a reason
+patching PowerShell can fix**:
 
-- **5× `Algorithm 'Aes' is not supported on this platform.`** .NET's browser
-  crypto is SubtleCrypto, which is async-only, so the synchronous AES API has
-  no implementation. These samples use `ConvertTo-SecureString -Key`, which is
-  a real malware technique, not an obfuscator artefact. Needs a managed AES —
-  see the backlog.
+- **4× `Cannot find an overload for "StructureToPtr"`** and friends
+  (`GetLastPInvokeError`, `DestroyStructure`). These are
+  `Out-SecureStringCommand` samples, and they pick the method to call by
+  **indexing into reflection**:
+  `[Marshal]::([Marshal].GetMembers()[4].Name).Invoke(…)`. The member order of
+  `System.Runtime.InteropServices.Marshal` is not the same in .NET 8 as in .NET
+  Framework 4.8, and the sets are not even the same — `GetLastPInvokeError`
+  does not exist in 4.8 at all. Index 4 meant one method there and means
+  another here.
+
+  There is no faithful fix. The sample depends on the _framework build_ rather
+  than on PowerShell, so it would fail the same way on real PowerShell 7 on
+  Windows; reproducing 4.8's member order would mean carrying 4.8's member
+  list, which the fork cannot derive. This is the honest ceiling of the
+  approach, and it is worth knowing where it is.
+
 - **1× corpus defect, not an engine gap.** `all-token-types/string-3` obfuscates
   a _multi-line_ script through `-join [regex]::Matches($s, '.', 'RightToLeft')`.
   A bare `.` never matches a newline, so the technique drops them, the recovered
@@ -969,8 +987,10 @@ Six fixtures miss, all in single-transform, and five of them are one cause:
   Measured in the engine: `(-join [regex]::Matches("a`nb", ".", "RightToLeft")).Length`is 2. No PowerShell can reproduce that fixture's own`expected`from its own`obfuscated`. Deobfuscation itself succeeded — the recovered layer is
   byte-identical to the ground truth.
 
-So the honest engine figure is **238/239 measurable single-transform cases and
-864/864 layered**.
+So the honest engine figure is **239/239 measurable single-transform cases and
+864/864 layered** — every fixture whose obfuscated form can reproduce its own
+expected output anywhere other than Windows PowerShell 5.1 on .NET Framework
+4.8.
 
 ### The metric had to change, and that is the finding
 
@@ -1118,21 +1138,39 @@ only the lexer-table port.
 commit, the patch series and Microsoft's copyright, and the licence tests
 cover it the way they cover the lexer tables.
 
-### 9. Managed AES — the last corpus gap
+### 9. Managed AES — DONE
 
-**Why:** `ConvertTo-SecureString -Key` is a real malware technique, and .NET's
-browser crypto cannot serve the synchronous AES API at all (SubtleCrypto is
-async-only, and with threads off there is nothing to block on). It is the only
-engine gap left in the corpus: 5 fixtures.
+`src/System.Management.Automation/security/HuskAes.cs` in the fork: AES-CBC
+with PKCS7, as an `ICryptoTransform`, so `SecureStringHelper`'s `CryptoStream`
+plumbing is unchanged. `ConvertTo-SecureString -Key` now round-trips in the
+browser, and the corpus moved from 97.5% to 98.0%.
 
-**Done when:** `Aes.Create()` works in the browser runspace and those five
-fixtures pass. The algorithm is fully specified, so this is a managed AES-CBC
-implementation checked against the FIPS-197 vectors, registered where SMA's
-`SecureStringHelper` can reach it.
+Why it had to be written rather than configured: .NET's browser cryptography is
+SubtleCrypto, which is asynchronous only, and with threads off there is nothing
+to block on. `Aes.Create()` _succeeds_ — it was `CreateDecryptor` that threw,
+from `AesImplementation.CreateTransformCore`. There is no switch.
 
-**Known:** try `CryptoConfig.AddAlgorithm` from the host first — if that works
-it needs no SMA patch at all. Otherwise patch `SecureStringHelper` to use the
-managed implementation under `OperatingSystem.IsBrowser()`.
+It is a straight FIPS-197 implementation: no T-tables, no unrolling. It
+decrypts a few hundred bytes of payload, so being obviously correct matters and
+being fast does not. It is **not constant-time and must not be used to protect
+anything**; it exists to read what a sample was hiding, and the sample already
+knows its own key. The S-box is generated rather than transcribed, because
+generating it cannot go wrong the way typing 256 hex bytes can.
+
+**Hand-written crypto is only as good as its test.**
+`scripts/husk/wasm-spike/aes-vectors/` runs on ordinary Linux .NET, where the
+real AES works, and checks the managed one against the FIPS-197 appendix C
+known-answer vectors for all three key sizes plus 147 comparisons with
+`System.Security.Cryptography.Aes` over every plaintext length from 0 to 48
+bytes, through the same `CryptoStream` plumbing.
+
+That last part is what caught the actual bug, and it is worth recording because
+the name is misleading: **`CryptoStream` does not reserve the final block for
+`TransformFinalBlock`.** It feeds everything through `TransformBlock` and then
+calls `TransformFinalBlock` with nothing, so a padded decryptor has to hold the
+last block back itself. Without that, every round trip came back with its PKCS7
+bytes still attached — and the first version of this file did exactly that, on
+147 of 147 cases.
 
 ### 10. A launcher parser in the product
 
