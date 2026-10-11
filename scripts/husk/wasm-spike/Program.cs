@@ -55,7 +55,14 @@ public static class HuskHost
 
     public static string Drain()
     {
-        lock (s_calls) { return "[" + string.Join(",", s_calls) + "]"; }
+        // Really drains. A report belongs to one sample, and leaving records
+        // behind made every run in a batch inherit the previous one's IOCs.
+        lock (s_calls)
+        {
+            var json = "[" + string.Join(",", s_calls) + "]";
+            s_calls.Clear();
+            return json;
+        }
     }
 
     public static string JsonQuotePublic(string value) => JsonQuote(value);
@@ -196,6 +203,19 @@ public static partial class Spike
         });
     }
 
+    /// Where the fake C: drive lives in the in-memory filesystem.
+    private const string CDriveRoot = "/husk-c";
+
+    /// A real PowerShell drive, so `C:\Users\Public\x.exe` resolves the way
+    /// a sample expects instead of being read as a relative Unix path. The
+    /// .NET APIs do not go through PowerShell drives, so
+    /// [IO.File]::WriteAllText("C:\...") still lands on a literal filename -
+    /// captured either way, since the dropped-file walker reads the whole
+    /// virtual root.
+    private const string CDrive =
+        "New-PSDrive -Name C -PSProvider FileSystem -Root '" + CDriveRoot + "' " +
+        "-Scope Global | Out-Null";
+
     [JSExport]
     internal static string Init()
     {
@@ -211,6 +231,33 @@ public static partial class Spike
             AppDomain.CurrentDomain.SetData("APP_CONTEXT_BASE_DIRECTORY", home);
             Environment.SetEnvironmentVariable("PSModulePath", Path.Combine(home, "Modules"));
             Environment.SetEnvironmentVariable("POWERSHELL_TELEMETRY_OPTOUT", "1");
+
+            // A Windows-shaped tree behind a C: drive.
+            //
+            // Without it `Out-File C:\Users\Public\x.txt` fails with "could
+            // not find a part of the path /C/Users/Public/x.txt": the Unix
+            // FileSystemProvider has one root, so a Windows path becomes a
+            // relative one and the directories do not exist. Every filesystem
+            // cmdlet a dropper uses dies there, before dropping anything.
+            //
+            // The directories are the ones samples actually write to. An
+            // analyst's extraction is only as good as the writes that
+            // succeeded, so a missing directory is a lost payload.
+            Directory.CreateDirectory(CDriveRoot);
+            foreach (var dir in new[]
+            {
+                @"Users\Public", @"Users\Public\Documents",
+                @"Users\analyst\AppData\Roaming",
+                @"Users\analyst\AppData\Local\Temp",
+                @"Users\analyst\Desktop", @"Users\analyst\Downloads",
+                @"Users\analyst\Start Menu\Programs\Startup",
+                @"Windows\Temp", @"Windows\System32", @"Windows\Tasks",
+                @"ProgramData", @"Program Files", @"Program Files (x86)",
+            })
+            {
+                Directory.CreateDirectory(
+                    Path.Combine(CDriveRoot, dir.Replace('\\', Path.DirectorySeparatorChar)));
+            }
 
             // A browser has no Windows environment, and obfuscators lean on it
             // hard: $env:ComSpec[4,15,25] and friends are a standard way to
@@ -282,7 +329,16 @@ public static partial class Spike
                 catch (Exception) { /* not in this bundle; carry on */ }
             }
 
-            _aliasCount = RegisterFiveOneAliases(iss); // wasm is single-threaded
+            _aliasCount = RegisterFiveOneAliases(iss);
+
+            // The virtual registry. A provider rather than proxy functions,
+            // because the registry cmdlets talk to a provider: install one and
+            // Set-ItemProperty, New-Item, Get-ChildItem and Get-ItemProperty
+            // all work as written, and each write is recorded where it happens,
+            // with the path resolved. Without it every registry cmdlet fails at
+            // "cannot find drive HKCU" before the sample reveals anything.
+            iss.Providers.Add(new SessionStateProviderEntry(
+                "Registry", typeof(HuskRegistryProvider), helpFileName: null)); // wasm is single-threaded
             // Windows PowerShell 5.1 automatic variables that 7.x dropped.
             // The corpus was generated with Invoke-Obfuscation against 5.1, and
             // (Get-Variable '*MDR*').Name[3,11,2] -join '' - which spells "iex"
@@ -305,6 +361,8 @@ public static partial class Spike
             // method call in PowerShell passes through it.
             HuskHostHook.OnHostCall = (op, native, args) =>
                 HuskHost.RecordFrom("binder", op, native, args);
+            HuskHostHook.OnCmdletCall = (op, native, args) =>
+                HuskHost.RecordFrom("cmdlet", op, native, args);
             HuskHostHook.BlockNetwork = true;
 
             _host = new HuskPSHost();
@@ -314,6 +372,7 @@ public static partial class Spike
             using (var setup = PowerShell.Create())
             {
                 setup.Runspace = _rs;
+                setup.AddScript(CDrive);
                 setup.AddScript(WebProxies);
                 setup.Invoke();
                 if (setup.Streams.Error.Count > 0)
@@ -695,6 +754,29 @@ function New-Object {
         return "{\"output\":" + HuskHost.JsonQuotePublic(output) +
                ",\"error\":" + HuskHost.JsonQuotePublic(error) +
                ",\"layers\":[" + layers + "]}";
+    }
+
+    /// The registry as the sample left it, for the report.
+    ///
+    /// The op timeline says what was attempted; this says what the machine
+    /// would look like afterwards, which is the artefact an analyst compares
+    /// against a known-good image. Only keys carrying values are listed - the
+    /// empty ones are Husk's own scaffolding.
+    [JSExport]
+    internal static string RegistryDump()
+    {
+        var keys = new List<string>();
+        foreach (var key in VirtualRegistry.Populated())
+        {
+            var values = key.Values.Select(v =>
+                HuskHost.JsonQuotePublic(v.Key) + ":" +
+                HuskHost.JsonQuotePublic(v.Value?.ToString() ?? "$null"));
+            keys.Add(
+                "{\"path\":" + HuskHost.JsonQuotePublic(key.Path) +
+                ",\"values\":{" + string.Join(",", values) + "}}");
+        }
+
+        return "[" + string.Join(",", keys) + "]";
     }
 
     [JSExport]

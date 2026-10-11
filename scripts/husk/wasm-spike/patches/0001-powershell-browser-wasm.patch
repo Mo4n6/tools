@@ -250,6 +250,90 @@ index 828bd16..403ba11 100644
      <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" PrivateAssets="all" />
      <!-- This section is to force the version of non-direct dependencies -->
      <PackageReference Include="Microsoft.NETCore.Platforms" Version="1.1.2" />
+diff --git a/src/System.Management.Automation/engine/CommandProcessor.cs b/src/System.Management.Automation/engine/CommandProcessor.cs
+index d9758ce..ec9f774 100644
+--- a/src/System.Management.Automation/engine/CommandProcessor.cs
++++ b/src/System.Management.Automation/engine/CommandProcessor.cs
+@@ -322,6 +322,15 @@ namespace System.Management.Automation
+                             Context.Debugger.CheckCommand(this.Command.MyInvocation);
+                         }
+ 
++                        // Before BeginProcessing, not only in the Read loop
++                        // below: a cmdlet that throws in BeginProcessing never
++                        // reaches ProcessRecord, and Start-Process does exactly
++                        // that in a browser - it builds a System.Diagnostics
++                        // .Process, which is unsupported there. Recording only
++                        // later would lose the single most telling IOC a
++                        // dropper produces.
++                        HuskRecord();
++
+                         Command.DoBeginProcessing();
+                     }
+                 }
+@@ -381,6 +390,8 @@ namespace System.Management.Automation
+ 
+                         this.Command.MyInvocation.PipelineIterationInfo[this.Command.MyInvocation.PipelinePosition]++;
+ 
++                        HuskRecord();
++
+                         Command.DoProcessRecord();
+                     }
+                 }
+diff --git a/src/System.Management.Automation/engine/CommandProcessorBase.cs b/src/System.Management.Automation/engine/CommandProcessorBase.cs
+index ddadf9f..6a8a451 100644
+--- a/src/System.Management.Automation/engine/CommandProcessorBase.cs
++++ b/src/System.Management.Automation/engine/CommandProcessorBase.cs
+@@ -487,6 +487,35 @@ namespace System.Management.Automation
+         /// <exception cref="PipelineStoppedException">
+         /// a terminating error occurred, or the pipeline was otherwise stopped
+         /// </exception>
++        /// <summary>
++        /// wasm port: cmdlet-level host capture.
++        ///
++        /// The binder hook sees calls made *from script*, never a cmdlet's own
++        /// internals, so Set-ItemProperty on a Run key and Out-File dropping a
++        /// payload were both invisible. This is the one place every command
++        /// invocation passes through with its parameters bound. A sample can
++        /// shadow a cmdlet's *name* with a function, but then it is not that
++        /// cmdlet running; it cannot reach around this.
++        ///
++        /// Script cmdlets are skipped: an advanced function arrives here too,
++        /// and Husk's own proxy functions record themselves, so counting them
++        /// here would double every call they make.
++        /// </summary>
++        private string _huskLastRecord;
++
++        internal void HuskRecord()
++        {
++            if (Command is null or PSScriptCmdlet)
++            {
++                return;
++            }
++
++            HuskHostHook.RecordCmdlet(
++                Command.MyInvocation?.MyCommand?.Name,
++                Command.MyInvocation?.BoundParameters,
++                ref _huskLastRecord);
++        }
++
+         internal virtual void DoBegin()
+         {
+             // Note that DoPrepare() and DoBegin() should NOT be combined.
+@@ -534,6 +563,14 @@ namespace System.Management.Automation
+                             Context.Debugger.CheckCommand(Command.MyInvocation);
+                         }
+ 
++                        // Before BeginProcessing, not only per pipeline object:
++                        // a cmdlet that throws here never reaches ProcessRecord,
++                        // and Start-Process does exactly that in a browser - it
++                        // builds a ProcessStartInfo, which is unsupported there.
++                        // Recording only later loses the single most telling IOC
++                        // a dropper produces.
++                        HuskRecord();
++
+                         Command.DoBeginProcessing();
+                     }
+                 }
 diff --git a/src/System.Management.Automation/engine/CoreAdapter.cs b/src/System.Management.Automation/engine/CoreAdapter.cs
 index 55486c6..3e8e7d6 100644
 --- a/src/System.Management.Automation/engine/CoreAdapter.cs
@@ -313,10 +397,10 @@ index 55486c6..3e8e7d6 100644
              {
 diff --git a/src/System.Management.Automation/engine/HuskHostHook.cs b/src/System.Management.Automation/engine/HuskHostHook.cs
 new file mode 100644
-index 0000000..a788bab
+index 0000000..975c678
 --- /dev/null
 +++ b/src/System.Management.Automation/engine/HuskHostHook.cs
-@@ -0,0 +1,209 @@
+@@ -0,0 +1,438 @@
 +// Licensed to the .NET Foundation under one or more agreements.
 +// The .NET Foundation licenses this file to you under the MIT license.
 +//
@@ -331,8 +415,10 @@ index 0000000..a788bab
 +// A bypass should produce a record, not silence. Silence is the failure mode
 +// that makes a sandbox untrustworthy.
 +
++using System.Collections;
 +using System.Collections.Generic;
 +using System.Reflection;
++using System.Text;
 +
 +namespace System.Management.Automation
 +{
@@ -344,6 +430,15 @@ index 0000000..a788bab
 +    {
 +        /// <summary>Called with (op, nativeSignature, renderedArguments).</summary>
 +        public static Action<string, string, string[]> OnHostCall;
++
++        /// <summary>
++        /// The same, for the cmdlet layer. Separate so the analyst can tell
++        /// where a record came from: a binder record means the script reached
++        /// for a .NET method, a cmdlet record means it used the cmdlet. The
++        /// two see different things and have different blind spots, and a
++        /// timeline that blurs them is harder to trust, not easier.
++        /// </summary>
++        public static Action<string, string, string[]> OnCmdletCall;
 +
 +        /// <summary>
 +        /// When true, intercepted calls whose op is in the blocked set return
@@ -476,10 +571,227 @@ index 0000000..a788bab
 +            }
 +        }
 +
++
++        // ---------------------------------------------------------------
++        // Cmdlet-level capture
++        // ---------------------------------------------------------------
++        //
++        // The binder hook sees what the *script* calls. A cmdlet's own
++        // internals are invisible to it, so Set-ItemProperty writing a Run key
++        // and Out-File dropping a payload produced no record at all. This
++        // table closes that, from inside CommandProcessor where every cmdlet
++        // invocation passes with its parameters bound.
++        //
++        // The op is not always decidable from the cmdlet name: the item
++        // cmdlets are provider-generic, so `New-Item` is a file or a registry
++        // key depending on the path. That decision is made per call, from the
++        // path itself.
++
++        /// <summary>Which parameters carry the thing being acted on, in order of preference.</summary>
++        private static readonly string[] s_pathParameters =
++        {
++            "Path", "LiteralPath", "FilePath", "Destination", "NewName",
++            "Uri", "Source", "OutFile", "Name", "InputObject",
++        };
++
++        /// <summary>Cmdlet name -> op, for cmdlets whose family is not in doubt.</summary>
++        private static readonly Dictionary<string, string> s_cmdletOps = new(StringComparer.OrdinalIgnoreCase)
++        {
++            ["Out-File"] = "filesystem.write",
++            ["Set-Content"] = "filesystem.write",
++            ["Add-Content"] = "filesystem.append",
++            ["Get-Content"] = "filesystem.read",
++            ["Clear-Content"] = "filesystem.write",
++            ["Export-Csv"] = "filesystem.write",
++            ["Export-Clixml"] = "filesystem.write",
++            ["Start-Process"] = "process.start",
++            ["Stop-Process"] = "process.kill",
++            ["Get-Process"] = "process.list",
++            ["Wait-Process"] = "process.list",
++            ["Invoke-WebRequest"] = "network.http",
++            ["Invoke-RestMethod"] = "network.http",
++            ["Start-BitsTransfer"] = "network.download",
++            ["New-Service"] = "persistence.service",
++            ["Set-Service"] = "persistence.service",
++            ["Start-Service"] = "persistence.service",
++            ["Register-ScheduledTask"] = "persistence.scheduled-task",
++            ["New-ScheduledTask"] = "persistence.scheduled-task",
++            ["Start-Sleep"] = "timing.sleep",
++            ["Add-Type"] = "assembly.define-type",
++            ["Import-Module"] = "assembly.load",
++            ["Get-WmiObject"] = "wmi.query",
++            ["Get-CimInstance"] = "wmi.query",
++            ["Invoke-WmiMethod"] = "wmi.invoke",
++            ["Invoke-CimMethod"] = "wmi.invoke",
++            ["Register-WmiEvent"] = "wmi.subscribe",
++        };
++
++        /// <summary>
++        /// Cmdlets whose family depends on the provider the path names:
++        /// cmdlet name -> (filesystem op, registry op).
++        /// </summary>
++        private static readonly Dictionary<string, (string File, string Registry)> s_providerCmdletOps =
++            new(StringComparer.OrdinalIgnoreCase)
++            {
++                ["New-Item"] = ("filesystem.write", "registry.write"),
++                ["Set-Item"] = ("filesystem.write", "registry.write"),
++                ["Remove-Item"] = ("filesystem.delete", "registry.delete"),
++                ["Clear-Item"] = ("filesystem.write", "registry.write"),
++                ["Get-Item"] = ("filesystem.read", "registry.read"),
++                ["Set-ItemProperty"] = ("filesystem.write", "registry.write"),
++                ["New-ItemProperty"] = ("filesystem.write", "registry.write"),
++                ["Remove-ItemProperty"] = ("filesystem.delete", "registry.delete"),
++                ["Clear-ItemProperty"] = ("filesystem.write", "registry.write"),
++                ["Get-ItemProperty"] = ("filesystem.read", "registry.read"),
++                ["Get-ItemPropertyValue"] = ("filesystem.read", "registry.read"),
++                ["Get-ChildItem"] = ("filesystem.list", "registry.enumerate"),
++                ["Test-Path"] = ("filesystem.exists", "registry.read"),
++                ["Copy-Item"] = ("filesystem.copy", "registry.write"),
++                ["Move-Item"] = ("filesystem.move", "registry.write"),
++                ["Rename-Item"] = ("filesystem.move", "registry.write"),
++                ["Rename-ItemProperty"] = ("filesystem.write", "registry.write"),
++            };
++
++        /// <summary>
++        /// Every way a sample spells a registry path. The provider-qualified
++        /// and native forms both turn up, because droppers are copied from
++        /// whatever worked.
++        /// </summary>
++        private static bool IsRegistryPath(string path)
++        {
++            if (string.IsNullOrEmpty(path)) { return false; }
++
++            return path.StartsWith("HK", StringComparison.OrdinalIgnoreCase)
++                || path.StartsWith("Registry::", StringComparison.OrdinalIgnoreCase)
++                || path.IndexOf("Microsoft.PowerShell.Core\\Registry::", StringComparison.OrdinalIgnoreCase) >= 0;
++        }
++
++        /// <summary>
++        /// Records one cmdlet invocation. Called for every cmdlet in every
++        /// pipeline, so it rejects on a dictionary lookup and never throws.
++        /// </summary>
++        /// <param name="lastSignature">
++        /// What this invocation recorded last. The caller holds it per command,
++        /// because the hook fires both before BeginProcessing - which is the
++        /// only chance for a cmdlet that throws there, such as Start-Process
++        /// in a browser - and once per pipeline object, where a parameter bound
++        /// from the pipeline may have changed the path. Comparing against it
++        /// records each distinct call once and a repeated one not at all.
++        /// </param>
++        public static void RecordCmdlet(string cmdletName, IDictionary boundParameters, ref string lastSignature)
++        {
++            Action<string, string, string[]> sink = OnCmdletCall;
++            if (sink is null || string.IsNullOrEmpty(cmdletName))
++            {
++                return;
++            }
++
++            try
++            {
++                string op = null;
++                if (s_providerCmdletOps.TryGetValue(cmdletName, out var byProvider))
++                {
++                    string path = FirstPath(boundParameters);
++                    op = IsRegistryPath(path) ? byProvider.Registry : byProvider.File;
++                }
++                else if (!s_cmdletOps.TryGetValue(cmdletName, out op))
++                {
++                    return;
++                }
++
++                string[] rendered = RenderParameters(boundParameters);
++                string signature = op + "|" + string.Join("\u001f", rendered);
++                if (string.Equals(signature, lastSignature, StringComparison.Ordinal))
++                {
++                    return;
++                }
++
++                lastSignature = signature;
++                sink(op, cmdletName, rendered);
++            }
++            catch (Exception)
++            {
++                // Best effort; never take a pipeline down over a log line.
++            }
++        }
++
++        private static string FirstPath(IDictionary boundParameters)
++        {
++            if (boundParameters is null) { return null; }
++
++            foreach (string name in s_pathParameters)
++            {
++                if (boundParameters.Contains(name))
++                {
++                    return Render(boundParameters[name]);
++                }
++            }
++
++            return null;
++        }
++
++        /// <summary>
++        /// The bound parameters as name=value, so the analyst sees the call as
++        /// the sample wrote it rather than as a normalised op alone.
++        /// </summary>
++        private static string[] RenderParameters(IDictionary boundParameters)
++        {
++            if (boundParameters is null) { return Array.Empty<string>(); }
++
++            var rendered = new List<string>(boundParameters.Count);
++            foreach (DictionaryEntry entry in boundParameters)
++            {
++                rendered.Add($"{entry.Key}={Render(entry.Value)}");
++            }
++
++            return rendered.ToArray();
++        }
++
++        private static string Render(object value)
++        {
++            switch (value)
++            {
++                case null:
++                    return "$null";
++                case string str:
++                    return str;
++                case byte[] bytes:
++                    return $"<byte[{bytes.Length}]>";
++                case PSObject wrapped:
++                    return Render(wrapped.BaseObject);
++                case IEnumerable items when value is not string:
++                    var sb = new StringBuilder();
++                    foreach (object item in items)
++                    {
++                        if (sb.Length > 0) { sb.Append(','); }
++                        if (sb.Length > 240) { sb.Append('…'); break; }
++                        sb.Append(item is null ? "$null" : item.ToString());
++                    }
++
++                    return sb.ToString();
++                default:
++                    return value.ToString();
++            }
++        }
++
 +        /// <summary>True when an op should be refused rather than run.</summary>
++        ///
++        /// Two different reasons, deliberately collapsed into one answer.
++        /// Network is a *policy* choice the analyst makes. Registry and process
++        /// are not a choice: Microsoft.Win32.Registry and
++        /// System.Diagnostics.Process both throw
++        /// PlatformNotSupportedException in a browser, so running them aborts
++        /// the sample at the exact moment it reveals its persistence or its
++        /// child process. Refusing after recording keeps the run alive, which
++        /// is the whole point of a sandbox that captures rather than performs.
 +        public static bool IsBlocked(string op)
-+            => BlockNetwork && op is not null
-+               && op.StartsWith("network.", StringComparison.Ordinal);
++        {
++            if (op is null) { return false; }
++
++            return (BlockNetwork && op.StartsWith("network.", StringComparison.Ordinal))
++                || op.StartsWith("registry.", StringComparison.Ordinal)
++                || op.StartsWith("process.", StringComparison.Ordinal);
++        }
 +
 +        /// <summary>Classification, for the binder.</summary>
 +        public static bool TryClassify(MethodBase method, out string op) => Classify(method, out op);
@@ -519,10 +831,11 @@ index 0000000..a788bab
 +            }
 +
 +            // Filesystem calls run for real - into the in-memory filesystem,
-+            // which is how dropped payloads become extractable. Network calls
-+            // are refused here rather than at the fetch boundary, so the
-+            // sample sees a null instead of an exception and keeps going.
-+            return BlockNetwork && op.StartsWith("network.", StringComparison.Ordinal);
++            // which is how dropped payloads become extractable. Everything
++            // IsBlocked covers is refused here rather than deeper down, so the
++            // sample sees a default value instead of an exception and keeps
++            // going.
++            return IsBlocked(op);
 +        }
 +    }
 +}

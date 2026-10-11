@@ -350,6 +350,14 @@ what a payload decodes to. Together they took single-transform recovery from
     `Write-Host`, not as a command name with two invisible ESCs in it.
     **29 fixtures.**
 
+One is the fourth capture layer:
+
+14. **`engine/CommandProcessorBase.cs` + `engine/CommandProcessor.cs` —
+    cmdlet-level capture.** A `HuskRecord()` call before `BeginProcessing` and
+    once per pipeline object, feeding a cmdlet table in `HuskHostHook`. See
+    "Cmdlet-level capture" below for why the other three layers could not do
+    this.
+
 ## Measured, with all patches applied
 
 |                   |                  |
@@ -673,19 +681,141 @@ survived even though telemetry did not.
 
 ### What this leaves open
 
-- **Registry and process from cmdlet internals.** `Set-ItemProperty HKCU:\…`
-  would be invisible the same way. Needs a provider-level hook, or proxies
-  covering those cmdlets specifically, or a managed fake registry.
 - **`New-Object` must stay proxied.** It cannot be caught at the binder, so
   the proxy is load-bearing rather than merely convenient, and its deletion is
   a real gap rather than a theoretical one.
 - The safety story is unchanged: nothing escaped in any variant.
+
+## Cmdlet-level capture — the fourth layer
+
+The binder hook sees what _script_ calls. A cmdlet's own internals are
+invisible to it, which was not a detail: `Set-ItemProperty` writing a Run key
+and `Out-File` dropping a payload produced **no record at all**, measured with
+`scripts/husk/wasm-spike/capture-probe.mjs`. Those are two of the three things
+an analyst most wants.
+
+`HuskHostHook.RecordCmdlet` closes it, called from `CommandProcessorBase` —
+the one place every command invocation passes through with its parameters
+bound. Two call sites, for two reasons:
+
+- **Before `BeginProcessing`**, because a cmdlet that throws there never
+  reaches `ProcessRecord`, and `Start-Process` does exactly that in a browser:
+  it builds a `ProcessStartInfo`, which is unsupported. Recording only later
+  lost the single most telling IOC a dropper produces.
+- **Once per pipeline object**, because a path bound from the pipeline is not
+  known before the loop. `'a','b' | Set-Content` records two writes, not one.
+
+A signature comparison per invocation keeps a repeated call from recording
+twice. Script cmdlets are skipped: an advanced function arrives here too, and
+Husk's own proxy functions record themselves.
+
+The table is in two halves, because the op is not always decidable from the
+cmdlet name. `Out-File` is always a file write; `New-Item` is a file or a
+registry key depending on the path, so the provider-generic cmdlets are
+classified per call from the path itself.
+
+**A sample cannot reach around this.** It can shadow a cmdlet's _name_ with a
+function, but then it is not that cmdlet running.
+
+### Sources are labelled, and deliberately not deduplicated
+
+`OnCmdletCall` is a separate sink from `OnHostCall`, so a record says where it
+came from: `binder` means the script reached for a .NET method, `cmdlet` means
+it used the cmdlet, `provider` means the write actually happened, `proxy` means
+a Husk function answered. A registry write through `Set-ItemProperty` therefore
+produces two records — the cmdlet's _intent_, with the parameters as written,
+and the provider's _effect_, with the path resolved and the value as stored.
+
+Those differ whenever the path is computed, which is most of the time in
+obfuscated code, so collapsing them in the engine would throw away evidence.
+The reporting layer collapses them for display; the capture layer does not.
+
+## The virtual registry — a provider, not proxies
+
+`Set-ItemProperty HKCU:\…\Run` used to fail at **"cannot find drive HKCU"**:
+there is no registry in a browser at all, and `Microsoft.Win32.Registry` throws
+`PlatformNotSupportedException` on wasm. Every persistence attempt aborted the
+sample at the exact moment it revealed itself.
+
+`scripts/husk/wasm-spike/HuskRegistry.cs` is an in-memory registry behind a
+real PowerShell provider, named `Registry` so that both `HKCU:\…` and
+`Registry::HKEY_CURRENT_USER\…` resolve the way a sample expects. Five drives
+(HKCU, HKLM, HKCR, HKU, HKCC), hive abbreviations accepted in paths as well as
+drive names, `IPropertyCmdletProvider` and `IDynamicPropertyCmdletProvider` so
+the whole `*-ItemProperty` family works.
+
+A provider rather than proxy functions, for three reasons that all matter:
+
+1. The registry cmdlets _talk to a provider_. Install one and they work as
+   written — no per-cmdlet proxy to write, and new cmdlets inherit it.
+2. The record is taken where the write happens, with the path resolved and the
+   value as stored, rather than from the arguments as the sample spelled them.
+3. A sample can delete a proxy function. It cannot delete a provider.
+
+The path methods (`MakePath`, `GetParentPath`, `GetChildName`) are overridden
+rather than inherited: the base implementations join with the platform
+separator, which is `/` here, and a registry path with forward slashes in it
+matches nothing a sample writes.
+
+Seeded with the persistence locations pre-created (so an enumeration succeeds
+rather than erroring), and with plausible values under
+`Windows NT\CurrentVersion`, `Shell Folders` and `Windows Defender` — the keys
+samples read to decide whether to run. Same rule as the environment block:
+plausible defaults, not real ones.
+
+`RegistryDump()` returns the registry as the sample left it. The op timeline
+says what was attempted; the dump says what the machine would look like
+afterwards, which is the artefact an analyst compares against a known-good
+image.
+
+### Measured
+
+`capture-probe.mjs` against `probes/host-calls.ps1`, every line recorded:
+
+| what the sample does                        | recorded as             | layer             |
+| ------------------------------------------- | ----------------------- | ----------------- |
+| `[IO.File]::WriteAllText`                   | `filesystem.write`      | binder            |
+| `Out-File` / `Set-Content` / `New-Item`     | `filesystem.write`      | cmdlet            |
+| `'a','b' \| Set-Content`                    | two `filesystem.write`  | cmdlet            |
+| `Get-ChildItem C:\…`                        | `filesystem.list`       | cmdlet            |
+| `Set-ItemProperty HKCU:\…\Run`              | `registry.write` ×2     | cmdlet + provider |
+| `New-Item HKCU:\…`                          | `registry.write` ×2     | cmdlet + provider |
+| `Get-ChildItem HKCU:\…`                     | `registry.enumerate` ×2 | cmdlet + provider |
+| `[Microsoft.Win32.Registry]::SetValue`      | `registry.write`        | binder            |
+| `Start-Process`                             | `process.start`         | cmdlet            |
+| `[Diagnostics.Process]::Start`              | `process.start`         | binder            |
+| `(New-Object Net.WebClient).DownloadString` | `network.http`          | proxy             |
+| `Invoke-WebRequest`                         | `network.http`          | proxy             |
+
+Registry and process calls are now **recorded and then refused** rather than
+run: `HuskHostHook.IsBlocked` covers `registry.*` and `process.*` alongside
+`network.*`. Those two are not a policy choice the way network is — the real
+APIs throw in a browser — so refusing after recording is what keeps the sample
+alive past the reveal. Verified: `Start-Process "calc.exe"; "after"` prints
+`after`.
+
+Also fixed here: a `C:` drive. Without one, `Out-File C:\Users\Public\x.txt`
+failed with "could not find a part of the path /C/Users/Public/x.txt" — the
+Unix FileSystemProvider has one root, so a Windows path becomes a relative one
+and the directories do not exist. Every filesystem cmdlet a dropper uses died
+there, _before dropping anything_. There is now a Windows-shaped tree behind a
+real `New-PSDrive`, with the directories samples actually write to.
+
+And `HuskHost.Drain` now really drains. It did not, so every run in a batch
+inherited the previous one's IOCs — a report belongs to one sample.
 
 ## Remaining work, in order
 
 Each item says why it matters, what "done" looks like, and what is already
 known about it. Anything marked **blocking** gates a decision rather than a
 feature.
+
+### 0. Proxy the filesystem and registry cmdlets — DONE, differently
+
+The entry asked for proxy functions. Cmdlet-level capture plus a registry
+provider covers the same ground without them, and without the bypass a proxy
+carries: a sample can delete a function, not a provider or the command
+processor. See the two sections above.
 
 ### 1. Commands.Management — DONE
 
@@ -712,22 +842,24 @@ consistent.
 
 </details>
 
-### 2. Registry and process classification — **blocking**
+### 2. Registry and process classification — DONE
 
-**Why:** `HuskHostHook`'s table covers `System.Net.*`, `System.IO.*`,
-`Microsoft.Win32.Registry*`, `Reflection.Assembly` and `Diagnostics.Process`.
-The registry branch is written but **untested** — no registry type exists on
-wasm to exercise it. `Start-Process` has nothing behind it.
+Done: Run-key persistence and `Start-Process` both produce the right op with
+the command line, from three layers rather than one, and the virtual registry
+means they _succeed_ instead of aborting the sample. See "Cmdlet-level
+capture" and "The virtual registry" above, and the table measured there.
 
-**Done when:** a sample doing Run-key persistence and `Start-Process` produces
-`registry.write` and `process.start` with the command line, from the binder
-rather than from a proxy.
+What is still open from this item:
 
-**Known:** the binder hook cannot see cmdlet internals at all (see the
-Commands.Management section above), so `Set-ItemProperty` needs a proxy or a
-provider-level hook rather than binder classification. On wasm
-`Microsoft.Win32.Registry` likely throws before the binder hook sees a method. May need a managed fake registry type the binder can
-resolve against, which is the `husk-sandbox-spec.md` virtual-registry design.
+- **`Copy-Item` / `Move-Item` / `Rename-Item` on a registry path.** Classified
+  (`registry.write`) but not implemented in the provider; the base class
+  throws. Rare in samples, so it is listed rather than built.
+- **Value types.** The provider stores whatever it is handed. A sample that
+  writes a `REG_BINARY` and reads back expecting a `byte[]` gets the object it
+  wrote, which is right by accident rather than by design. `RegistryValueKind`
+  is not modelled.
+- **No registry ACLs, no `Get-Acl`.** A sample that checks whether it can
+  write to `HKLM` gets no answer.
 
 ### 3. Corpus measurement — DONE, and the fork is worth carrying
 
