@@ -2,8 +2,9 @@
 
 **Status:** **real PowerShell executes in a browser.** `2+2` returns `4`,
 `[array]::Reverse` round-trips, the `-f` operator works. It took five small
-patches to PowerShell (52 insertions across 7 files) and `WasmEnableThreads`,
-which costs cross-origin isolation headers and therefore static hosting.
+patches to PowerShell (52 insertions across 7 files), and it runs on **ordinary
+static hosting** — no cross-origin isolation headers needed. `file://` does not
+work, for an unrelated loader reason.
 
 Cmdlets are not loaded yet, so `Invoke-Expression` is still missing. That is
 the next piece of work, not a blocker found.
@@ -177,39 +178,64 @@ correct *if* Husk ever moves behind a server that sets COOP/COEP.
 4. **Keep a patch series**, not a mutated checkout, so it can be rebased onto
    a newer PowerShell.
 
-## Threading: the gate, and how it opens
+## Threading: not a gate after all
 
-Single-threaded wasm cannot run PowerShell. Probed before patching anything:
+**Corrected 2026-10-11.** An earlier entry here concluded that threading ended
+this approach and cost static hosting. That was wrong, and the mistake is worth
+keeping because it was a reasoning error rather than a measurement error.
+
+The probe was real:
 
 ```
 Thread.Start     = PlatformNotSupportedException
-Task.Run + Wait  = timeout            <- fatal
+Task.Run + Wait  = timeout
 ```
 
-`PowerShell.Invoke()` blocks the caller while the pipeline completes, and
-`Runspace.Open()` uses wait handles the same way, so every one of those
-deadlocks when the continuation is queued to the blocking thread.
+`Task.Run(...).Wait()` genuinely deadlocks single-threaded — the continuation
+is queued to the thread that is blocking. The error was generalising from that
+synthetic probe to PowerShell, on the reasoning that `PowerShell.Invoke()` is
+"exactly that pattern". **It is not, with `PSThreadOptions.UseCurrentThread`:**
+the pipeline runs inline on the calling thread and never queues work it then
+waits for. I should have tested PowerShell rather than a proxy for it.
 
-**`<WasmEnableThreads>true</WasmEnableThreads>` fixes it**, provided the page
-is cross-origin isolated:
-
-```
-crossOriginIsolated = true | SharedArrayBuffer = function
-Thread.Start     = OK
-Task.Run + Wait  = OK
-```
-
-The server must send all three:
+With all patches applied, `WasmEnableThreads=false`, and **no isolation
+headers of any kind**:
 
 ```
-Cross-Origin-Opener-Policy:   same-origin
-Cross-Origin-Embedder-Policy: require-corp
-Cross-Origin-Resource-Policy: same-origin
+crossOriginIsolated = false     SharedArrayBuffer = undefined
+init          (627ms) => OK
+arithmetic    (149ms) => 4
+concat        ( 14ms) => abcd
+reverse       ( 91ms) => string
+-f operator   ( 10ms) => IEX
+b64 decode    ( 62ms) => hello stage 2
+type+method   ( 18ms) => eA==
 ```
 
-**This is the cost of the engine route.** GitHub Pages cannot send those
-headers — already documented in the README for Glass — and a `file://` copy
-certainly cannot. Husk would have to be served from something that can.
+So **ordinary static hosting works**. No COOP/COEP, no `SharedArrayBuffer`, no
+service-worker header shim. GitHub Pages serves this as-is.
+
+Threads still work if enabled, and still require all three headers
+(`Cross-Origin-Opener-Policy: same-origin`,
+`Cross-Origin-Embedder-Policy: require-corp`,
+`Cross-Origin-Resource-Policy: same-origin`). Keep them off unless something
+later actually needs them, since they cost the hosting freedom for nothing.
+
+### `file://` does not work, for an unrelated reason
+
+```
+file:// loader ready = false
+[console] Access to script at 'file:///...' ... net::ERR_FAILED
+```
+
+Chrome blocks ES module scripts loaded from `file://` origins. That is a
+loader/CORS constraint affecting any .NET wasm app, not a threading or
+PowerShell issue, and no patch here changes it. The engine bundle is 183 files
+and 12 MB gzipped, so it was never going to be a Dead-Letter-style single
+downloadable file regardless.
+
+If a disk-runnable copy ever matters, that is the existing tree-walker's
+property to keep, not this one's to gain.
 
 ## Building SMA for browser-wasm
 

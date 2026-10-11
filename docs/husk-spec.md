@@ -116,7 +116,7 @@ assumptions as they surface, cross-compile or stub `libpsl-native` for wasm,
 and carry that fork forward against upstream. Days to weeks, and a maintenance
 commitment afterwards — not an afternoon of MSBuild.
 
-### And then threading ended it
+### Threading looked fatal and was not
 
 Probed in the browser before any source patching, because it was the cheapest
 thing that could invalidate the rest:
@@ -132,16 +132,22 @@ pattern, and `Runspace.Open()` uses wait handles the same way. Running SMA
 single-threaded means making it async throughout, which is a rewrite of its
 core rather than a fork patch.
 
-Multi-threaded wasm exists, needs `SharedArrayBuffer`, needs COOP/COEP headers,
-which **GitHub Pages cannot send** — already documented in the README for
-Glass — and which a `file://` copy on an analyst's disk certainly cannot. The
-engine route therefore costs static hosting, which is load-bearing for this
-project, on top of a PowerShell fork and experimental threading.
+That conclusion was wrong. `PowerShell.Invoke()` is only that pattern when the
+pipeline runs on another thread; with `PSThreadOptions.UseCurrentThread` it
+runs inline and never waits on queued work. Generalising from a synthetic
+probe to PowerShell's behaviour, instead of testing PowerShell, cost a reversed
+conclusion.
 
-The decision in this section stands, now on measurement rather than on
-estimate, and it is no longer only about cost: the default deployment model
-cannot host a real engine at all. Full detail in
-[`husk-wasm-port-log.md`](husk-wasm-port-log.md).
+**With the patches applied, real PowerShell runs single-threaded on ordinary
+static hosting** — no COOP/COEP, no `SharedArrayBuffer`. `2+2` returns `4`,
+`[array]::Reverse` round-trips, `[Convert]::FromBase64String` decodes.
+`file://` does not work, but for an unrelated reason: Chrome blocks ES module
+scripts from `file://` origins, which affects any .NET wasm app.
+
+So the engine is real and hostable. What it costs is a maintained PowerShell
+fork, a 12 MB gzipped payload, and the loss of the disk-runnable copy — not,
+as recorded here earlier, the hosting model itself. Full detail and the patch
+series in [`husk-wasm-port-log.md`](husk-wasm-port-log.md).
 
 **Revisited.** Once the objective grew to capturing host calls rather than only
 deobfuscating, reason 3 became decisive rather than merely persuasive: a real
