@@ -15,6 +15,30 @@
         "scripts/port-char-traits.mjs",
         "scripts/port-tokens.mjs"
       ]
+    },
+    {
+      "id": "powershell:wasm-fork",
+      "packageOrModelName": "PowerShell (System.Management.Automation and the Commands assemblies)",
+      "versionOrHash": "v7.4.6 (8193054)",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/PowerShell/PowerShell",
+      "attributionText": "Husk's engine build is a patched build of PowerShell (MIT), Copyright (c) Microsoft Corporation. The patch series is scripts/husk/wasm-spike/patches/0001-powershell-browser-wasm.patch, applied to tag v7.4.6. The built assemblies are derivative works of MIT-licensed code and carry the MIT notice.",
+      "patchedFiles": [
+        "src/System.Management.Automation/CoreCLR/CorePsAssemblyLoadContext.cs",
+        "src/System.Management.Automation/CoreCLR/CorePsPlatform.cs",
+        "src/System.Management.Automation/engine/CommandProcessor.cs",
+        "src/System.Management.Automation/engine/CommandProcessorBase.cs",
+        "src/System.Management.Automation/engine/CoreAdapter.cs",
+        "src/System.Management.Automation/engine/HuskHostHook.cs",
+        "src/System.Management.Automation/engine/SessionState.cs",
+        "src/System.Management.Automation/engine/Utils.cs",
+        "src/System.Management.Automation/engine/parser/tokenizer.cs",
+        "src/System.Management.Automation/engine/runtime/Binding/Binders.cs",
+        "src/System.Management.Automation/namespaces/EnvironmentProvider.cs",
+        "src/System.Management.Automation/utils/PsUtils.cs",
+        "src/System.Management.Automation/utils/tracing/SysLogProvider.cs"
+      ],
+      "buildRecipe": "docs/husk-wasm-port-log.md"
     }
   ]
 }
