@@ -110,8 +110,18 @@ public static partial class Spike
             // compile-time identity would have to match the runtime one
             // exactly, and pinning both across two builds is more fragile
             // than just asking the runtime for it.
-            var utility = Assembly.Load("Microsoft.PowerShell.Commands.Utility");
-            _cmdletCount = RegisterCmdlets(iss, utility); // wasm is single-threaded
+            // Each is optional: a build that ships only Utility should still
+            // start, with fewer cmdlets, rather than failing to initialise.
+            foreach (var name in new[]
+            {
+                "Microsoft.PowerShell.Commands.Utility",
+                "Microsoft.PowerShell.Commands.Management",
+                "Microsoft.PowerShell.Security",
+            })
+            {
+                try { _cmdletCount += RegisterCmdlets(iss, Assembly.Load(name)); }
+                catch (Exception) { /* not in this bundle; carry on */ }
+            } // wasm is single-threaded
             // The binder chokepoint. Proxy functions are telemetry; this is
             // the thing a sample cannot route around, because every .NET
             // method call in PowerShell passes through it.

@@ -574,6 +574,59 @@ payload into the in-memory filesystem is how the analyst extracts it
 afterwards. Network is refused at the binder, so the sample sees a null rather
 than an exception.
 
+## Commands.Management — built, and it corrected the layer model
+
+Built first try with the same recipe, and it brings
+`Microsoft.PowerShell.Security` with it. **173 cmdlets registered, 220 live.**
+
+With `Remove-Item` available, the bypass that was previously untestable can be
+run for real:
+
+```
+Remove-Item function:New-Object -Force
+"proxies removed: $(-not (Test-Path function:New-Object))"   => True
+New-Object Net.WebClient                                     => real cmdlet, ctor threw
+Set-Content -Path /tmp/dropped-by-cmdlet.txt -Value '…'      => file written
+New-Item -Path /tmp/newitem.txt -ItemType File               => file written
+
+captured host calls : 0
+dropped files       : both, captured
+real server hits    : 0
+```
+
+### The correction
+
+I described the binder hook as seeing "every .NET method call". It does not.
+**The DLR binder only sees calls made from script.** Cmdlets are compiled C#
+that call .NET directly, so `Set-Content`'s write never passes through
+`PSInvokeMemberBinder`. Neither does `New-Object`, which uses
+`Activator.CreateInstance` — which is why the WebClient constructor threw
+instead of being intercepted and blocked.
+
+So the layers divide by *origin of the call*, not by bypassability alone:
+
+| Layer | Sees | Blind to |
+|---|---|---|
+| Proxy functions | cmdlet invocations, rich arguments | anything that deletes or avoids them |
+| Binder hook | .NET calls **made from script** | cmdlet internals, `New-Object` |
+| `fetch` boundary | HTTP from anywhere | non-HTTP |
+| **Filesystem diff** | **file writes from anywhere** | nothing, for files |
+
+The filesystem diff turns out to be the most robust of the four: it is
+origin-independent by construction, which is why `Set-Content` and `New-Item`
+showed up as dropped files despite producing no host-call record. Evidence
+survived even though telemetry did not.
+
+### What this leaves open
+
+- **Registry and process from cmdlet internals.** `Set-ItemProperty HKCU:\…`
+  would be invisible the same way. Needs a provider-level hook, or proxies
+  covering those cmdlets specifically, or a managed fake registry.
+- **`New-Object` must stay proxied.** It cannot be caught at the binder, so
+  the proxy is load-bearing rather than merely convenient, and its deletion is
+  a real gap rather than a theoretical one.
+- The safety story is unchanged: nothing escaped in any variant.
+
 ## Remaining work, in order
 
 Each item says why it matters, what "done" looks like, and what is already
@@ -608,8 +661,10 @@ wasm to exercise it. `Start-Process` has nothing behind it.
 `registry.write` and `process.start` with the command line, from the binder
 rather than from a proxy.
 
-**Known:** on wasm `Microsoft.Win32.Registry` likely throws before the binder
-hook sees a method. May need a managed fake registry type the binder can
+**Known:** the binder hook cannot see cmdlet internals at all (see the
+Commands.Management section above), so `Set-ItemProperty` needs a proxy or a
+provider-level hook rather than binder classification. On wasm
+`Microsoft.Win32.Registry` likely throws before the binder hook sees a method. May need a managed fake registry type the binder can
 resolve against, which is the `husk-sandbox-spec.md` virtual-registry design.
 
 ### 3. Corpus measurement — **blocking the whole decision**
