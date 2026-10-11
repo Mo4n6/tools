@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <OutputType>Exe</OutputType>
+    <WasmMainJSPath>main.js</WasmMainJSPath>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- SMA is reflection-heavy; trimming it is the documented hazard. -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Plain .dll instead of webcil, so an assembly can be injected by hand. -->
+    <WasmEnableWebcil>false</WasmEnableWebcil>
+    <EventSourceSupport>false</EventSourceSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Management.Automation" Version="7.4.6" ExcludeAssets="runtime" />
+    <!-- browser-wasm has no runtime asset in the package; the unix build is
+         pure managed IL, so try loading that one directly. -->
+    <Reference Include="System.Management.Automation">
+      <HintPath>SMA-unix.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <!-- The wasm SDK builds its assembly list from runtime-pack + package
+       runtime assets. A bare <Reference> never reaches it, so name the
+       assembly explicitly for bundling. -->
+</Project>
