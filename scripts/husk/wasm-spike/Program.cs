@@ -4,6 +4,9 @@ using System.Linq;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Reflection;
+using System.Collections.Generic;
+using System.Security.Cryptography;
+using System.Text;
 using System.Runtime.InteropServices.JavaScript;
 
 public static partial class Spike
@@ -150,6 +153,103 @@ public static partial class Spike
             return $"registered={_cmdletCount} live={live}";
         }
         catch (Exception ex) { return Describe(ex); }
+    }
+
+
+    // ---- Dropped-file capture -------------------------------------------
+    //
+    // Every file write a sample performs - [IO.File]::WriteAllText, Out-File,
+    // Set-Content, a .NET FileStream - lands in the wasm in-memory
+    // filesystem. Nothing reaches the host, and nothing in PowerShell can
+    // route around it, because the boundary is below .NET rather than beside
+    // it. So the capture is a diff: snapshot before, walk after.
+
+    private static HashSet<string> _baseline = new();
+
+    /// Paths that exist before the sample runs, so they are not "dropped".
+    [JSExport]
+    internal static int SnapshotFs()
+    {
+        _baseline = new HashSet<string>(WalkAll(), StringComparer.Ordinal);
+        return _baseline.Count;
+    }
+
+    private static IEnumerable<string> WalkAll()
+    {
+        // The whole virtual root. Assemblies arrive over HTTP and are not on
+        // this filesystem, so there is very little here to begin with.
+        foreach (var path in SafeEnumerate("/"))
+        {
+            yield return path;
+        }
+    }
+
+    private static IEnumerable<string> SafeEnumerate(string root)
+    {
+        List<string> found = new();
+        try
+        {
+            found.AddRange(Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories));
+        }
+        catch (Exception)
+        {
+            // A browser filesystem can refuse a subtree; a partial walk is
+            // still worth reporting, and never aborting is commitment 2.
+        }
+
+        return found;
+    }
+
+    /// Files the sample created or modified, newest first, as JSON.
+    [JSExport]
+    internal static string DroppedFiles()
+    {
+        var rows = new List<string>();
+        foreach (var path in WalkAll())
+        {
+            if (_baseline.Contains(path)) { continue; }
+
+            long size = 0;
+            string sha = "";
+            string head = "";
+            try
+            {
+                var bytes = File.ReadAllBytes(path);
+                size = bytes.LongLength;
+                sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+                // First bytes as hex, so a PE header or script magic is
+                // visible in the listing without downloading anything.
+                head = Convert.ToHexString(bytes.AsSpan(0, Math.Min(16, bytes.Length)))
+                    .ToLowerInvariant();
+            }
+            catch (Exception ex) { sha = "unreadable: " + ex.GetType().Name; }
+
+            rows.Add($"{{\"path\":{Quote(path)},\"size\":{size}," +
+                     $"\"sha256\":{Quote(sha)},\"head\":{Quote(head)}}}");
+        }
+
+        return "[" + string.Join(",", rows) + "]";
+    }
+
+    /// The bytes of one dropped file, for the analyst to save.
+    [JSExport]
+    internal static byte[] ReadDropped(string path)
+    {
+        try { return File.ReadAllBytes(path); }
+        catch (Exception) { return Array.Empty<byte>(); }
+    }
+
+    private static string Quote(string value)
+    {
+        var sb = new StringBuilder("\"");
+        foreach (var c in value)
+        {
+            if (c == '"' || c == '\\') { sb.Append('\\').Append(c); }
+            else if (c < ' ') { sb.Append("\\u").Append(((int)c).ToString("x4")); }
+            else { sb.Append(c); }
+        }
+
+        return sb.Append('"').ToString();
     }
 
     private static string Describe(Exception ex)

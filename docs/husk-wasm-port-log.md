@@ -382,16 +382,72 @@ ConvertTo-Json (113ms) => {"a":1}
 obfuscated invocation resolving. The engine does what the tree-walker was built
 to approximate.
 
+## Host capture: what is faked so far
+
+### The boundary
+
+Proxy cmdlets alone would be bypassable — `[IO.File]::WriteAllText` walks past
+a proxied `Out-File`. But **the wasm boundary sits below .NET**: every file
+write lands in the in-memory filesystem, and every HTTP call goes out through
+the JS `fetch` that .NET's browser stack binds at startup. Nothing in
+PowerShell can route around either. That is the chokepoint the tree-walker had
+by construction, recovered here by other means.
+
+`fetch` must be replaced **before `dotnet.create()`**, and runtime assets
+(`/_framework/`, `.dll`, `.wasm`, `.dat`) must pass through untouched or
+nothing boots.
+
+### Dropped files — working
+
+Capture is a diff: `SnapshotFs()` before the sample, walk after. Each dropped
+file reports path, size, SHA-256 and the first 16 bytes as hex, so a PE header
+is visible in the listing without downloading anything.
+
+```
+/tmp/payload.exe   8B  sha256=2e383fddf78d1acc…  head=4d5a900003000000
+/tmp/note.txt     13B  sha256=2e700932698edaa8…  head=64726f70706572206e6f74650a
+```
+
+`4d5a` is `MZ`. Both were produced by a sample doing
+`[IO.File]::WriteAllBytes` and `Out-File`.
+
+`saveDropped(path)` hands one to the analyst as `<name>.malware` — suffix
+appended rather than replacing the extension, so `payload.exe.malware` keeps
+the original name readable in a ticket while being undoubleclickable.
+
+### Network — blocked and recorded, but not yet from the cmdlets
+
+Verified: a JS `fetch` returns `523 Husk: network blocked` with
+`X-Husk-Blocked: 1`, `HttpClient`'s request was **recorded and blocked**, and
+the real server saw **0 hits**.
+
+```
+JS fetch           => 523, blocked header present
+HttpClient         => recorded at the boundary, blocked, then threw
+WebClient          => MethodInvocationException (unsupported on wasm)
+Invoke-WebRequest  => PlatformNotSupportedException, NOT recorded
+real server hits   => 0
+```
+
+**The gap that matters:** PowerShell's web cmdlets use sync-over-async
+internally, which is unsupported single-threaded, so they throw *before*
+reaching the boundary. Safety is intact — nothing escapes — but the C2 URL is
+lost, and that is usually the one indicator the analyst came for. A sample
+doing `DownloadString('http://c2/')` currently produces an exception rather
+than an IOC.
+
+That is the dishonest-failure mode `husk-spec.md` §1 warns about, arriving
+from the other direction.
+
 ## Next
 
-- **Measure against the corpus.** 244 single-transform and 864 layered fixtures
-  already exist with ground truth. That is the number that decides whether this
-  replaces the tree-walker: it should be near 100% where the tree-walker is
-  ~80%/~50%.
-- **Host capture.** Nothing is faked yet. A real engine executing real malware
-  with no fakes is a liability, not a tool — `Invoke-WebRequest` currently has
-  whatever the browser gives it. The virtual host in `husk-sandbox-spec.md` is
-  what makes this safe, and it is now the critical path rather than a nicety.
-- **Commands.Management** for the filesystem/registry cmdlet surface.
-- **Trimming.** 196 assemblies and 12 MB gzipped is a lot; most of Roslyn and
-  Markdig is dead weight for deobfuscation.
+- **Proxy the web surface.** Register proxy functions for `Invoke-WebRequest`,
+  `Invoke-RestMethod` and the `Net.WebClient` methods that record the URL and
+  return a typed absence instead of throwing. Two layers is the right shape
+  anyway: proxies for telemetry quality (URL, method, headers), the `fetch`
+  boundary underneath as the unbypassable safety net.
+- **Process capture.** `Start-Process` has nothing behind it yet.
+- **Registry.** Same.
+- **Corpus measurement** against the 244 + 864 fixtures.
+- **Trimming.** 196 assemblies, 12 MB gzipped, most of Roslyn and Markdig dead
+  weight for deobfuscation.
