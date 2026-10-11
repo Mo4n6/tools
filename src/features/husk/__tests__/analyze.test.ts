@@ -110,6 +110,23 @@ describe('the result is self-describing', () => {
   });
 });
 
+describe('the launcher is reported as its own kind of evidence', () => {
+  it('names the switches a dropper used, which the script itself does not', async () => {
+    const result = await analyze('powershell.exe -nop -w hidden -ep bypass -c "Write-Host hi"');
+
+    expect(result.launcher?.isLauncher).toBe(true);
+    expect(result.launcher?.switches.map((entry) => entry.canonical)).toContain('WindowStyle');
+    expect(result.launcherSummary).toContain('ExecutionPolicy bypass');
+  });
+
+  it('leaves the launcher undefined for input that is already a script', async () => {
+    const result = await analyze('Write-Host "hello husk"');
+
+    expect(result.launcher).toBeUndefined();
+    expect(result.launcherSummary).toBeUndefined();
+  });
+});
+
 describe('the time budget binds inside a layer, not only between layers', () => {
   // Constant folding parses every parenthesised group, so deep nesting is
   // quadratic within a single layer. Checking the clock only between layers

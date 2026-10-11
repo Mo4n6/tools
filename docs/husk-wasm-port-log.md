@@ -1172,17 +1172,36 @@ last block back itself. Without that, every round trip came back with its PKCS7
 bytes still attached — and the first version of this file did exactly that, on
 147 of 147 cases.
 
-### 10. A launcher parser in the product
+### 10. A launcher parser in the product — DONE, with a limit found
 
-**Why:** the corpus harness unwraps `powershell -enc …` and cmd.exe escaping
-in JavaScript, and that logic is load-bearing — 5 fixtures failed purely
-because of unhandled `\"` and `^|`. Real samples arrive the same way, as a
-command line out of a parent-process field, not as a clean script.
+`src/features/husk/eval/launcher.ts`, with 16 tests. It takes a command line,
+resolves the abbreviated switches droppers actually use (`-nop`, `-w hidden`,
+`-ep bypass`, `-noni`, `/c`), decodes `-EncodedCommand` as UTF-16LE, strips one
+layer of quoting and undoes cmd.exe's escaping, and reports every switch it
+saw. `analyze()` returns the parse and a one-line summary.
 
-**Done when:** Husk's ingest takes a launcher command line, reports what it
-unwrapped as evidence (the switches, the encoding, the escaping), and hands the
-engine the inner script. Must be in TypeScript with its own tests, not in the
-measurement harness.
+Two things worth recording.
+
+**`-e` is EncodedCommand and `-ep` is ExecutionPolicy**, even though both start
+with an e. Plain prefix matching gets that wrong, so the switch table is
+ordered and the handful of spellings the real parser treats specially are
+listed outright. An unrecognised switch is reported rather than dropped: it may
+be the thing that explains why the sample behaved differently than the report
+says.
+
+**It is not a pipeline recipe, and that was measured rather than assumed.**
+Adding it to the tree-walker's recipe list left the coverage floors intact but
+took the layered corpus from 16 silent failures to **107** — fixtures that fail
+*without recording a gap*, which is the one thing Husk promises not to do. The
+tree-walker's own recipes were written to see whole command lines, and
+introducing a layer boundary ahead of them broke that. So the parser is for the
+engine's ingest path and for the report; the tree-walker keeps the recipes it
+has.
+
+**Still duplicated:** `measure.mjs` carries its own copy of the unwrapping,
+because it is a `.mjs` build-time harness and cannot import the TypeScript. The
+two have to stay in step until the engine lands in the product, at which point
+the TypeScript is the only copy.
 
 ### Known gaps not yet scheduled
 
