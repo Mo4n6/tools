@@ -45,6 +45,27 @@ describe('judging answers', () => {
     expect(verdict.kind === 'correct' && verdict.missing.length).toBeGreaterThan(0);
   });
 
+  it('holds the marks to the pattern the player selected', () => {
+    const rng = createRng(17);
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const drill = createDrill(positions, 'pointing', rng, []);
+      const [a, b] = drill.findings;
+      if (!a || !b) {
+        continue;
+      }
+      const onlyB = b.eliminations.filter((e) => !a.eliminations.some((x) => x.cell === e.cell && x.digit === e.digit));
+      if (onlyB.length === 0) {
+        continue;
+      }
+      const answer = { placements: [], eliminations: onlyB };
+      expect(judge(drill, answer, { restrictTo: [a] }).kind).toBe('elsewhere');
+      expect(judge(drill, answer, { restrictTo: [b] }).kind).toBe('correct');
+      expect(judge(drill, answer).kind).toBe('correct');
+      return;
+    }
+    throw new Error('no Pointing drill with two separate instances in 40 draws');
+  });
+
   it('flags a mark that contradicts the solution', () => {
     const drill = createDrill(positions, 'naked-pair', createRng(5), []);
     const cell = drill.grid.values.findIndex((v) => v === 0);

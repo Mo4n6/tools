@@ -26,7 +26,9 @@ export type Verdict =
   | { kind: 'empty' }
   | { kind: 'wrong'; falsePlacements: Candidate[]; falseEliminations: Candidate[] }
   | { kind: 'correct'; finding: Finding; missing: Candidate[]; technique: TechniqueId }
-  | { kind: 'other'; technique: TechniqueId | null };
+  | { kind: 'other'; technique: TechniqueId | null }
+  /** Right technique, but a different instance from the pattern the player marked. */
+  | { kind: 'elsewhere' };
 
 /** How many recent positions to avoid repeating, given how many exist. */
 export const recentWindow = (available: number): number => Math.min(24, Math.floor(available / 2));
@@ -105,18 +107,26 @@ export const judge = (
   if (falsePlacements.length > 0 || falseEliminations.length > 0) {
     return { kind: 'wrong', falsePlacements, falseEliminations };
   }
+  // Once the player has marked a pattern, the marks have to follow from that
+  // pattern, not from another instance of the technique elsewhere on the board.
   const pool = restrictTo && restrictTo.length > 0 ? restrictTo : drill.findings;
-  const match = bestMatch(pool, keys) ?? (pool !== drill.findings ? bestMatch(drill.findings, keys) : null);
+  const match = bestMatch(pool, keys);
   if (match) {
     return { kind: 'correct', finding: match, missing: missingFrom(match, answer), technique: drill.technique };
   }
   // Marks taken from two instances of the technique at once are still right.
-  const union = new Set(drill.findings.flatMap((item) => [...effects(item)]));
+  const union = new Set(pool.flatMap((item) => [...effects(item)]));
   if (keys.every((k) => union.has(k))) {
-    const widest = [...drill.findings].sort(
+    const widest = [...pool].sort(
       (a, b) => keys.filter((k) => effects(b).has(k)).length - keys.filter((k) => effects(a).has(k)).length,
     )[0];
     return { kind: 'correct', finding: widest, missing: missingFrom(widest, answer), technique: drill.technique };
+  }
+  if (pool !== drill.findings) {
+    const everywhere = new Set(drill.findings.flatMap((item) => [...effects(item)]));
+    if (keys.every((k) => everywhere.has(k))) {
+      return { kind: 'elsewhere' };
+    }
   }
   // True, but not this technique. Say which technique it is, if any. Within a
   // tier the order is a teaching order, not a difficulty ranking, so when the

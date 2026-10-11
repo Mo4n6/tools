@@ -146,22 +146,21 @@ const DrillView = ({ drill, mode, onResolved, onNext, nextLabel = 'Next board' }
     if (phase === 'done') {
       return;
     }
+    setCursor(cell);
     if (phase === 'pattern') {
       toggleSelected(cell);
-      return;
     }
-    setCursor(cell);
   };
 
   const onCandidate = (cell: number, digit: number): void => {
     if (phase === 'done') {
       return;
     }
+    setCursor(cell);
     if (phase === 'pattern') {
       toggleSelected(cell);
       return;
     }
-    setCursor(cell);
     if (inputMode === 'eliminate') {
       toggleMark(cell, digit);
     } else {
@@ -233,6 +232,14 @@ const DrillView = ({ drill, mode, onResolved, onNext, nextLabel = 'Next board' }
         text: `${count === 1 ? 'One mark is' : `${count} marks are`} wrong, shown in red: ${
           verdict.falsePlacements.length > 0 ? 'that digit does not belong there' : 'that candidate is actually the answer'
         }. Undo ${count === 1 ? 'it' : 'them'} and look again.`,
+      });
+      return;
+    }
+    if (verdict.kind === 'elsewhere') {
+      setMistakes((m) => m + 1);
+      setFeedback({
+        tone: 'bad',
+        text: `True, but those come from a different ${technique.name} on this board, not the one you marked. Strike out what your pattern removes.`,
       });
       return;
     }
@@ -382,7 +389,7 @@ const DrillView = ({ drill, mode, onResolved, onNext, nextLabel = 'Next board' }
           grid={drill.grid}
           showCandidates={showCandidates}
           label={`Sudoku board. ${prompt}`}
-          cursor={phase === 'act' ? cursor : null}
+          cursor={phase === 'done' ? null : cursor}
           selected={phase === 'pattern' || (chosen.length === 0 && selected.size > 0) ? selected : undefined}
           marks={marks}
           placements={placements}
