@@ -574,12 +574,119 @@ payload into the in-memory filesystem is how the analyst extracts it
 afterwards. Network is refused at the binder, so the sample sees a null rather
 than an exception.
 
-## Next
+## Remaining work, in order
 
-- **Commands.Management** — `Remove-Item`, `Set-ItemProperty` and the registry
-  provider; also needed to test proxy deletion properly.
-- **Registry and process** classification beyond the WScript.Shell fakes.
-- **Corpus measurement** against the 244 + 864 fixtures.
-- **Perf check.** The binder wrapper runs on every bind; the namespace
-  fast-path should make it free, but that is asserted, not measured.
-- **Trimming.** 197 assemblies, ~12 MB gzipped.
+Each item says why it matters, what "done" looks like, and what is already
+known about it. Anything marked **blocking** gates a decision rather than a
+feature.
+
+### 1. Commands.Management — build and inject
+
+**Why:** `Remove-Item`, `Set-ItemProperty`, `New-ItemProperty`, the registry
+provider, `Get-ChildItem`. Registry persistence is a top-three commodity
+behaviour and is currently invisible except through the WScript.Shell fake.
+Also needed to test the "sample deletes the proxy" case, which is the one
+bypass still unproven.
+
+**Done when:** `Remove-Item function:New-Object` works, and
+`Set-ItemProperty HKCU:\...\Run` is captured as `registry.write`.
+
+**Known:** same build recipe as Utility. Expect more platform guards —
+Management touches the filesystem and registry providers hardest, so it is the
+likeliest place to hit the next `PlatformNotSupportedException`. Build it
+*alone* and take SMA from its output, same as Utility, to keep versions
+consistent.
+
+### 2. Registry and process classification — **blocking**
+
+**Why:** `HuskHostHook`'s table covers `System.Net.*`, `System.IO.*`,
+`Microsoft.Win32.Registry*`, `Reflection.Assembly` and `Diagnostics.Process`.
+The registry branch is written but **untested** — no registry type exists on
+wasm to exercise it. `Start-Process` has nothing behind it.
+
+**Done when:** a sample doing Run-key persistence and `Start-Process` produces
+`registry.write` and `process.start` with the command line, from the binder
+rather than from a proxy.
+
+**Known:** on wasm `Microsoft.Win32.Registry` likely throws before the binder
+hook sees a method. May need a managed fake registry type the binder can
+resolve against, which is the `husk-sandbox-spec.md` virtual-registry design.
+
+### 3. Corpus measurement — **blocking the whole decision**
+
+**Why:** this is the number that says whether the engine replaces the
+tree-walker. The tree-walker is at ~80% single-transform and ~50% layered,
+measured. The engine should be near 100% on both. If it is not, the fork is
+not worth carrying.
+
+**Done when:** `src/features/husk/corpus/fixtures/invoke-obfuscation.json`
+(244 cases) and `layered.json` (864 cases) have been run through the wasm
+engine and the recovery rate recorded next to the tree-walker's.
+
+**Known:** fixtures carry `expected` ground truth, so this is mechanical.
+Drive it from Playwright, batching through `runPs` and comparing normalised
+output. Budget a few minutes of wall clock for 1,108 cases.
+
+### 4. Harden `HuskHost.Record` against forgery
+
+**Why:** it is `public static` and reachable from PowerShell, so a sample can
+call `[HuskHost]::Record(...)` and inject fake entries. Harmless to
+capability, but it pollutes the analyst's evidence.
+
+**Done when:** proxy-sourced records are distinguishable from script-forged
+ones, or the method is not script-reachable. Simplest fix: move the proxies to
+C# cmdlets so nothing public is needed.
+
+### 5. Perf check on the binder wrapper
+
+**Why:** `InvokeMethod` is wrapped on every bind. The namespace fast-path
+should make it free, but that is asserted rather than measured.
+
+**Done when:** a benchmark script shows bind-heavy code is not measurably
+slower than stock SMA.
+
+### 6. Trimming
+
+**Why:** 197 assemblies, ~12 MB gzipped, ~1.5 s boot. Most of Roslyn,
+Markdig, JsonSchema.Net and System.Drawing.Common is dead weight for
+deobfuscation. `Add-Type` needs Roslyn; nothing else does.
+
+**Done when:** the bundle is meaningfully smaller with the corpus number
+unchanged.
+
+**Known:** `PublishTrimmed` is off because SMA is reflection-heavy and
+trimming it is the documented hazard. Removing whole package references is
+safer than trimming.
+
+### 7. Integrate with Husk proper
+
+**Why:** everything so far is a standalone spike under `scripts/husk/`. None
+of it is wired to `analyze.ts`, the trace, the gap ledger or the UI.
+
+**Done when:** the engine is a `Frontend` behind the interface in
+`husk-sandbox-spec.md` §6, emitting the same canonical ops, so the existing
+IOC extraction and reporting work unchanged.
+
+**Known:** this is where the decision from item 3 lands. If the engine wins,
+it becomes an alternative backend; the tree-walker stays for the `file://`
+single-file case, which the engine cannot serve.
+
+### 8. Licensing and attribution — **before anything ships**
+
+**Why:** this vendors a patched PowerShell. PowerShell is MIT, so the fork is
+permitted, but the notice has to travel: `THIRD-PARTY.md` currently records
+only the lexer-table port.
+
+**Done when:** `THIRD-PARTY.md` names the PowerShell fork, its upstream
+commit, the patch series and Microsoft's copyright, and the licence tests
+cover it the way they cover the lexer tables.
+
+### Known gaps not yet scheduled
+
+- `file://` cannot work (ES module CORS). The tree-walker keeps that property.
+- WebClient and the web cmdlets are proxied, not implemented; a sample that
+  inspects the returned object closely will notice.
+- No step or wall-clock budget on the engine. An anti-analysis loop will hang
+  the tab — the tree-walker's budget problem, inherited and not yet solved.
+- Threads are off. If anything later needs them, it costs COOP/COEP and
+  therefore static hosting.
