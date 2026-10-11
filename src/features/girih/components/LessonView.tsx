@@ -61,6 +61,7 @@ const LessonView = ({ drill, onAnotherExample, onPractice }: LessonViewProps): J
   ];
   const [step, setStep] = useState(0);
   const [spotlight, setSpotlight] = useState<number | null>(null);
+  const [selectedCell, setSelectedCell] = useState<number | null>(null);
   const current = steps[Math.min(step, steps.length - 1)];
 
   return (
@@ -72,11 +73,16 @@ const LessonView = ({ drill, onAnotherExample, onPractice }: LessonViewProps): J
           label={`${technique.name} example`}
           overlay={current.overlay}
           focus={spotlight}
+          crosshair={selectedCell}
           onCell={(cell) => {
             const digit = drill.grid.values[cell];
-            if (digit) {
-              setSpotlight((currentDigit) => (currentDigit === digit ? null : digit));
+            if (!digit) {
+              return;
             }
+            // Tapping the lit number again clears both the number and the cell's row and column.
+            const clearing = spotlight === digit && selectedCell === cell;
+            setSpotlight(clearing ? null : digit);
+            setSelectedCell(clearing ? null : cell);
           }}
         />
         {step === steps.length - 1 ? <Legend finding={example} /> : null}
