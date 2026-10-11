@@ -157,7 +157,7 @@ The language engine is what deobfuscation needs, but `Invoke-Expression` is
 itself a cmdlet, so this almost certainly has to be solved properly in the
 fork rather than avoided.
 
-### 3. `TypeInitializationException` — `Tracing.PSSysLogProvider` — CURRENT BLOCKER
+### 3. `TypeInitializationException` — `Tracing.PSSysLogProvider` — RESOLVED
 
 Its static initializer P/Invokes `libpsl-native` (syslog). There is no wasm
 build of that native library. Not fixable from outside SMA's source.
@@ -1115,20 +1115,45 @@ unchanged.
 trimming it is the documented hazard. Removing whole package references is
 safer than trimming.
 
-### 7. Integrate with Husk proper
+### 7. Integrate with Husk proper — **the next thing to do**
 
-**Why:** everything so far is a standalone spike under `scripts/husk/`. None
-of it is wired to `analyze.ts`, the trace, the gap ledger or the UI.
+**Why:** everything about the engine is still a standalone spike under
+`scripts/husk/wasm-spike/`. None of it is wired to `analyze.ts`, the trace, the
+gap ledger or the UI, so an analyst cannot use any of it. The launcher parser
+(item 10) is the first piece that landed in the product.
 
 **Done when:** the engine is a `Frontend` behind the interface in
-`husk-sandbox-spec.md` §6, emitting the same canonical ops, so the existing
-IOC extraction and reporting work unchanged.
+`husk-sandbox-spec.md` §6, emitting the same canonical ops, so the existing IOC
+extraction and reporting work unchanged.
 
-**Known:** this is where the decision from item 3 lands. If the engine wins,
-it becomes an alternative backend; the tree-walker stays for the `file://`
-single-file case, which the engine cannot serve.
+**The decision from item 3 has landed:** the engine wins, 98.0%/100.0% against
+80.7%/50.2%, so it becomes the default backend. The tree-walker stays for the
+`file://` single-file case, which the engine cannot serve — ES-module CORS — and
+for the first paint, since the engine costs ~12 MB and ~1.5 s of boot.
 
-### 8. Licensing and attribution — **before anything ships**
+**Known, and in rough order:**
+
+1. The four capture sources (`binder`, `cmdlet`, `provider`, `proxy`) have to
+   become `TraceEvent`s. The op vocabulary already matches `host/ops.ts`; the
+   source label is new and the UI should show it, because the layers differ in
+   how much they can be trusted.
+2. The registry dump and the dropped-file list are new artefacts with no home
+   in the current result shape.
+3. A budget stop is a *partial* result, not an error, and `AnalysisResult` has
+   no way to say that today.
+4. The 12 MB bundle must be lazy: nobody pays for it until they ask for the
+   engine.
+5. `measure.mjs`'s copy of the launcher unwrapping goes away once the engine
+   reads the TypeScript parser.
+
+### 8. Licensing and attribution — DONE
+
+The fork is recorded in `THIRD-PARTY.md` and `docs/licenses/husk-manifest.json`,
+with the pin, the patched file list and the build recipe, and a test ties the
+two together. The built assemblies do not ship yet; what has to be added on the
+day they do is written down there.
+
+<details><summary>Original entry</summary>
 
 **Why:** this vendors a patched PowerShell. PowerShell is MIT, so the fork is
 permitted, but the notice has to travel: `THIRD-PARTY.md` currently records
@@ -1137,6 +1162,8 @@ only the lexer-table port.
 **Done when:** `THIRD-PARTY.md` names the PowerShell fork, its upstream
 commit, the patch series and Microsoft's copyright, and the licence tests
 cover it the way they cover the lexer tables.
+
+</details>
 
 ### 9. Managed AES — DONE
 
