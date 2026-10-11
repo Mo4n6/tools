@@ -46,6 +46,8 @@ const DrillView = ({ drill, mode, onResolved, onNext, nextLabel = 'Next board' }
   const [placements, setPlacements] = useState<Map<number, number>>(new Map());
   const [wrong, setWrong] = useState<Set<number>>(new Set());
   const [cursor, setCursor] = useState<number | null>(null);
+  // The digit being scanned for: every copy lit, with its rows and columns.
+  const [spotlight, setSpotlight] = useState<number | null>(null);
   const [inputMode, setInputMode] = useState<'eliminate' | 'place'>(showCandidates ? 'eliminate' : 'place');
   const [hints, setHints] = useState(0);
   const [mistakes, setMistakes] = useState(0);
@@ -142,11 +144,21 @@ const DrillView = ({ drill, mode, onResolved, onNext, nextLabel = 'Next board' }
     setWrong(new Set());
   };
 
+  const digitAt = (cell: number): number => drill.grid.values[cell] || placements.get(cell) || 0;
+
+  const toggleSpotlight = (digit: number): void => setSpotlight((current) => (current === digit ? null : digit));
+
   const onCell = (cell: number): void => {
     if (phase === 'done') {
       return;
     }
     setCursor(cell);
+    const digit = digitAt(cell);
+    if (digit) {
+      // Tapping a number lights up that number everywhere; tap it again to clear.
+      toggleSpotlight(digit);
+      return;
+    }
     if (phase === 'pattern') {
       toggleSelected(cell);
     }
@@ -169,13 +181,15 @@ const DrillView = ({ drill, mode, onResolved, onNext, nextLabel = 'Next board' }
   };
 
   const onDigit = (digit: number): void => {
-    if (phase !== 'act') {
+    if (phase === 'done') {
       return;
     }
-    if (cursor === null) {
-      setFeedback({ tone: 'info', text: 'Select a cell first.' });
+    // With no cell to act on, a digit just lights up its copies.
+    if (phase === 'pattern' || cursor === null) {
+      toggleSpotlight(digit);
       return;
     }
+    setSpotlight(digit);
     if (inputMode === 'eliminate') {
       toggleMark(cursor, digit);
     } else {
@@ -348,6 +362,11 @@ const DrillView = ({ drill, mode, onResolved, onNext, nextLabel = 'Next board' }
       setMarks((prev) => new Set([...prev].filter((key) => Math.floor(key / 9) !== cursor)));
       return;
     }
+    if (event.key === 'Escape' && spotlight !== null) {
+      event.preventDefault();
+      setSpotlight(null);
+      return;
+    }
     if (event.key === 'Enter') {
       event.preventDefault();
       if (phase === 'pattern') {
@@ -395,6 +414,7 @@ const DrillView = ({ drill, mode, onResolved, onNext, nextLabel = 'Next board' }
           placements={placements}
           wrong={wrong}
           overlay={overlay}
+          focus={phase === 'done' ? null : spotlight}
           onCell={onCell}
           onCandidate={onCandidate}
           onKeyDown={onKeyDown}
@@ -402,9 +422,9 @@ const DrillView = ({ drill, mode, onResolved, onNext, nextLabel = 'Next board' }
       </div>
       {phase === 'done' && shown ? <Legend finding={shown} /> : null}
 
-      {phase === 'act' ? (
+      {phase !== 'done' ? (
         <div className="mx-auto flex max-w-[34rem] flex-wrap items-center gap-2">
-          {showCandidates ? (
+          {phase === 'act' && showCandidates ? (
             <div className="flex overflow-hidden rounded-md border border-emerald-500/40 text-sm" role="group" aria-label="Input mode">
               {(['eliminate', 'place'] as const).map((value) => (
                 <button
@@ -425,8 +445,15 @@ const DrillView = ({ drill, mode, onResolved, onNext, nextLabel = 'Next board' }
                 key={digit}
                 type="button"
                 onClick={() => onDigit(digit)}
-                className="h-8 w-8 rounded border border-emerald-500/40 bg-[#0a160f] text-sm text-emerald-50 hover:border-emerald-300/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
-                aria-label={`${inputMode === 'eliminate' ? 'Strike out' : 'Place'} ${digit}`}
+                aria-pressed={spotlight === digit}
+                className={`h-8 w-8 rounded border text-sm hover:border-emerald-300/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${
+                  spotlight === digit ? 'border-sky-300/80 bg-sky-500/25 text-sky-50' : 'border-emerald-500/40 bg-[#0a160f] text-emerald-50'
+                }`}
+                aria-label={
+                  phase === 'pattern' || cursor === null
+                    ? `Highlight ${digit}`
+                    : `${inputMode === 'eliminate' ? 'Strike out' : 'Place'} ${digit}`
+                }
               >
                 {digit}
               </button>
@@ -478,8 +505,9 @@ const DrillView = ({ drill, mode, onResolved, onNext, nextLabel = 'Next board' }
       </div>
       {phase !== 'done' ? (
         <p className="mx-auto max-w-[34rem] text-xs text-emerald-300/60">
-          Keyboard: arrows move, 1–9 {showCandidates ? 'strike out or place' : 'place'}, Enter checks
-          {phase === 'pattern' ? ', Space selects a cell' : ''}.
+          Tap a number on the board or the pad to light up every copy of it, with its rows and columns; tap it again to
+          clear. Keyboard: arrows move, 1–9 {phase === 'pattern' ? 'highlight' : showCandidates ? 'strike out or place' : 'place'},
+          Enter checks{phase === 'pattern' ? ', Space selects a cell' : ''}, Esc clears the highlight.
         </p>
       ) : null}
     </div>
