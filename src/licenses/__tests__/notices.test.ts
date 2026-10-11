@@ -26,6 +26,7 @@ const TOOL_ENTRY_POINTS = [
   'src/App.tsx',
   'src/features/binaural-beats/BinauralBeatsApp.tsx',
   'src/features/dead-letter/DeadLetterApp.tsx',
+  'src/features/girih/GirihApp.tsx',
   'src/features/glass/GlassApp.tsx',
   'src/features/husk/HuskApp.tsx',
   'src/features/rotation-goblin/RotationGoblinApp.tsx',
