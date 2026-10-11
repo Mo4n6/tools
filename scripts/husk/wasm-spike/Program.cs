@@ -22,13 +22,16 @@ public static class HuskHost
     private static int s_seq;
 
     public static void Record(string op, string nativeSignature, string[] args)
+        => RecordFrom("proxy", op, nativeSignature, args);
+
+    public static void RecordFrom(string source, string op, string nativeSignature, string[] args)
     {
         var quoted = string.Join(",", (args ?? Array.Empty<string>()).Select(JsonQuote));
         lock (s_calls)
         {
             s_calls.Add(
                 $"{{\"seq\":{s_seq++},\"op\":{JsonQuote(op)}," +
-                $"\"native\":{JsonQuote(nativeSignature)},\"args\":[{quoted}],\"source\":\"proxy\"}}");
+                $"\"native\":{JsonQuote(nativeSignature)},\"args\":[{quoted}],\"source\":{JsonQuote(source)}}}");
         }
     }
 
@@ -109,6 +112,13 @@ public static partial class Spike
             // than just asking the runtime for it.
             var utility = Assembly.Load("Microsoft.PowerShell.Commands.Utility");
             _cmdletCount = RegisterCmdlets(iss, utility); // wasm is single-threaded
+            // The binder chokepoint. Proxy functions are telemetry; this is
+            // the thing a sample cannot route around, because every .NET
+            // method call in PowerShell passes through it.
+            HuskHostHook.OnHostCall = (op, native, args) =>
+                HuskHost.RecordFrom("binder", op, native, args);
+            HuskHostHook.BlockNetwork = true;
+
             _rs = RunspaceFactory.CreateRunspace(iss);
             _rs.Open();
 

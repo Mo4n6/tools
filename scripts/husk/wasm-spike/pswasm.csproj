@@ -18,7 +18,9 @@
     <EventSourceSupport>false</EventSourceSupport>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="System.Management.Automation" Version="7.4.6" ExcludeAssets="runtime" />
+    <!-- No PackageReference for SMA: the NuGet reference assembly would win
+         for compile and it does not carry the port's additions (HuskHostHook).
+         The patched build is the only SMA this app should see. -->
     <!-- browser-wasm has no runtime asset in the package; the unix build is
          pure managed IL, so try loading that one directly. -->
     <Reference Include="System.Management.Automation">

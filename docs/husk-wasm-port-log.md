@@ -507,9 +507,79 @@ host-reaching type is recorded regardless of how the script got there. That
 turns a bypass from silence into a record, which is the property the whole
 design rests on.
 
+## Binder-level capture — the blind spot, closed
+
+Proxy functions are bypassable by anything reaching .NET directly. The fix is
+to record where the engine actually resolves a method, which we can do because
+we own the fork.
+
+**The first attempt hooked the wrong place.** `DotNetAdapter.AuxiliaryMethodInvoke`
+in `CoreAdapter.cs` looks like the chokepoint, and it is — for the *interpreted*
+path. Compiled script does not go through it: the DLR binder emits a direct
+call to the resolved `MethodInfo`. Hooking it produced zero records while
+`[IO.File]::WriteAllText` plainly ran.
+
+The real chokepoint for compiled script is
+`PSInvokeMemberBinder.InvokeMethod` in `engine/runtime/Binding/Binders.cs`.
+Rather than editing inside that long method, the port renames it to
+`InvokeMethodCore` and interposes a wrapper that classifies `mi`, and when it
+is host-reaching wraps the generated expression:
+
+```csharp
+Expression.Block(generated.Type, record, generated)     // observed
+Expression.Block(generated.Type, record, default)       // refused (network)
+```
+
+Void returns take `Expression.Empty()`; a refused call hands back a default of
+the right type so the script keeps running rather than taking an exception.
+
+`HuskHostHook` (new file, `engine/HuskHostHook.cs`) holds the classification
+table and a settable `OnHostCall` the host wires up. A namespace fast-path
+rejects the overwhelming majority of calls, because this runs on every method
+PowerShell binds.
+
+### Measured
+
+Direct .NET calls, which never touch a proxy:
+
+```
+[binder] filesystem.write   System.IO.File.WriteAllText         ["/tmp/direct.ps1","dropped via direct .NET"]
+[binder] filesystem.read    System.IO.File.ReadAllText          ["/tmp/direct.ps1"]
+[binder] filesystem.delete  System.IO.File.Delete               ["/tmp/direct2.txt"]
+[binder] filesystem.write   System.IO.Directory.CreateDirectory ["/tmp/sub"]
+[binder] network.http       System.Net.Http.HttpClient..ctor    []
+[binder] assembly.load      System.Reflection.Assembly.Load     ["<byte[2]>"]
+real server hits: 0
+```
+
+Arguments come through resolved, not as source text — the written *content* is
+captured alongside the path, and a byte array renders as `<byte[2]>` rather
+than being dumped.
+
+**Not proven:** the test also tried `Remove-Item function:New-Object` to delete
+the proxies first, and that silently failed because `Remove-Item` lives in
+Commands.Management, which is not built. The calls above bypass proxies by
+construction, so the result stands, but the explicit deletion case is untested.
+
+### Three layers now
+
+| Layer | Sees | Bypassable |
+|---|---|---|
+| Proxy functions | cmdlet/COM cradles, rich arguments | yes |
+| **Binder hook** | **every .NET method call** | **no, from script** |
+| `fetch` boundary | anything reaching HTTP | no |
+
+Filesystem calls are deliberately *not* blocked — letting a sample drop its
+payload into the in-memory filesystem is how the analyst extracts it
+afterwards. Network is refused at the binder, so the sample sees a null rather
+than an exception.
+
 ## Next
 
-- **Binder-level capture** (above) — the thing that closes the blind spot.
-- **Process and registry** beyond the WScript.Shell fakes.
+- **Commands.Management** — `Remove-Item`, `Set-ItemProperty` and the registry
+  provider; also needed to test proxy deletion properly.
+- **Registry and process** classification beyond the WScript.Shell fakes.
 - **Corpus measurement** against the 244 + 864 fixtures.
-- **Trimming.** 196 assemblies, 12 MB gzipped.
+- **Perf check.** The binder wrapper runs on every bind; the namespace
+  fast-path should make it free, but that is asserted, not measured.
+- **Trimming.** 197 assemblies, ~12 MB gzipped.

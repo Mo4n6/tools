@@ -66,6 +66,241 @@ index 828bd16..403ba11 100644
      <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" PrivateAssets="all" />
      <!-- This section is to force the version of non-direct dependencies -->
      <PackageReference Include="Microsoft.NETCore.Platforms" Version="1.1.2" />
+diff --git a/src/System.Management.Automation/engine/CoreAdapter.cs b/src/System.Management.Automation/engine/CoreAdapter.cs
+index 55486c6..47d184e 100644
+--- a/src/System.Management.Automation/engine/CoreAdapter.cs
++++ b/src/System.Management.Automation/engine/CoreAdapter.cs
+@@ -4227,6 +4227,15 @@ namespace System.Management.Automation
+         {
+             object result;
+ 
++            // wasm port: the single chokepoint for host-reaching .NET calls.
++            // Every method call PowerShell makes passes through here, so a
++            // sample cannot route around it the way it can route around a
++            // proxy cmdlet. See HuskHostHook.
++            if (HuskHostHook.Intercept(methodInformation.method, arguments))
++            {
++                return null;
++            }
++
+ #pragma warning disable 56500
+             try
+             {
+diff --git a/src/System.Management.Automation/engine/HuskHostHook.cs b/src/System.Management.Automation/engine/HuskHostHook.cs
+new file mode 100644
+index 0000000..a788bab
+--- /dev/null
++++ b/src/System.Management.Automation/engine/HuskHostHook.cs
+@@ -0,0 +1,209 @@
++// Licensed to the .NET Foundation under one or more agreements.
++// The .NET Foundation licenses this file to you under the MIT license.
++//
++// wasm port addition: a single chokepoint for host-reaching .NET calls.
++//
++// Proxy cmdlets and functions are bypassable - [Net.WebClient]::new() walks
++// straight past a proxied New-Object, and a sample can simply delete the
++// proxy. Recording here instead means it does not matter how the script
++// reached the method: every .NET method call in PowerShell goes through
++// DotNetAdapter.AuxiliaryMethodInvoke, so a hook there sees all of them.
++//
++// A bypass should produce a record, not silence. Silence is the failure mode
++// that makes a sandbox untrustworthy.
++
++using System.Collections.Generic;
++using System.Reflection;
++
++namespace System.Management.Automation
++{
++    /// <summary>
++    /// Host-call interception for the browser build. The host wires up
++    /// <see cref="OnHostCall"/>; the engine calls it from the member binder.
++    /// </summary>
++    public static class HuskHostHook
++    {
++        /// <summary>Called with (op, nativeSignature, renderedArguments).</summary>
++        public static Action<string, string, string[]> OnHostCall;
++
++        /// <summary>
++        /// When true, intercepted calls whose op is in the blocked set return
++        /// null instead of running. Filesystem calls are deliberately not
++        /// blocked: letting a sample drop its payload into the in-memory
++        /// filesystem is how the analyst gets to extract it afterwards.
++        /// </summary>
++        public static bool BlockNetwork = true;
++
++        // Declaring type full name -> (method name prefix -> op). Checked only
++        // after a namespace fast-path, because this runs on every method call
++        // PowerShell makes.
++        private static readonly Dictionary<string, string> s_typeOps = new(StringComparer.Ordinal)
++        {
++            ["System.Net.WebClient"] = "network",
++            ["System.Net.Http.HttpClient"] = "network.http",
++            ["System.Net.WebRequest"] = "network.http",
++            ["System.Net.HttpWebRequest"] = "network.http",
++            ["System.Net.Sockets.TcpClient"] = "network.connect",
++            ["System.Net.Sockets.Socket"] = "network.connect",
++            ["System.IO.File"] = "filesystem",
++            ["System.IO.Directory"] = "filesystem",
++            ["System.IO.FileStream"] = "filesystem.write",
++            ["System.Diagnostics.Process"] = "process.start",
++            ["System.Reflection.Assembly"] = "assembly.load",
++            ["System.AppDomain"] = "assembly.load",
++        };
++
++        /// <summary>
++        /// Cheap rejection for the overwhelming majority of calls. Anything
++        /// not under these namespaces cannot reach the host.
++        /// </summary>
++        private static bool MayReachHost(string typeName)
++        {
++            return typeName.Length > 7
++                && (typeName.StartsWith("System.Net.", StringComparison.Ordinal)
++                    || typeName.StartsWith("System.IO.", StringComparison.Ordinal)
++                    || typeName.StartsWith("System.Diagnostics.", StringComparison.Ordinal)
++                    || typeName.StartsWith("System.Reflection.", StringComparison.Ordinal)
++                    || typeName.StartsWith("Microsoft.Win32.", StringComparison.Ordinal)
++                    || typeName.Equals("System.AppDomain", StringComparison.Ordinal));
++        }
++
++        /// <summary>
++        /// Classifies a call. Returns false for everything that cannot reach
++        /// the host, which is almost everything.
++        /// </summary>
++        internal static bool Classify(MethodBase method, out string op)
++        {
++            op = null;
++            Type declaring = method?.DeclaringType;
++            string typeName = declaring?.FullName;
++            if (typeName is null || !MayReachHost(typeName))
++            {
++                return false;
++            }
++
++            if (typeName.StartsWith("Microsoft.Win32.Registry", StringComparison.Ordinal))
++            {
++                op = method.Name.StartsWith("Set", StringComparison.Ordinal)
++                    || method.Name.StartsWith("Create", StringComparison.Ordinal)
++                        ? "registry.write"
++                        : method.Name.StartsWith("Delete", StringComparison.Ordinal)
++                            ? "registry.delete"
++                            : "registry.read";
++                return true;
++            }
++
++            if (!s_typeOps.TryGetValue(typeName, out string family))
++            {
++                return false;
++            }
++
++            op = family switch
++            {
++                "network" => method.Name switch
++                {
++                    "DownloadFile" or "DownloadFileAsync" => "network.download",
++                    "UploadString" or "UploadData" or "UploadFile" => "network.upload",
++                    _ => "network.http",
++                },
++                "filesystem" => method.Name switch
++                {
++                    var n when n.StartsWith("Write", StringComparison.Ordinal)
++                        || n.StartsWith("Append", StringComparison.Ordinal)
++                        || n.StartsWith("Create", StringComparison.Ordinal) => "filesystem.write",
++                    var n when n.StartsWith("Delete", StringComparison.Ordinal) => "filesystem.delete",
++                    var n when n.StartsWith("Move", StringComparison.Ordinal) => "filesystem.move",
++                    var n when n.StartsWith("Copy", StringComparison.Ordinal) => "filesystem.copy",
++                    var n when n.StartsWith("Read", StringComparison.Ordinal)
++                        || n.StartsWith("Open", StringComparison.Ordinal) => "filesystem.read",
++                    _ => "filesystem.read",
++                },
++                _ => family,
++            };
++
++            return true;
++        }
++
++        /// <summary>
++        /// Called from compiled script. The DLR binder emits a direct call to
++        /// the resolved method, so the interpreted path in CoreAdapter never
++        /// runs for compiled script - this is the one that actually fires.
++        /// </summary>
++        public static void RecordRuntime(string op, string nativeSignature, object[] arguments)
++        {
++            Action<string, string, string[]> sink = OnHostCall;
++            if (sink is null) { return; }
++
++            try
++            {
++                var rendered = new string[arguments?.Length ?? 0];
++                for (int i = 0; i < rendered.Length; i++)
++                {
++                    object a = arguments[i];
++                    rendered[i] = a switch
++                    {
++                        null => "$null",
++                        string str => str,
++                        byte[] b => $"<byte[{b.Length}]>",
++                        _ => a.ToString(),
++                    };
++                }
++
++                sink(op, nativeSignature, rendered);
++            }
++            catch (Exception)
++            {
++                // Best effort; never take the run down over a log line.
++            }
++        }
++
++        /// <summary>True when an op should be refused rather than run.</summary>
++        public static bool IsBlocked(string op)
++            => BlockNetwork && op is not null
++               && op.StartsWith("network.", StringComparison.Ordinal);
++
++        /// <summary>Classification, for the binder.</summary>
++        public static bool TryClassify(MethodBase method, out string op) => Classify(method, out op);
++
++        /// <summary>
++        /// Records a call and says whether the engine should skip running it.
++        /// Never throws: a failure to record must not abort evaluation.
++        /// </summary>
++        internal static bool Intercept(MethodBase method, object[] arguments)
++        {
++            if (OnHostCall is null || !Classify(method, out string op))
++            {
++                return false;
++            }
++
++            try
++            {
++                var rendered = new string[arguments?.Length ?? 0];
++                for (int i = 0; i < rendered.Length; i++)
++                {
++                    object a = arguments[i];
++                    rendered[i] = a switch
++                    {
++                        null => "$null",
++                        string s => s,
++                        byte[] b => $"<byte[{b.Length}]>",
++                        _ => a.ToString(),
++                    };
++                }
++
++                OnHostCall(op, $"{method.DeclaringType.FullName}.{method.Name}", rendered);
++            }
++            catch (Exception)
++            {
++                // Recording is best effort. Losing a log line is bad; taking
++                // the run down with it is worse.
++            }
++
++            // Filesystem calls run for real - into the in-memory filesystem,
++            // which is how dropped payloads become extractable. Network calls
++            // are refused here rather than at the fetch boundary, so the
++            // sample sees a null instead of an exception and keeps going.
++            return BlockNetwork && op.StartsWith("network.", StringComparison.Ordinal);
++        }
++    }
++}
 diff --git a/src/System.Management.Automation/engine/SessionState.cs b/src/System.Management.Automation/engine/SessionState.cs
 index e65f65f..8ae8163 100644
 --- a/src/System.Management.Automation/engine/SessionState.cs
@@ -112,6 +347,59 @@ index 1ad23a4..301c3ff 100644
          }
  
          private static string[] s_productFolderDirectories;
+diff --git a/src/System.Management.Automation/engine/runtime/Binding/Binders.cs b/src/System.Management.Automation/engine/runtime/Binding/Binders.cs
+index 0a4fafd..d8daede 100644
+--- a/src/System.Management.Automation/engine/runtime/Binding/Binders.cs
++++ b/src/System.Management.Automation/engine/runtime/Binding/Binders.cs
+@@ -7044,7 +7044,48 @@ namespace System.Management.Automation.Language
+             return result;
+         }
+ 
++        // wasm port: the chokepoint for compiled script.
++        //
++        // The DLR binder emits a direct call to the resolved method, so the
++        // interpreted path in CoreAdapter never runs here. Wrapping the
++        // generated expression means a host-reaching call is recorded however
++        // the script reached it - [Net.WebClient]::new(), a cmdlet fetched by
++        // reference, or a proxy the sample deleted. A bypass should produce a
++        // record, not silence.
+         internal static Expression InvokeMethod(MethodBase mi, DynamicMetaObject target, DynamicMetaObject[] args, bool expandParameters, MethodInvocationType invocationType)
++        {
++            Expression generated = InvokeMethodCore(mi, target, args, expandParameters, invocationType);
++
++            if (!HuskHostHook.TryClassify(mi, out string huskOp))
++            {
++                return generated;
++            }
++
++            Expression argArray = Expression.NewArrayInit(
++                typeof(object),
++                args.Select(static a => a.Expression.Cast(typeof(object))));
++
++            Expression record = Expression.Call(
++                typeof(HuskHostHook).GetMethod(nameof(HuskHostHook.RecordRuntime)),
++                Expression.Constant(huskOp),
++                Expression.Constant($"{mi.DeclaringType?.FullName}.{mi.Name}"),
++                argArray);
++
++            if (HuskHostHook.IsBlocked(huskOp))
++            {
++                // Refuse, but hand back a value of the right type so the
++                // script keeps running instead of taking an exception.
++                return generated.Type == typeof(void)
++                    ? Expression.Block(record, Expression.Empty())
++                    : Expression.Block(generated.Type, record, Expression.Default(generated.Type));
++            }
++
++            return generated.Type == typeof(void)
++                ? Expression.Block(record, generated)
++                : Expression.Block(generated.Type, record, generated);
++        }
++
++        private static Expression InvokeMethodCore(MethodBase mi, DynamicMetaObject target, DynamicMetaObject[] args, bool expandParameters, MethodInvocationType invocationType)
+         {
+             List<ParameterExpression> temps = new List<ParameterExpression>();
+             List<Expression> initTemps = new List<Expression>();
 diff --git a/src/System.Management.Automation/utils/tracing/SysLogProvider.cs b/src/System.Management.Automation/utils/tracing/SysLogProvider.cs
 index f3ee184..a3de5ea 100755
 --- a/src/System.Management.Automation/utils/tracing/SysLogProvider.cs
