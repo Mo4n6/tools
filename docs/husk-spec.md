@@ -57,7 +57,8 @@ mode but not AOT. Plausible on .NET 8+; no known working build.
 in under 3 seconds. That would be worth revisiting for fidelity — but the
 ceiling would still be set by information availability, not by us.
 
-**Falsifier tested, 2026-10-11. Not met: no such build exists to try.**
+**Falsifier tested, 2026-10-11. Microsoft ships no such build — but one was
+assembled by hand and got most of the way, which is the more useful result.**
 
 Measured with .NET SDK 8.0.131 and the `wasm-tools` workload:
 
@@ -80,8 +81,43 @@ Measured with .NET SDK 8.0.131 and the `wasm-tools` workload:
   build sits above; SMA's own IL is 6.79MB before the native side.
 
 So the route is not "configure the build correctly" but "port PowerShell to
-browser-wasm", which is a project rather than a spike. The decision in this
-section stands, now on measurement rather than on estimate.
+browser-wasm". That port was then attempted far enough to cost it properly.
+
+### How far a hand-assembled build gets
+
+Disabling webcil (`WasmEnableWebcil=false`) keeps assemblies as plain `.dll`,
+so SMA's `unix` IL and its 14 managed dependencies can be copied into
+`_framework/` and registered in `blazor.boot.json` with their SHA-256 hashes.
+Driven in headless Chromium against a local server:
+
+- **The runtime boots in ~0.9–1.1 seconds** with 183 assemblies registered.
+- **SMA's managed IL loads.** Nothing about mono-wasm rejects it.
+- **Bundle: 31MB raw, 11.26MB gzipped** — inside the 15MB falsifier.
+
+Execution then hits a chain of platform assumptions, each needing a source
+patch rather than configuration:
+
+1. `TypeLoadException` on `ApplicationInsightsTelemetry` — SMA's dependency
+   closure is absent from the wasm publish. **Fixed** by harvesting the 14
+   managed DLLs from a `linux-x64` publish and injecting them.
+2. `ArgumentNullException (path1)` in `PSSnapInReader.ReadCoreEngineSnapIn`.
+   SMA derives `$PSHOME` from `typeof(PSObject).Assembly.Location`, which is
+   empty under wasm, so `Path.GetDirectoryName("")` returns null. Setting
+   `APP_CONTEXT_BASE_DIRECTORY` does not help — it is read at startup.
+   **Avoided** with `InitialSessionState.Create()` instead of `CreateDefault2()`,
+   at the cost of the cmdlet surface.
+3. `TypeInitializationException` in `Tracing.PSSysLogProvider` — the syslog
+   provider P/Invokes `libpsl-native`, which has no wasm build. **Not fixable
+   from the outside.**
+
+So the port is viable and the blockers are ordinary, but each is a patch to
+PowerShell's own source. The work is: fork PowerShell, patch the platform
+assumptions as they surface, cross-compile or stub `libpsl-native` for wasm,
+and carry that fork forward against upstream. Days to weeks, and a maintenance
+commitment afterwards — not an afternoon of MSBuild.
+
+The decision in this section stands, now on measurement rather than on
+estimate. What changed is the cost of reversing it: it is a known quantity.
 
 **Revisited.** Once the objective grew to capturing host calls rather than only
 deobfuscating, reason 3 became decisive rather than merely persuasive: a real
