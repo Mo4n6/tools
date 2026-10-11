@@ -1,6 +1,6 @@
 # Mo4n6 Tools
 
-Six browser tools that do their work in the tab you have open, rather than on
+Seven browser tools that do their work in the tab you have open, rather than on
 someone else's machine. Deployed at **<https://mo4n6.github.io/tools/>**.
 
 | Tool | What it does | Leaves the machine? |
@@ -11,6 +11,7 @@ someone else's machine. Deployed at **<https://mo4n6.github.io/tools/>**.
 | [Glass](https://mo4n6.github.io/tools/#/glass) | Image upscaling: Lanczos, Scale2x, or your own ONNX model | Only to fetch weights you choose |
 | [Husk](https://mo4n6.github.io/tools/#/husk) | Deobfuscate malicious PowerShell and extract IOCs | No |
 | [Rotation Goblin](https://mo4n6.github.io/tools/#/rotation-goblin) | Sector rotation, RSI and relative-strength radar | No — data ships with the build |
+| [Girih](https://mo4n6.github.io/tools/#/girih) | Learn sudoku solving techniques, one move at a time | No — boards ship with the build |
 
 Two of these handle hostile input — Dead Letter takes phishing mail, Husk takes
 live malware — which is why "runs locally" is a design constraint here and not a
@@ -301,6 +302,42 @@ Market data is generated ahead of time and committed, so the tool itself makes n
 requests. `update-rotation-goblin.yml` refreshes it on a weekday schedule and
 validates it before committing; the same workflow runs on pull requests that touch
 the tool, without the commit step.
+
+### Girih
+
+Girih teaches sudoku techniques rather than sudoku. Every board is frozen at
+the moment one technique is the simplest move available; the player finds that
+one move, applies it, and gets a new board. There are 31 techniques in 8 tiers,
+from Full House to ALS-XZ. Each one has a walkthrough on a real board and a
+practice mode that names the technique. Mixed review and the tier tests don't
+name it, because recognising which technique applies is the actual skill.
+
+"Simplest" has a precise meaning: the order of `TECHNIQUES` in
+`src/features/girih/engine/catalog.ts`. A drill for a technique is a board where
+nothing earlier in that list makes progress, so it can't be solved by stepping
+around the lesson.
+
+The app never generates puzzles. Its boards come from a bank mined ahead of time
+and committed:
+
+```
+npm run girih:mine -- [minutes] [quota] [seed]
+```
+
+The miner generates random minimal puzzles on every core and solves each one a
+move at a time with the curriculum. It keeps boards where a technique is the
+simplest move. Every move is checked against the known solution as it is
+applied, so a detector that ever eliminates a true candidate stops the run.
+The committed bank came from 464,999 puzzles in 20 minutes; the curriculum
+solves 97.5% of them without guessing. Changing a detector or the order
+means re-mining: `npm test` replays positions for every technique under random
+disguises and fails if one no longer fits.
+
+Each draw disguises its board with a random sudoku symmetry: digits relabelled,
+bands, stacks, rows and columns shuffled, and maybe a transpose. That is about
+1.2 trillion versions of every stored board. Recently seen boards are skipped,
+so practice doesn't repeat itself. Progress is kept in `localStorage` and
+nowhere else.
 
 ## Licence
 

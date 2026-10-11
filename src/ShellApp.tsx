@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from 'react';
 import MomoroReaderApp from './App';
 import BinauralBeatsApp from './features/binaural-beats/BinauralBeatsApp';
 import DeadLetterApp from './features/dead-letter/DeadLetterApp';
+import GirihApp from './features/girih/GirihApp';
 import GlassApp from './features/glass/GlassApp';
 import HuskApp from './features/husk/HuskApp';
 import RotationGoblinApp from './features/rotation-goblin/RotationGoblinApp';
@@ -71,6 +72,13 @@ const toolDefinitions: ToolDefinition[] = [
     label: 'Rotation Goblin',
     description: 'Sector rotation, RSI, and relative-strength radar.',
     render: () => <RotationGoblinApp />,
+    available: true,
+  },
+  {
+    path: '/girih',
+    label: 'Girih',
+    description: 'Learn sudoku techniques one move at a time.',
+    render: () => <GirihApp />,
     available: true,
   },
   {

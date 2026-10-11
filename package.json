@@ -30,7 +30,8 @@
     "check:ort-asset": "node scripts/check-ort-asset.mjs",
     "licenses": "node scripts/license-tally.mjs",
     "glass:preset": "node scripts/glass-preset.mjs",
-    "glass:samples": "node scripts/generate-glass-samples.mjs"
+    "glass:samples": "node scripts/generate-glass-samples.mjs",
+    "girih:mine": "node scripts/girih/mine.ts"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
