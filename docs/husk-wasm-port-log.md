@@ -13,7 +13,7 @@ cross-origin isolation headers. `file://` does not work, for an unrelated
 loader reason. Six fixtures miss in total: five want AES, which browser .NET
 cannot serve synchronously, and one is a corpus defect. See the corpus section.
 
-Fifteen real source patches, 1,052 insertions across 18 files — seven
+Thirteen real source patches, 1,052 insertions across 18 files — seven
 portability guards, three deliberate Windows PowerShell 5.1 fidelity patches,
 a cmdlet-level capture layer, and the step and time budgets. The fidelity
 patches are the ones that moved the corpus number: without them the engine
@@ -360,12 +360,16 @@ One is the fourth capture layer:
     "Cmdlet-level capture" below for why the other three layers could not do
     this.
 
-And two are the budget:
+And one is the budget:
 
 15. **`engine/parser/Compiler.cs` and
     `engine/interpreter/PowerShellInstructions.cs` — `HuskHostHook.Tick()` at
     every sequence point.** Both paths, because PowerShell interprets a script
     block before it compiles one. See "Budgets" below.
+
+Plus `engine/HuskHostHook.cs` itself, which is new and holds all of the above:
+the classification tables, the cmdlet table, the budget, the sleep clamp and
+the seal.
 
 ## Measured, with all patches applied
 
