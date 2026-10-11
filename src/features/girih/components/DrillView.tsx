@@ -46,7 +46,7 @@ const DrillView = ({ drill, mode, onResolved, onNext, nextLabel = 'Next board' }
   const [placements, setPlacements] = useState<Map<number, number>>(new Map());
   const [wrong, setWrong] = useState<Set<number>>(new Set());
   const [cursor, setCursor] = useState<number | null>(null);
-  // The digit being scanned for: every copy lit, with its rows and columns.
+  // The digit being scanned for: every copy of it is lit.
   const [spotlight, setSpotlight] = useState<number | null>(null);
   const [inputMode, setInputMode] = useState<'eliminate' | 'place'>(showCandidates ? 'eliminate' : 'place');
   const [hints, setHints] = useState(0);
@@ -362,9 +362,10 @@ const DrillView = ({ drill, mode, onResolved, onNext, nextLabel = 'Next board' }
       setMarks((prev) => new Set([...prev].filter((key) => Math.floor(key / 9) !== cursor)));
       return;
     }
-    if (event.key === 'Escape' && spotlight !== null) {
+    if (event.key === 'Escape' && (spotlight !== null || cursor !== null)) {
       event.preventDefault();
       setSpotlight(null);
+      setCursor(null);
       return;
     }
     if (event.key === 'Enter') {
@@ -415,6 +416,7 @@ const DrillView = ({ drill, mode, onResolved, onNext, nextLabel = 'Next board' }
           wrong={wrong}
           overlay={overlay}
           focus={phase === 'done' ? null : spotlight}
+          crosshair={phase === 'done' ? null : cursor}
           onCell={onCell}
           onCandidate={onCandidate}
           onKeyDown={onKeyDown}
@@ -505,9 +507,9 @@ const DrillView = ({ drill, mode, onResolved, onNext, nextLabel = 'Next board' }
       </div>
       {phase !== 'done' ? (
         <p className="mx-auto max-w-[34rem] text-xs text-emerald-300/60">
-          Tap a number on the board or the pad to light up every copy of it, with its rows and columns; tap it again to
-          clear. Keyboard: arrows move, 1–9 {phase === 'pattern' ? 'highlight' : showCandidates ? 'strike out or place' : 'place'},
-          Enter checks{phase === 'pattern' ? ', Space selects a cell' : ''}, Esc clears the highlight.
+          Tap a number on the board or the pad to light up every copy of it; the selected cell's row and column are shaded.
+          Tap the number again to clear. Keyboard: arrows move, 1–9 {phase === 'pattern' ? 'highlight' : showCandidates ? 'strike out or place' : 'place'},
+          Enter checks{phase === 'pattern' ? ', Space selects a cell' : ''}, Esc clears the selection.
         </p>
       ) : null}
     </div>

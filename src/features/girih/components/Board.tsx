@@ -26,12 +26,10 @@ type BoardProps = {
   placements?: Map<number, number>;
   wrong?: Set<number>;
   overlay?: Overlay | null;
-  /**
-   * A digit the player is scanning for. Every copy of it is lit and the row
-   * and column of each copy shaded, so the unshaded empty cells are where it
-   * can still go.
-   */
+  /** A digit the player is scanning for: every copy of it is lit. */
   focus?: number | null;
+  /** The selected cell, whose row and column are shaded. */
+  crosshair?: number | null;
   onCell?: (cell: number) => void;
   onCandidate?: (cell: number, digit: number) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
@@ -69,6 +67,7 @@ const Board = ({
   wrong,
   overlay,
   focus = null,
+  crosshair = null,
   onCell,
   onCandidate,
   onKeyDown,
@@ -89,17 +88,15 @@ const Board = ({
   const removed = new Set((overlay?.eliminations ?? []).map(candidateKey));
   const revealed = new Map((overlay?.placements ?? []).map((p) => [p.cell, p.digit]));
   const copies = new Set<number>();
-  const focusRows = new Set<number>();
-  const focusCols = new Set<number>();
   if (focus) {
     for (let cell = 0; cell < 81; cell += 1) {
       if ((grid.values[cell] || placements?.get(cell)) === focus) {
         copies.add(cell);
-        focusRows.add(rowOf(cell));
-        focusCols.add(colOf(cell));
       }
     }
   }
+  const crossRow = crosshair === null ? -1 : rowOf(crosshair);
+  const crossCol = crosshair === null ? -1 : colOf(crosshair);
 
   return (
     <div
@@ -128,7 +125,7 @@ const Board = ({
                   ? 'bg-sky-400/30'
                   : tinted.has(cell)
                     ? 'bg-cyan-300/[0.09]'
-                    : focusRows.has(row) || focusCols.has(col)
+                    : row === crossRow || col === crossCol
                       ? 'bg-sky-300/[0.15]'
                       : 'bg-transparent';
               const rings = [
