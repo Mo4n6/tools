@@ -60,12 +60,25 @@ const LessonView = ({ drill, onAnotherExample, onPractice }: LessonViewProps): J
     },
   ];
   const [step, setStep] = useState(0);
+  const [spotlight, setSpotlight] = useState<number | null>(null);
   const current = steps[Math.min(step, steps.length - 1)];
 
   return (
     <div className="grid gap-6 xl:grid-cols-[minmax(0,34rem)_minmax(0,1fr)]">
       <div className="space-y-3">
-        <Board grid={drill.grid} showCandidates={technique.tier > 1} label={`${technique.name} example`} overlay={current.overlay} />
+        <Board
+          grid={drill.grid}
+          showCandidates={technique.tier > 1}
+          label={`${technique.name} example`}
+          overlay={current.overlay}
+          focus={spotlight}
+          onCell={(cell) => {
+            const digit = drill.grid.values[cell];
+            if (digit) {
+              setSpotlight((currentDigit) => (currentDigit === digit ? null : digit));
+            }
+          }}
+        />
         {step === steps.length - 1 ? <Legend finding={example} /> : null}
         <div className="mx-auto max-w-[34rem] rounded-md border border-cyan-400/40 bg-cyan-500/10 p-3 text-sm leading-relaxed text-cyan-50">
           <div className="mb-1 text-xs uppercase tracking-wide text-cyan-200/80">

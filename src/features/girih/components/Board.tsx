@@ -26,6 +26,12 @@ type BoardProps = {
   placements?: Map<number, number>;
   wrong?: Set<number>;
   overlay?: Overlay | null;
+  /**
+   * A digit the player is scanning for. Every copy of it is lit and the row
+   * and column of each copy shaded, so the unshaded empty cells are where it
+   * can still go.
+   */
+  focus?: number | null;
   onCell?: (cell: number) => void;
   onCandidate?: (cell: number, digit: number) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
@@ -62,6 +68,7 @@ const Board = ({
   placements,
   wrong,
   overlay,
+  focus = null,
   onCell,
   onCandidate,
   onKeyDown,
@@ -81,6 +88,18 @@ const Board = ({
   }
   const removed = new Set((overlay?.eliminations ?? []).map(candidateKey));
   const revealed = new Map((overlay?.placements ?? []).map((p) => [p.cell, p.digit]));
+  const copies = new Set<number>();
+  const focusRows = new Set<number>();
+  const focusCols = new Set<number>();
+  if (focus) {
+    for (let cell = 0; cell < 81; cell += 1) {
+      if ((grid.values[cell] || placements?.get(cell)) === focus) {
+        copies.add(cell);
+        focusRows.add(rowOf(cell));
+        focusCols.add(colOf(cell));
+      }
+    }
+  }
 
   return (
     <div
@@ -102,11 +121,16 @@ const Board = ({
               const shown = revealed.get(cell);
               const isCursor = cursor === cell;
               const isSelected = selected?.has(cell) ?? false;
+              const isCopy = copies.has(cell);
               const background = isSelected
                 ? 'bg-cyan-500/25'
-                : tinted.has(cell)
-                  ? 'bg-cyan-300/[0.09]'
-                  : 'bg-transparent';
+                : isCopy
+                  ? 'bg-sky-400/30'
+                  : tinted.has(cell)
+                    ? 'bg-cyan-300/[0.09]'
+                    : focusRows.has(row) || focusCols.has(col)
+                      ? 'bg-sky-300/[0.15]'
+                      : 'bg-transparent';
               const rings = [
                 outlined.has(cell) ? 'shadow-[inset_0_0_0_2px_rgba(103,232,249,0.85)]' : '',
                 isSelected ? 'shadow-[inset_0_0_0_2px_rgba(165,243,252,0.95)]' : '',
@@ -135,7 +159,7 @@ const Board = ({
                   {value !== 0 ? (
                     <span
                       className={`flex h-full w-full items-center justify-center font-semibold ${
-                        overlay?.digit === value ? 'text-amber-300' : 'text-emerald-50'
+                        isCopy ? 'text-sky-50' : overlay?.digit === value ? 'text-amber-300' : 'text-emerald-50'
                       }`}
                       style={{ fontSize: '6.2cqw' }}
                     >
@@ -169,7 +193,7 @@ const Board = ({
                         const isRemoved = removed.has(key);
                         const isMarked = marks?.has(key) ?? false;
                         const isWrong = wrong?.has(key) ?? false;
-                        let className = 'text-emerald-200/70';
+                        let className = digit === focus ? 'bg-sky-400/25 font-bold text-sky-100' : 'text-emerald-200/70';
                         if (tone) {
                           className = TONE_CLASS[tone];
                         }
