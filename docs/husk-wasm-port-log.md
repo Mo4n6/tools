@@ -1,13 +1,12 @@
 # Porting PowerShell to browser-wasm: working log
 
-**Status:** **real PowerShell executes in a browser.** `2+2` returns `4`,
-`[array]::Reverse` round-trips, the `-f` operator works. It took five small
-patches to PowerShell (52 insertions across 7 files), and it runs on **ordinary
-static hosting** — no cross-origin isolation headers needed. `file://` does not
-work, for an unrelated loader reason.
+**Status:** **real PowerShell deobfuscates in a browser.**
+`IEX ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(...)))`
+returns the decoded stage, and `&('I'+'E'+'X')` resolves. 162 cmdlets live.
+Runs on **ordinary static hosting** — no cross-origin isolation headers.
+`file://` does not work, for an unrelated loader reason.
 
-Cmdlets are not loaded yet, so `Invoke-Expression` is still missing. That is
-the next piece of work, not a blocker found.
+Four real source patches, 52 insertions across 7 files.
 
 This is a work log, not a spec. It exists so the work can be resumed from a
 cold container, because the scratchpad does not survive one. `husk-spec.md` §1
@@ -314,91 +313,85 @@ reverse       ( 69ms) => string        [array]::Reverse round-trip
 IEX           --      => not recognized
 ```
 
-## Next: cmdlets
+## Cmdlets: Commands.Utility
 
-`Invoke-Expression` lives in `Microsoft.PowerShell.Commands.Utility`, which has
-not been built or injected. `InitialSessionState.CreateDefault2()` succeeds but
-registers nothing, because `$PSHOME` is `/` and there is no module layout
-there. The language engine works; the cmdlet surface does not.
+Built with the **same recipe as SMA and zero source patches**. Two gotchas:
 
-Build `Microsoft.PowerShell.Commands.Utility` (and likely
-`Microsoft.PowerShell.Commands.Management`) the same way, inject them, and
-register the cmdlets explicitly on the `InitialSessionState` rather than
-relying on `$PSHOME` discovery. Expect the same guard-the-platform-call loop.
-
-## Next steps — only if the hosting model changes
-
-These were the plan before the threading result. Kept because they are still
-correct *if* Husk ever moves behind a server that sets COOP/COEP.
-
-1. **Clone PowerShell shallow.** `git clone --depth 1 -b v7.4.6
-   https://github.com/PowerShell/PowerShell`. GitHub is reachable.
-2. **Do not use `build.psm1`.** It is written in PowerShell and needs a working
-   `pwsh` to bootstrap, which is not installed. Build
-   `src/System.Management.Automation/System.Management.Automation.csproj`
-   directly with `dotnet build` and a `browser-wasm` RID.
-3. **Patch the platform assumptions** as they surface. Expected first patches:
-   - `Utils.GetApplicationBase` — fall back to `AppContext.BaseDirectory` when
-     `Assembly.Location` is empty.
-   - `PSSysLogProvider` — stub the syslog P/Invoke under `OperatingSystem.IsBrowser()`.
-   - Anything else reaching `libpsl-native`.
-4. **Keep a patch series**, not a mutated checkout, so it can be rebased onto
-   a newer PowerShell.
-
-## Threading: tested, and it ends the default approach
-
-Probed in the browser before spending time on source patches, because it was
-the cheapest thing that could invalidate them. It did.
+**Version skew.** SMA builds as `7.4.5.0` while Commands.Utility builds as
+`7.4.6.0` and references SMA `7.4.6.0`, so the app fails to compile with
+CS1705. The version comes from `git describe` through
+`PowerShell.Common.props`, and `PSCoreBuildVersion`/`Version` do not move it.
+Pin it directly:
 
 ```
-ProcessorCount   = 1
-IsBrowser        = True
-Thread.Start     = PlatformNotSupportedException
-Task.Run + Wait  = timeout            <- the fatal one
-blockingWait     = returned-false
+-p:AssemblyVersion=7.4.6.0 -p:FileVersion=7.4.6.0
 ```
 
-`Task.Run(...).Wait()` timing out is the finding that matters. On
-single-threaded wasm the continuation is queued to the same thread, so a
-blocking wait can never be satisfied: every synchronous-over-async pattern
-deadlocks.
+Build **Commands.Utility only** — it builds SMA transitively, and taking both
+DLLs from its output guarantees one consistent pair:
 
-`PowerShell.Invoke()` is precisely that pattern — it blocks the caller while
-the pipeline completes, and `Runspace.Open()` uses wait handles the same way.
-`PSThreadOptions.UseCurrentThread` moves the pipeline onto the calling thread
-but does not remove the internal waits.
+```
+src/Microsoft.PowerShell.Commands.Utility/bin/Release/net8.0/browser-wasm/
+  Microsoft.PowerShell.Commands.Utility.dll   0.78 MB
+  System.Management.Automation.dll            6.38 MB
+```
 
-This is not a patch to `Utils.GetApplicationBase` or `PSSysLogProvider`. It is
-PowerShell's execution model assuming it can block one thread while work
-proceeds on another. Making SMA run single-threaded means making it async
-throughout, which is a rewrite of its core rather than a fork patch.
+**Do not reference Utility at compile time.** The compile-time identity has to
+match the runtime one exactly, which is fragile across two builds. Load it by
+name instead and the problem disappears:
 
-### The one way around it, and what it costs
+```csharp
+var utility = Assembly.Load("Microsoft.PowerShell.Commands.Utility");
+```
 
-.NET supports multi-threaded wasm (`WasmEnableThreads`), which needs
-`SharedArrayBuffer`, which needs COOP/COEP cross-origin isolation headers.
+### Registering the cmdlets
 
-- **GitHub Pages cannot send those headers.** Already documented in the README
-  for Glass, and it is why Glass does not request wasm threads either.
-- **A downloaded `file://` copy certainly cannot.** That property — Dead Letter
-  and Husk running from an analyst's disk with no server — is load-bearing for
-  this project.
+`$PSHOME` is `/` with no module layout, so `CreateDefault2()` succeeds and
+registers nothing. Walk the assembly instead — every `[Cmdlet]`-attributed
+public type becomes a `SessionStateCmdletEntry`. That is `RegisterCmdlets` in
+`Program.cs`, and it is 115 cmdlets from Utility on top of the core set.
 
-So the engine route is available only by giving up static hosting and running
-Husk behind a server that sets those headers, on top of a PowerShell fork and
-experimental wasm threading. That is a different product, not a different
-build flag.
+### Dependency closure
 
-**Untested beyond this point**, and only worth testing if the hosting model
-changes: whether `WasmEnableThreads=true` actually builds with SMA, and
-whether the remaining blockers are patchable once threads exist.
-- **Reflection.Emit.** SMA compiles script via the DLR to `Expression.Compile()`.
-  Works in mono's interpreter, not AOT. Keep AOT off.
-- **Fork maintenance.** Whatever lands here is a PowerShell fork to carry
-  against upstream indefinitely.
+Harvest the same way as SMA's, from a `linux-x64` publish of Commands.Utility
+(27 DLLs: Markdig, MarkdownRender, JsonSchema.Net, Roslyn, Humanizer,
+System.Drawing.Common and friends). **Then overwrite SMA and Utility with the
+browser-wasm builds** — the harvest carries linux-x64 copies of both and they
+must not win.
 
-## Files
+## Measured, with cmdlets
 
-- `scripts/husk/wasm-spike/` — csproj, `Program.cs`, `main.js`, `rebuild.sh`
-- `docs/husk-spec.md` §1 — the decision and measurements
-- `docs/husk-sandbox-spec.md` — the virtual host this engine would feed
+| | |
+|---|---|
+| Boot | ~1.5 s |
+| `Runspace.Open()` | 582 ms |
+| Cmdlets | 115 registered, 162 live |
+| Assemblies | 196 |
+
+```
+IEX literal    ( 21ms) => deobfuscated
+IEX base64     ( 99ms) => hello stage 2
+alias iex      ( 21ms) => aliasworks
+&('I'+'E'+'X') ( 13ms) => worked
+Write-Output   ( 14ms) => wo
+ConvertTo-Json (113ms) => {"a":1}
+-f + IEX       ( 47ms) => foobar
+```
+
+`IEX` over base64 is the deobfuscation primitive, and `&('I'+'E'+'X')` shows
+obfuscated invocation resolving. The engine does what the tree-walker was built
+to approximate.
+
+## Next
+
+- **Measure against the corpus.** 244 single-transform and 864 layered fixtures
+  already exist with ground truth. That is the number that decides whether this
+  replaces the tree-walker: it should be near 100% where the tree-walker is
+  ~80%/~50%.
+- **Host capture.** Nothing is faked yet. A real engine executing real malware
+  with no fakes is a liability, not a tool — `Invoke-WebRequest` currently has
+  whatever the browser gives it. The virtual host in `husk-sandbox-spec.md` is
+  what makes this safe, and it is now the critical path rather than a nicety.
+- **Commands.Management** for the filesystem/registry cmdlet surface.
+- **Trimming.** 196 assemblies and 12 MB gzipped is a lot; most of Roslyn and
+  Markdig is dead weight for deobfuscation.

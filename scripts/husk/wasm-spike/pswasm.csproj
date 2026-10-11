@@ -14,7 +14,7 @@
     <!-- PowerShell.Invoke blocks the caller while the pipeline completes, which
          deadlocks single-threaded. Needs SharedArrayBuffer, so the host must
          send COOP/COEP. Experimental in .NET 8. -->
-    <WasmEnableThreads>true</WasmEnableThreads>
+    <WasmEnableThreads>false</WasmEnableThreads>
     <EventSourceSupport>false</EventSourceSupport>
   </PropertyGroup>
   <ItemGroup>

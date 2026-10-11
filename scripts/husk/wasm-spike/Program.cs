@@ -3,11 +3,13 @@ using System.IO;
 using System.Linq;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using System.Reflection;
 using System.Runtime.InteropServices.JavaScript;
 
 public static partial class Spike
 {
     private static Runspace? _rs;
+    private static int _cmdletCount;
 
     /// What the wasm runtime actually reports for the paths SMA derives
     /// $PSHOME from. Guessing at these cost two build cycles.
@@ -49,7 +51,18 @@ public static partial class Spike
             // With $PSHOME resolving, try the real thing: CreateDefault2
             // imports Microsoft.PowerShell.Core, which is where IEX lives.
             var iss = InitialSessionState.CreateDefault2();
-            iss.ThreadOptions = PSThreadOptions.UseCurrentThread; // wasm is single-threaded
+            iss.ThreadOptions = PSThreadOptions.UseCurrentThread;
+
+            // $PSHOME is "/" with no module layout under it, so the usual
+            // discovery finds no cmdlets. Register them straight off the
+            // assembly instead: every [Cmdlet]-attributed type in
+            // Commands.Utility, which is where Invoke-Expression lives.
+            // Loaded by name rather than referenced at compile time: the
+            // compile-time identity would have to match the runtime one
+            // exactly, and pinning both across two builds is more fragile
+            // than just asking the runtime for it.
+            var utility = Assembly.Load("Microsoft.PowerShell.Commands.Utility");
+            _cmdletCount = RegisterCmdlets(iss, utility); // wasm is single-threaded
             _rs = RunspaceFactory.CreateRunspace(iss);
             _rs.Open();
             return "OK";
@@ -103,6 +116,38 @@ public static partial class Spike
                 ? " | ERRORS: " + string.Join("; ", ps.Streams.Error.Select(e => e.ToString()))
                 : "";
             return string.Join("\n", results.Select(r => r?.ToString() ?? "")) + errs;
+        }
+        catch (Exception ex) { return Describe(ex); }
+    }
+
+
+    /// Adds every [Cmdlet] type in an assembly to the session state.
+    private static int RegisterCmdlets(InitialSessionState iss, Assembly assembly)
+    {
+        var added = 0;
+        foreach (var type in assembly.GetTypes())
+        {
+            if (type.IsAbstract || !type.IsPublic) { continue; }
+            var attr = type.GetCustomAttribute<CmdletAttribute>();
+            if (attr is null) { continue; }
+            iss.Commands.Add(new SessionStateCmdletEntry(
+                $"{attr.VerbName}-{attr.NounName}", type, helpFileName: null));
+            added++;
+        }
+        return added;
+    }
+
+    /// How many cmdlets actually made it in, for the probe.
+    [JSExport]
+    internal static string CmdletCount()
+    {
+        try
+        {
+            using var ps = PowerShell.Create();
+            ps.Runspace = _rs!;
+            ps.AddScript("(Get-Command -CommandType Cmdlet).Count");
+            var live = string.Join(",", ps.Invoke().Select(r => r?.ToString() ?? ""));
+            return $"registered={_cmdletCount} live={live}";
         }
         catch (Exception ex) { return Describe(ex); }
     }
