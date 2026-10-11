@@ -13,9 +13,10 @@ cross-origin isolation headers. `file://` does not work, for an unrelated
 loader reason. Six fixtures miss in total: five want AES, which browser .NET
 cannot serve synchronously, and one is a corpus defect. See the corpus section.
 
-Ten real source patches, 477 insertions across 14 files — seven portability
-guards and three deliberate Windows PowerShell 5.1 fidelity patches. The
-fidelity patches are the ones that moved the number: without them the engine
+Fifteen real source patches, 1,052 insertions across 18 files — seven
+portability guards, three deliberate Windows PowerShell 5.1 fidelity patches,
+a cmdlet-level capture layer, and the step and time budgets. The fidelity
+patches are the ones that moved the corpus number: without them the engine
 scored **11.5%**.
 
 This is a work log, not a spec. It exists so the work can be resumed from a
@@ -282,9 +283,10 @@ Output: `src/System.Management.Automation/bin/Release/net8.0/browser-wasm/System
 ## The patch series
 
 `scripts/husk/wasm-spike/patches/0001-powershell-browser-wasm.patch` — the whole
-port is **477 insertions across 14 files**. Apply to a clean `v7.4.6` checkout.
+port is **1,052 insertions across 18 files**. Apply to a clean `v7.4.6`
+checkout.
 
-Two are environment-only, needed because of this network policy:
+Three are environment-only, needed because of this network policy:
 
 1. `global.json` — SDK pin 8.0.403 → installed 8.0.131 with `rollForward`.
 2. `nuget.config` — PowerShell's private Azure feed is blocked; nuget.org has
@@ -292,7 +294,7 @@ Two are environment-only, needed because of this network policy:
 3. `PSVersionInfoGenerator.csproj` — Roslyn 4.9.2 → 4.8.0, because SDK 8.0.131
    ships the 4.8 compiler and the newer SDK is not installable here.
 
-Three are real port patches, each guarding a platform assumption:
+Seven are real port patches, each guarding a platform assumption:
 
 4. **`engine/Utils.cs` — `GetApplicationBase`.** Returns
    `Path.GetDirectoryName(assembly.Location)`; `Location` is `""` for
