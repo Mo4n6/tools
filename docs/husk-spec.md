@@ -57,6 +57,32 @@ mode but not AOT. Plausible on .NET 8+; no known working build.
 in under 3 seconds. That would be worth revisiting for fidelity — but the
 ceiling would still be set by information availability, not by us.
 
+**Falsifier tested, 2026-10-11. Not met: no such build exists to try.**
+
+Measured with .NET SDK 8.0.131 and the `wasm-tools` workload:
+
+- `System.Management.Automation` 7.4.6 resolves for `browser-wasm` with
+  `compile` → `ref/net8.0/System.Management.Automation.dll` and **no
+  `runtimeTargets` entry at all**. The package ships implementations for the
+  `unix` and `win` RIDs only.
+- A project referencing it **builds clean, 0 errors**, and publishes a working
+  wasm bundle **containing no SMA**. It compiles against the reference
+  assembly's API surface and would throw on first use. A green build here means
+  nothing; the assembly list is the thing to check.
+- Three attempts to force the `unix` IL in — `<Reference>` with `Private`,
+  `ExcludeAssets="runtime"` plus `<Reference>`, and `WasmAssembliesToBundle` —
+  were all ignored silently. The wasm pipeline builds its assembly list from the
+  runtime pack and package runtime assets.
+- SMA P/Invokes `libpsl-native` (plus Windows-only `api-ms-win-*` sets on
+  guarded paths). A from-source browser-wasm build would have to cross-compile
+  that native library to wasm first.
+- The SMA-less bundle is 24MB raw / **8.88MB gzipped**. That is the floor a real
+  build sits above; SMA's own IL is 6.79MB before the native side.
+
+So the route is not "configure the build correctly" but "port PowerShell to
+browser-wasm", which is a project rather than a spike. The decision in this
+section stands, now on measurement rather than on estimate.
+
 **Revisited.** Once the objective grew to capturing host calls rather than only
 deobfuscating, reason 3 became decisive rather than merely persuasive: a real
 runtime gives perfect fidelity and partial capture, and a missed syscall is
