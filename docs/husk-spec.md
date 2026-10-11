@@ -116,8 +116,32 @@ assumptions as they surface, cross-compile or stub `libpsl-native` for wasm,
 and carry that fork forward against upstream. Days to weeks, and a maintenance
 commitment afterwards — not an afternoon of MSBuild.
 
+### And then threading ended it
+
+Probed in the browser before any source patching, because it was the cheapest
+thing that could invalidate the rest:
+
+```
+Thread.Start     = PlatformNotSupportedException
+Task.Run + Wait  = timeout
+```
+
+`Task.Run(...).Wait()` deadlocks on single-threaded wasm — the continuation is
+queued to the thread that is blocking. `PowerShell.Invoke()` is exactly that
+pattern, and `Runspace.Open()` uses wait handles the same way. Running SMA
+single-threaded means making it async throughout, which is a rewrite of its
+core rather than a fork patch.
+
+Multi-threaded wasm exists, needs `SharedArrayBuffer`, needs COOP/COEP headers,
+which **GitHub Pages cannot send** — already documented in the README for
+Glass — and which a `file://` copy on an analyst's disk certainly cannot. The
+engine route therefore costs static hosting, which is load-bearing for this
+project, on top of a PowerShell fork and experimental threading.
+
 The decision in this section stands, now on measurement rather than on
-estimate. What changed is the cost of reversing it: it is a known quantity.
+estimate, and it is no longer only about cost: the default deployment model
+cannot host a real engine at all. Full detail in
+[`husk-wasm-port-log.md`](husk-wasm-port-log.md).
 
 **Revisited.** Once the objective grew to capturing host calls rather than only
 deobfuscating, reason 3 became decisive rather than merely persuasive: a real

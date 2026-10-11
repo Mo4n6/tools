@@ -1,7 +1,9 @@
 # Porting PowerShell to browser-wasm: working log
 
-**Status:** in progress. Runtime boots and SMA loads; execution blocked on
-platform assumptions inside SMA that need a patched source build.
+**Status:** stopped. The runtime boots and SMA loads, but PowerShell cannot
+execute on single-threaded wasm, and the multi-threaded alternative requires
+cross-origin isolation headers that static hosting cannot send. See
+**Threading** below — that is the finding, the rest is how it was reached.
 
 This is a work log, not a spec. It exists so the work can be resumed from a
 cold container, because the scratchpad does not survive one. `husk-spec.md` §1
@@ -153,7 +155,10 @@ at System.Management.Automation.Runspaces.InitialSessionState.CreateDefault2()
 
 ---
 
-## Next steps
+## Next steps — only if the hosting model changes
+
+These were the plan before the threading result. Kept because they are still
+correct *if* Husk ever moves behind a server that sets COOP/COEP.
 
 1. **Clone PowerShell shallow.** `git clone --depth 1 -b v7.4.6
    https://github.com/PowerShell/PowerShell`. GitHub is reachable.
@@ -169,14 +174,53 @@ at System.Management.Automation.Runspaces.InitialSessionState.CreateDefault2()
 4. **Keep a patch series**, not a mutated checkout, so it can be rebased onto
    a newer PowerShell.
 
-## Risks not yet tested
+## Threading: tested, and it ends the default approach
 
-- **Threading.** SMA's pipeline model uses real threads. Browser wasm is
-  single-threaded without `SharedArrayBuffer`, which needs cross-origin
-  isolation headers that GitHub Pages cannot send — the same constraint already
-  documented for Glass in the README. If the engine needs threads to run a
-  pipeline at all, this is not a patch, and it would end the approach. **Test
-  this early**: it is the cheapest thing that could kill the whole effort.
+Probed in the browser before spending time on source patches, because it was
+the cheapest thing that could invalidate them. It did.
+
+```
+ProcessorCount   = 1
+IsBrowser        = True
+Thread.Start     = PlatformNotSupportedException
+Task.Run + Wait  = timeout            <- the fatal one
+blockingWait     = returned-false
+```
+
+`Task.Run(...).Wait()` timing out is the finding that matters. On
+single-threaded wasm the continuation is queued to the same thread, so a
+blocking wait can never be satisfied: every synchronous-over-async pattern
+deadlocks.
+
+`PowerShell.Invoke()` is precisely that pattern — it blocks the caller while
+the pipeline completes, and `Runspace.Open()` uses wait handles the same way.
+`PSThreadOptions.UseCurrentThread` moves the pipeline onto the calling thread
+but does not remove the internal waits.
+
+This is not a patch to `Utils.GetApplicationBase` or `PSSysLogProvider`. It is
+PowerShell's execution model assuming it can block one thread while work
+proceeds on another. Making SMA run single-threaded means making it async
+throughout, which is a rewrite of its core rather than a fork patch.
+
+### The one way around it, and what it costs
+
+.NET supports multi-threaded wasm (`WasmEnableThreads`), which needs
+`SharedArrayBuffer`, which needs COOP/COEP cross-origin isolation headers.
+
+- **GitHub Pages cannot send those headers.** Already documented in the README
+  for Glass, and it is why Glass does not request wasm threads either.
+- **A downloaded `file://` copy certainly cannot.** That property — Dead Letter
+  and Husk running from an analyst's disk with no server — is load-bearing for
+  this project.
+
+So the engine route is available only by giving up static hosting and running
+Husk behind a server that sets those headers, on top of a PowerShell fork and
+experimental wasm threading. That is a different product, not a different
+build flag.
+
+**Untested beyond this point**, and only worth testing if the hosting model
+changes: whether `WasmEnableThreads=true` actually builds with SMA, and
+whether the remaining blockers are patchable once threads exist.
 - **Reflection.Emit.** SMA compiles script via the DLR to `Expression.Compile()`.
   Works in mono's interpreter, not AOT. Keep AOT off.
 - **Fork maintenance.** Whatever lands here is a PowerShell fork to carry
