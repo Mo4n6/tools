@@ -16,8 +16,12 @@
 # Needs: dotnet SDK 8, the wasm-tools workload installed for that SDK's own
 # feature band, pwsh, git, python3. It checks the workload before the slow part
 # and says what to run; HUSK_ENGINE_INSTALL_WORKLOAD=1 lets it install it.
-# Takes 20-40 minutes from cold, most of it PowerShell's own codegen and three
-# assembly builds.
+# Takes a few minutes from cold, most of it PowerShell's own codegen and three
+# assembly builds: measured at 2m24s on a cold GitHub runner and about 3
+# minutes here. An earlier header said 20-40 minutes, which was a guess from
+# the first hand-driven builds and never remeasured - it is corrected because
+# the overstatement is actively misleading, having twice made a fast run look
+# like a failure and a real failure look merely fast.
 #
 # The result is an AppBundle directory to serve at VITE_HUSK_ENGINE_URL.
 
@@ -90,7 +94,8 @@ if ! dotnet workload list 2>/dev/null | grep -qE '^[[:space:]]*wasm-tools([[:spa
     say "installing wasm-tools for SDK $(dotnet --version)"
     dotnet workload install wasm-tools
     # Asserted, not assumed: this is the one failure that otherwise surfaces
-    # half an hour later as a compiler error about a missing workload.
+    # much later as a compiler error about a missing workload, from a build
+    # that has already spent the clone and the codegen.
     if ! dotnet workload list | grep -qE '^[[:space:]]*wasm-tools([[:space:]]|$)'; then
       echo "installed wasm-tools, but SDK $(dotnet --version) still does not see it" >&2
       exit 1

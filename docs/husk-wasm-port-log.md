@@ -1321,7 +1321,9 @@ on its own and the engine is opt-in, so a broken engine build must not take the
 site down. `continue-on-error`, then a step that checks for the boot manifest
 and tells the build whether to set `VITE_HUSK_ENGINE_URL` at all. The run
 summary says so in as many words. The failure mode is a site with no engine
-offered, which is exactly the site that exists today.
+offered, which is the site that existed before the engine first shipped - and,
+for one deploy, the site that existed after it too. See "It shipped on the
+third deploy".
 
 **The URL is relative** — `husk-engine/`, resolved against
 `import.meta.env.BASE_URL`. Writing `/tools/` into the workflow would duplicate
@@ -1349,6 +1351,73 @@ What is left is smaller than it was:
   an empty file.
 - **No `file://` story for the engine**, and there cannot be one: ES-module
   CORS. The tree-walker keeps that case, which is one reason it stays.
+
+### It shipped on the third deploy
+
+Live at `/tools/husk-engine/`: 186 assemblies in the boot manifest, 33.31 MB
+raw and 12.65 MB gzipped, the four PowerShell assemblies and the notice among
+them. The Pages artifact went from 6,581,462 bytes to 19,591,204, and the
+engine build itself took **2m24s on a cold runner** — not the 20-40 minutes
+the scripts had been claiming since the first hand-driven builds.
+
+It took three deploys, and the two failures were the same bug wearing
+different clothes. Both are worth keeping because neither was a mistake in the
+engine; both were a precondition that happened to hold in this container and
+nowhere else.
+
+**Deploy one failed at the prebuild guard**: three `TS2307: Cannot find module
+'playwright'`. `tsconfig.node.json` typechecks `scripts/**/*.mjs` with
+`checkJs`, three committed harnesses import playwright, and it was in neither
+`package.json` nor the lockfile. It was installed in this container outside
+the manifest, which is the only reason local typechecks passed. The process
+failure behind it: `npm run typecheck` had been run dozens of times and
+`npm run ci:prebuild` — what CI actually runs — not once.
+
+**Deploy two failed 39 seconds into the engine build** with `NETSDK1147: the
+following workloads must be installed: wasm-tools`, under SDK 8.0.425,
+*immediately after the same job had installed wasm-tools successfully*. Both
+were true, because the workload is recorded per SDK feature band and the two
+commands resolved different SDKs:
+
+| | resolved SDK | band |
+|---|---|---|
+| `dotnet workload install` in `$GITHUB_WORKSPACE` (no `global.json`) | newest on the runner — .NET 10 | 10.0.400 |
+| `dotnet build` inside the PowerShell clone | 8.0.425 | 8.0.400 |
+
+The clone's `global.json` is what selects the SDK, and the port patch rewrites
+it to `8.0.131` with `rollForward: latestFeature` — which means *whatever
+newest 8.0 band this machine has*. On a single-SDK container that is the one
+installed SDK and the install agrees with the build by accident. On a runner
+carrying .NET 10 beside 8.0.4xx it is a different answer.
+
+So the workload install belongs inside the clone, and only `build.sh` knows
+where that is. It owns the workload now: it checks before the slow part,
+installs when `HUSK_ENGINE_INSTALL_WORKLOAD` is set, and **asserts afterwards
+that the SDK can see what was installed**. There is no `--sdk-version` flag on
+`dotnet workload install`; the working directory is the only lever. That
+`global.json` governs workload commands at all is checkable — pin it to an
+uninstalled band and `dotnet workload list` itself fails with "A compatible
+.NET SDK was not found".
+
+**The lesson both failures share**: a build script that depends on something
+its environment supplies should assert it, not assume it. Neither failure was
+visible from any amount of local testing, because in both cases the local
+environment was the one where the assumption held. The guard added for the
+second one would have caught the class of both.
+
+Two things stayed unverified and should be said rather than implied. The live
+site could not be loaded from the build container — the network policy rejects
+`mo4n6.github.io`, and `gh` will not follow redirects to artifact storage — so
+the evidence above is the build log and the archived file list, which is what
+was published but is not a browser loading it. And it is not known whether the
+gate *installed* the workload in CI or found it already present: the
+retrievable log is only the tail, and the gate runs before it. The suspicion
+is that the old workspace-level install was itself the damage — its "Garbage
+collecting for SDK feature band(s) 8.0.100 ... 10.0.400" line is the kind of
+thing that would displace a preinstalled 8.0.400 workload — which would mean
+the gate's install path has still never run in CI. The assertion is what makes
+that acceptable: if the workload is ever missing, the build says so in seconds
+instead of failing as a compiler error.
 
 ### 8. Licensing and attribution — DONE
 
