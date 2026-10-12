@@ -127,12 +127,19 @@ public static class HuskNet
     private static int s_resolutions;
     private static long s_bytes;
 
+    /// Clears what belongs to one sample: the supplied bodies, the caps, the
+    /// kept artifacts.
+    ///
+    /// Deliberately not the network mode. Resetting that here left the two
+    /// halves of one switch disagreeing - the JS boundary still live from the
+    /// previous run while this resolver had gone back to blocked, so a direct
+    /// CLR request could leave while a proxied one could not. The mode belongs
+    /// to the session and the host sets it per run.
     internal static void Reset()
     {
         lock (s_supplied)
         {
             s_supplied.Clear();
-            s_live = false;
             s_resolutions = 0;
             s_bytes = 0;
             s_kept = 0;
@@ -171,9 +178,10 @@ public static class HuskNet
     /// Public for the script proxies. Records the attempt either way: a URL
     /// that resolved to nothing is still the sample telling you where it
     /// wanted to go, which is the IOC an analyst came for.
-    public static byte[]? ResolveBytes(string url, string native)
+    public static byte[]? ResolveBytes(string url, string method, string native)
     {
         url ??= "";
+        method = string.IsNullOrEmpty(method) ? "GET" : method.ToUpperInvariant();
         byte[]? body = null;
         string outcome;
 
@@ -212,7 +220,7 @@ public static class HuskNet
 
         if (body is null && outcome.Length == 0)
         {
-            var fetched = Spike.FetchSync(url, "GET");
+            var fetched = Spike.FetchSync(url, method);
             lock (s_supplied)
             {
                 if (fetched.Length == 0)
@@ -236,7 +244,10 @@ public static class HuskNet
             }
         }
 
-        HuskHost.Record("network.http", native, new[] { "GET", url, outcome });
+        // The sample's own verb. Recording GET for a POST told the analyst the
+        // wrong thing, and in live mode sent the wrong request - a POST cradle
+        // can get a different stage back, or none.
+        HuskHost.Record("network.http", native, new[] { method, url, outcome });
         return body;
     }
 
@@ -246,9 +257,9 @@ public static class HuskNet
     /// layer it is handed, and the cradle this exists for ends in IEX, so
     /// recording here too would show the analyst the same stage twice. The
     /// body is kept as an artifact instead, which is the part IEX cannot do.
-    public static string? ResolveText(string url, string native)
+    public static string? ResolveText(string url, string method, string native)
     {
-        var bytes = ResolveBytes(url, native);
+        var bytes = ResolveBytes(url, method, native);
         if (bytes is null) { return null; }
 
         Keep(url, bytes);
@@ -973,7 +984,7 @@ function Invoke-WebRequest {
         $Body, $Headers, $OutFile, $UserAgent,
         [Parameter(ValueFromRemainingArguments=$true)] $Rest
     )
-    $body = [HuskNet]::ResolveBytes([string]$Uri, ""Invoke-WebRequest $Method"")
+    $body = [HuskNet]::ResolveBytes([string]$Uri, [string]$Method, 'Invoke-WebRequest')
     if ($OutFile) {
         [HuskHost]::Record('filesystem.write', 'Invoke-WebRequest -OutFile', @([string]$OutFile))
         if ($null -ne $body) { [HuskNet]::Save([string]$OutFile, $body) }
@@ -1010,14 +1021,14 @@ function Invoke-RestMethod {
         $Body, $Headers, $OutFile,
         [Parameter(ValueFromRemainingArguments=$true)] $Rest
     )
-    [HuskNet]::ResolveText([string]$Uri, ""Invoke-RestMethod $Method"")
+    [HuskNet]::ResolveText([string]$Uri, [string]$Method, 'Invoke-RestMethod')
 }
 Set-Alias irm Invoke-RestMethod -Scope Global -Force
 
 function Start-BitsTransfer {
     [CmdletBinding()]
     param($Source, $Destination, [Parameter(ValueFromRemainingArguments=$true)] $Rest)
-    $body = [HuskNet]::ResolveBytes([string]$Source, 'Start-BitsTransfer')
+    $body = [HuskNet]::ResolveBytes([string]$Source, 'GET', 'Start-BitsTransfer')
     [HuskHost]::Record('filesystem.write', 'Start-BitsTransfer', @([string]$Destination))
     if ($null -ne $body) { [HuskNet]::Save([string]$Destination, $body) }
     $null
@@ -1096,14 +1107,14 @@ function New-Object {
         # vocabulary stops being one.
         $w = & $global:HuskRealNewObject -TypeName PSObject
         $w | Add-Member NoteProperty Headers (& $global:HuskRealNewObject -TypeName PSObject) -Force
-        $w | Add-Member ScriptMethod DownloadString { param($u) [HuskNet]::ResolveText([string]$u, 'Net.WebClient.DownloadString') } -Force
-        $w | Add-Member ScriptMethod DownloadData { param($u) $b = [HuskNet]::ResolveBytes([string]$u, 'Net.WebClient.DownloadData'); if ($null -ne $b) { [HuskNet]::Keep([string]$u, $b) }; $b } -Force
-        $w | Add-Member ScriptMethod DownloadFile { param($u,$f) $b = [HuskNet]::ResolveBytes([string]$u, 'Net.WebClient.DownloadFile'); [HuskHost]::Record('filesystem.write', 'Net.WebClient.DownloadFile', @([string]$f)); if ($null -ne $b) { [HuskNet]::Save([string]$f, $b) }; $null } -Force
+        $w | Add-Member ScriptMethod DownloadString { param($u) [HuskNet]::ResolveText([string]$u, 'GET', 'Net.WebClient.DownloadString') } -Force
+        $w | Add-Member ScriptMethod DownloadData { param($u) $b = [HuskNet]::ResolveBytes([string]$u, 'GET', 'Net.WebClient.DownloadData'); if ($null -ne $b) { [HuskNet]::Keep([string]$u, $b) }; $b } -Force
+        $w | Add-Member ScriptMethod DownloadFile { param($u,$f) $b = [HuskNet]::ResolveBytes([string]$u, 'GET', 'Net.WebClient.DownloadFile'); [HuskHost]::Record('filesystem.write', 'Net.WebClient.DownloadFile', @([string]$f)); if ($null -ne $b) { [HuskNet]::Save([string]$f, $b) }; $null } -Force
         # The async pair matters: a cradle that calls DownloadStringAsync and
         # then reads the result would otherwise reach the real WebClient.
-        $w | Add-Member ScriptMethod DownloadStringAsync { param($u) [HuskNet]::ResolveText([string]$u, 'Net.WebClient.DownloadStringAsync') } -Force
-        $w | Add-Member ScriptMethod DownloadFileAsync { param($u,$f) $b = [HuskNet]::ResolveBytes([string]$u, 'Net.WebClient.DownloadFileAsync'); [HuskHost]::Record('filesystem.write', 'Net.WebClient.DownloadFileAsync', @([string]$f)); if ($null -ne $b) { [HuskNet]::Save([string]$f, $b) }; $null } -Force
-        $w | Add-Member ScriptMethod OpenRead { param($u) $b = [HuskNet]::ResolveBytes([string]$u, 'Net.WebClient.OpenRead'); if ($null -eq $b) { $null } else { New-Object System.IO.MemoryStream -ArgumentList @(,$b) } } -Force
+        $w | Add-Member ScriptMethod DownloadStringAsync { param($u) [HuskNet]::ResolveText([string]$u, 'GET', 'Net.WebClient.DownloadStringAsync') } -Force
+        $w | Add-Member ScriptMethod DownloadFileAsync { param($u,$f) $b = [HuskNet]::ResolveBytes([string]$u, 'GET', 'Net.WebClient.DownloadFileAsync'); [HuskHost]::Record('filesystem.write', 'Net.WebClient.DownloadFileAsync', @([string]$f)); if ($null -ne $b) { [HuskNet]::Save([string]$f, $b) }; $null } -Force
+        $w | Add-Member ScriptMethod OpenRead { param($u) $b = [HuskNet]::ResolveBytes([string]$u, 'GET', 'Net.WebClient.OpenRead'); if ($null -eq $b) { $null } else { New-Object System.IO.MemoryStream -ArgumentList @(,$b) } } -Force
         $w | Add-Member ScriptMethod UploadString { param($u,$d) [HuskHost]::Record('network.upload', 'Net.WebClient.UploadString', @([string]$u)); $null } -Force
         return $w
     }

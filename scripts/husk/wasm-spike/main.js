@@ -113,6 +113,21 @@ globalThis.setNetworkMode = (mode) => {
 globalThis.resetDownloads = () => e.Spike.ResetDownloads();
 
 /**
+ * Empty the boundary ledger.
+ *
+ * `proxyCalls()` drains the C# records and this is its other half, which was
+ * missing: `hostCalls()` concatenates both, so without this every later run in
+ * a reused engine re-emitted the previous sample's network records and its
+ * URLs turned up in the next sample's IOC list. A report belongs to one
+ * sample - the same reason the C# ledger really drains instead of copying.
+ */
+globalThis.drainBoundary = () => {
+  const drained = hostLog.length;
+  hostLog.length = 0;
+  return drained;
+};
+
+/**
  * Give the engine a body to serve for a URL the sample asks for.
  *
  * The key is a whole URL, a bare filename, or '*' for anything. Filenames and
@@ -177,6 +192,15 @@ globalThis.huskFetchSync = (url, method) => {
 
     x.send(null);
     entry.status = x.status;
+
+    // A 404 page is not stage 2. Returning its body let a cradle IEX an error
+    // page, which shows up as spurious layers and parse errors rather than as
+    // the failure WebClient would have raised. The status is recorded either
+    // way, so the attempt is still visible.
+    if (x.status < 200 || x.status >= 300) {
+      entry.outcome = 'http ' + x.status;
+      return new Uint8Array(0);
+    }
 
     const bytes =
       binary && x.response

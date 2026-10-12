@@ -1576,6 +1576,59 @@ A supplied body may be bytes rather than text. An executable round-tripped
 through a string comes back corrupted, and the analyst would only find out
 after saving it and checking the hash.
 
+#### Four more, from a review, and why 17 checks missed them
+
+A code review on the merged change found four real defects. All four survived
+a probe that passed 17 checks, and they have one thing in common: **every one
+lives in state that outlives a run, or in live mode** - and every case in that
+probe ran once, in blocked mode. The coverage was wide and one run deep.
+
+**The boundary ledger never drained.** `hostCalls()` concatenates the C#
+records with `hostLog` from `main.js`, and the worker drained only the C# half.
+Every later run in a reused engine re-emitted the previous sample's network
+records, so one sample's URLs appeared in the next sample's IOC list. The C#
+ledger really drains, for exactly this reason, and had been saying so in a
+comment since the beginning; the JS half simply never got the same treatment.
+It only became reachable here, because before this change nothing in the
+product ever reached the fetch boundary.
+
+**The method was hard-coded to GET.** `ResolveBytes` recorded `"GET"` whatever
+the sample asked for, where the proxy it replaced had recorded `$Method`. A
+POST cradle was reported as a GET, and in live mode an actual GET went out -
+which can return a different stage, or none.
+
+**`Reset` cleared the network mode.** It belongs to the session, not to the
+sample, and clearing it per run left the two halves of one switch disagreeing:
+the JS boundary still live from the previous run while the resolver had gone
+back to blocked, so a direct CLR request could leave while a proxied one could
+not. The mirror case was as bad - an engine initialised live had its resolver
+silently blocked by its own first run. The worker now applies the effective
+mode unconditionally against what `init` chose, rather than only when a run
+names one.
+
+**A 404 body was executed as a stage.** From a host permissive enough to allow
+the read, an error page came back as content and got handed to `IEX`, which
+produces spurious layers and parse errors instead of the failure `WebClient`
+would have raised.
+
+The probe now covers all four, cross-run and live on purpose: a POST recorded
+as POST, a second sample with no trace of the first one's URLs, a reset that
+leaves the network where the host put it, and a 404 that is recorded but not
+run. The lesson is about shape rather than any one bug - a harness where every
+case is independent and every case is the happy path will not find the bugs
+that live between cases.
+
+One gap in that coverage is worth naming rather than leaving to be discovered.
+The probe drains the ledgers itself, the way the worker does, so it proves
+`drainBoundary()` works - not that the worker calls it. Deleting that call from
+`engine.worker.ts` would bring the leak back and every check would still pass.
+`e2e.mjs` does not close it either: it runs two analyses, but both in blocked
+mode, where the boundary records nothing. Covering it properly needs either a
+live run inside `e2e.mjs` against a same-origin stage - the harness asserts
+nothing leaves the page, so a real URL cannot be used - or a unit test around
+the worker's message handler, which currently cannot be imported without the
+engine behind it. Neither is done.
+
 What is left:
 - **Binary stages are supplied, not fetched, like every other stage.** Nothing
   changes that; it is the CORS wall again.
