@@ -8,6 +8,7 @@
       "result": {
         "output": "hello husk\n",
         "error": "",
+        "completed": true,
         "layers": [
           "Write-Host \"hello husk\""
         ]
@@ -94,6 +95,7 @@
       "result": {
         "output": "",
         "error": "System.Diagnostics.Process is not supported on this platform.",
+        "completed": true,
         "layers": []
       },
       "hostCalls": [
@@ -257,6 +259,7 @@
       "result": {
         "output": "",
         "error": "",
+        "completed": true,
         "layers": []
       },
       "hostCalls": [
@@ -349,16 +352,6 @@
               "seeded": true
             }
           ]
-        },
-        {
-          "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-          "values": [
-            {
-              "name": "Updater",
-              "value": "powershell -w hidden -ep bypass -f C:\\Users\\analyst\\AppData\\Roaming\\Updater.ps1",
-              "seeded": false
-            }
-          ]
         }
       ],
       "dropped": []
@@ -370,6 +363,7 @@
       "result": {
         "output": "",
         "error": "husk: time budget exhausted after 10000 ms",
+        "completed": false,
         "layers": []
       },
       "hostCalls": [],
@@ -443,16 +437,6 @@
               "seeded": true
             }
           ]
-        },
-        {
-          "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-          "values": [
-            {
-              "name": "Updater",
-              "value": "powershell -w hidden -ep bypass -f C:\\Users\\analyst\\AppData\\Roaming\\Updater.ps1",
-              "seeded": false
-            }
-          ]
         }
       ],
       "dropped": []
@@ -464,6 +448,7 @@
       "result": {
         "output": "tampered",
         "error": "",
+        "completed": true,
         "layers": []
       },
       "hostCalls": [
@@ -554,16 +539,6 @@
               "name": "Personal",
               "value": "C:\\Users\\analyst\\Documents",
               "seeded": true
-            }
-          ]
-        },
-        {
-          "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-          "values": [
-            {
-              "name": "Updater",
-              "value": "powershell -w hidden -ep bypass -f C:\\Users\\analyst\\AppData\\Roaming\\Updater.ps1",
-              "seeded": false
             }
           ]
         }

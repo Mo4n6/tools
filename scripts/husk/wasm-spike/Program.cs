@@ -830,8 +830,15 @@ function New-Object {
     {
         HuskHost.TakeLayers();
         HuskHostHook.BeginRun(_key);
+        VirtualRegistry.Reset();
         string output;
         string error = "";
+
+        // Whether the pipeline ran to the end, which is not the same question
+        // as whether the sample raised an error: Start-Process failing is a
+        // non-terminating error and the script carries on afterwards. Only the
+        // first tells an analyst the analysis is incomplete.
+        var completed = false;
         try
         {
             using var ps = PowerShell.Create();
@@ -844,6 +851,8 @@ function New-Object {
             {
                 error = ps.Streams.Error[0].ToString();
             }
+
+            completed = true;
         }
         catch (Exception ex) { output = ""; error = ex.GetType().Name + ": " + ex.Message; }
 
@@ -853,11 +862,19 @@ function New-Object {
         if (HuskHostHook.BudgetExceeded)
         {
             error = "husk: " + HuskHostHook.BudgetReason;
+
+            // The budget throws PipelineStoppedException, which the pipeline
+            // handles itself rather than letting out to the host - so Invoke
+            // returns normally and the try block completes. Measured: without
+            // this line a run cut off after ten seconds reported itself as
+            // having run to the end.
+            completed = false;
         }
 
         var layers = string.Join(",", HuskHost.TakeLayers().Select(HuskHost.JsonQuotePublic));
         return "{\"output\":" + HuskHost.JsonQuotePublic(output) +
                ",\"error\":" + HuskHost.JsonQuotePublic(error) +
+               ",\"completed\":" + (completed ? "true" : "false") +
                ",\"layers\":[" + layers + "]}";
     }
 

@@ -72,6 +72,23 @@ internal static class VirtualRegistry
 
     static VirtualRegistry()
     {
+        Reset();
+    }
+
+    /// <summary>
+    /// Returns the registry to its freshly-seeded state.
+    ///
+    /// The store is static, so without this one engine instance carries one
+    /// sample's writes into the next sample's report - measured, a second run
+    /// came back owning the first run's Run-key value. A report belongs to one
+    /// sample. Reseeding rather than reconstructing keeps the paths a sample
+    /// reads for its environment checks answerable.
+    /// </summary>
+    internal static void Reset()
+    {
+        s_root.Keys.Clear();
+        s_root.Values.Clear();
+
         foreach (var hive in s_hives.Values.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             Create(hive);

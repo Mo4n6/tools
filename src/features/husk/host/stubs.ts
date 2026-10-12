@@ -236,6 +236,11 @@ export function scanHostCalls(layer: Layer, trace: Trace): void {
         signature: rule.signature,
         args: args.length > 0 ? args : [whole],
         taint: CLEAN,
+        // Inferred from source text, not observed: the call may never have
+        // run. Stated rather than left blank, because these sit in the same
+        // timeline as the engine's observed calls and the difference decides
+        // how far to trust a row.
+        origin: 'text-scan',
       });
 
       trace.gaps.report({

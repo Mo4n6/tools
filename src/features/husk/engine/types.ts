@@ -52,8 +52,21 @@ export interface EngineDroppedFile {
 export interface EngineRunResult {
   /** Everything the script printed and returned. */
   readonly output: string;
-  /** Empty when the run completed. A 'husk: ' prefix means a budget stop. */
+  /**
+   * The first error the sample raised, terminating or not. Empty when it
+   * raised none. A 'husk: ' prefix means a budget stop rather than the
+   * sample's own error.
+   */
   readonly error: string;
+  /**
+   * Whether the pipeline ran to the end.
+   *
+   * Not the same question as whether `error` is empty: `Start-Process` failing
+   * is a non-terminating error and the script carries on past it, so a run can
+   * complete with an error. Only this says the analysis is incomplete — the
+   * sample may have had more to do, and whatever it was is not in this report.
+   */
+  readonly completed: boolean;
   /** Each text handed to Invoke-Expression, outermost first. */
   readonly layers: readonly string[];
 }

@@ -162,6 +162,16 @@ describe('adaptRun', () => {
     expect(events[0].args[0]).toContain('sealed');
   });
 
+  it('carries only the registry values this sample wrote, not the last one’s', () => {
+    // The store is static inside the engine, so one instance used to carry a
+    // sample's writes into the next sample's report. Every case after the
+    // dropper came back owning its Run-key value.
+    for (const name of ['pinvoke-declaration', 'budget-exhausted', 'tamper']) {
+      const { script, run } = load(name);
+      expect(adaptRun(script, run).registryWrites, name).toEqual([]);
+    }
+  });
+
   it('reports an op it does not know as a gap rather than dropping it', () => {
     const { script, run } = load('dropper');
     const drifted: EngineRun = {

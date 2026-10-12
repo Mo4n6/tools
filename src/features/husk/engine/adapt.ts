@@ -66,8 +66,13 @@ export interface EngineAnalysis {
    * evidence — a partial result, not a failure.
    */
   readonly stoppedBy?: string;
-  /** The sample's own terminating error, if it had one. */
+  /** The first error the sample raised, terminating or not. */
   readonly error?: string;
+  /**
+   * Whether the pipeline ran to the end. False means the analysis is
+   * incomplete and the sample may have had more to do.
+   */
+  readonly completed: boolean;
 }
 
 /** The engine's source labels map onto the trace's, which has one more. */
@@ -161,5 +166,6 @@ export function adaptRun(source: string, run: EngineRun): EngineAnalysis {
     dropped: run.dropped.map(droppedFile),
     stoppedBy: stopped ? error.slice(BUDGET_PREFIX.length) : undefined,
     error: error.length > 0 && !stopped ? error : undefined,
+    completed: run.result.completed,
   };
 }
