@@ -84,9 +84,14 @@ jobs:
         id: engine-build
         if: steps.engine-cache.outputs.cache-hit != 'true'
         continue-on-error: true
-        run: |
-          dotnet workload install wasm-tools
-          scripts/husk/engine/build.sh "$GITHUB_WORKSPACE/husk-engine"
+        env:
+          # build.sh installs wasm-tools itself, from inside the PowerShell
+          # clone, because the workload is per SDK feature band and the clone's
+          # global.json is what picks the SDK. Installing it here would target
+          # this runner's newest SDK instead - .NET 10, not the 8.0.4xx that
+          # compiles the engine - and the build would fail with NETSDK1147.
+          HUSK_ENGINE_INSTALL_WORKLOAD: '1'
+        run: scripts/husk/engine/build.sh "$GITHUB_WORKSPACE/husk-engine"
 
       - name: Decide whether the engine ships
         id: engine
@@ -103,7 +108,9 @@ jobs:
             {
               echo '> **Husk is deploying without its PowerShell engine.**'
               echo '> The tree-walker still works; the engine is simply not offered.'
-              echo '> See the "Build the engine" step for why.'
+              echo '> Build the engine: `${{ steps.engine-build.outcome }}`'
+              echo '> See that step for why. A skipped one means the cache hit'
+              echo '> but restored nothing usable.'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
