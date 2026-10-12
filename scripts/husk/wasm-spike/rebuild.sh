@@ -7,3 +7,6 @@ cd "$SP/pswasm"; rm -rf bin obj
 dotnet publish -c Release > rebuild.log 2>&1
 B="$SP/pswasm/bin/Release/net8.0/browser-wasm/AppBundle"
 HUSK_DEPS="$SP/deps/out" python3 "$HERE/../engine/inject.py" "$B"
+# The licence notice MIT requires to travel with these assemblies.
+python3 "$HERE/../engine/notice.py" "$SP/deps/out/deps.deps.json" "$B" \
+  "$B/THIRD-PARTY-NOTICE.txt"

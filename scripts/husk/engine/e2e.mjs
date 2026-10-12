@@ -25,6 +25,14 @@ import { extname, join } from 'node:path';
 const DIST = process.env.HUSK_DIST ?? 'dist';
 const PORT = Number(process.env.HUSK_PORT ?? 4240);
 const ORIGIN = `http://localhost:${PORT}`;
+/**
+ * The path the site is served at, so this can check the real Pages layout.
+ *
+ * On Pages the base is `/tools/`, derived from the repository name, and every
+ * asset path in the built index.html carries it. Serving at `/` instead would
+ * test a configuration that is never deployed.
+ */
+const BASE = (process.env.HUSK_BASE ?? '/').replace(/\/*$/, '/');
 
 const TYPES = {
   '.html': 'text/html',
@@ -52,7 +60,8 @@ const DROPPER = [
 
 const serve = () =>
   createServer((request, response) => {
-    const path = decodeURIComponent(request.url.split('?')[0]);
+    let path = decodeURIComponent(request.url.split('?')[0]);
+    if (BASE !== '/' && path.startsWith(BASE)) path = path.slice(BASE.length - 1);
     let file = join(DIST, path);
     // A single-page app: anything that is not a file is the shell.
     if (!existsSync(file) || statSync(file).isDirectory()) file = join(DIST, 'index.html');
@@ -88,7 +97,7 @@ async function main() {
   page.on('pageerror', (error) => pageErrors.push(String(error)));
 
   try {
-    await page.goto(`${ORIGIN}/husk`, { waitUntil: 'networkidle' });
+    await page.goto(`${ORIGIN}${BASE}husk`, { waitUntil: 'networkidle' });
 
     const offer = page.locator('input[type=checkbox]');
     await offer.waitFor({ timeout: 30_000 });
@@ -127,6 +136,17 @@ async function main() {
     check(
       download.suggestedFilename() === 'note.txt.malware',
       `the saved file is named for double-click safety (${download.suggestedFilename()})`,
+    );
+
+    // MIT lets these assemblies ship on the condition that the notice ships
+    // with them, so a bundle without it is not deployable.
+    const notice = await page.request.get(`${ORIGIN}${BASE}husk-engine/THIRD-PARTY-NOTICE.txt`);
+    const noticeText = notice.ok() ? await notice.text() : '';
+    check(notice.ok(), 'the third-party notice is served with the engine');
+    check(
+      noticeText.includes('Copyright (c) Microsoft Corporation') &&
+        noticeText.includes('MIT License'),
+      'the notice carries the copyright and the licence text MIT requires',
     );
 
     check(pageErrors.length === 0, `no page errors${pageErrors.length ? `: ${pageErrors[0]}` : ''}`);

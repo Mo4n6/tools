@@ -43,7 +43,16 @@ const HARD_TIMEOUT_MS = 30_000;
 
 export function engineBaseUrl(): string | undefined {
   const configured = import.meta.env.VITE_HUSK_ENGINE_URL?.trim();
-  return configured !== undefined && configured.length > 0 ? configured : undefined;
+  if (configured === undefined || configured.length === 0) return undefined;
+
+  // A setting with no leading slash resolves against the site base, so one
+  // value — `husk-engine/` — is right at `/` in dev and at `/tools/` on Pages.
+  // The alternative was writing `/tools/` into the deploy workflow, which
+  // duplicates a path vite.config.ts already derives from the repository name
+  // and would be wrong the moment either moves.
+  if (configured.startsWith('/') || /^[a-z]+:\/\//i.test(configured)) return configured;
+
+  return `${import.meta.env.BASE_URL}${configured}`;
 }
 
 /**

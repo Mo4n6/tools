@@ -130,6 +130,20 @@ describe('third-party notices', () => {
     expect(thirdParty).toContain('docs/licenses/husk-manifest.json');
   });
 
+  it('names the engine in the built-output table now that it ships', () => {
+    // The engine is deployed to Pages, so its assemblies are distributed, and
+    // MIT's one condition comes due: the notice travels with the copies. The
+    // generator is what discharges it; this is what stops the obligation being
+    // quietly dropped if the deploy changes.
+    const thirdParty = read('THIRD-PARTY.md');
+
+    expect(thirdParty).toContain('dist/husk-engine/');
+    expect(thirdParty).toContain('THIRD-PARTY-NOTICE.txt');
+    expect(thirdParty).toContain('scripts/husk/engine/notice.py');
+    // The engine used not to ship, and that sentence must not outlive it.
+    expect(thirdParty).not.toContain('they are not in `dist/` yet');
+  });
+
   it('keeps the upstream copyright notice MIT requires', () => {
     // MIT lets the port carry the project licence only while this survives.
     for (const relative of [

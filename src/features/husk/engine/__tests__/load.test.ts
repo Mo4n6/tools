@@ -130,6 +130,26 @@ describe('engineBaseUrl', () => {
     vi.stubEnv('VITE_HUSK_ENGINE_URL', '/husk-engine/');
     expect(engineBaseUrl()).toBe('/husk-engine/');
   });
+
+  it('resolves a relative setting against the site base', () => {
+    // One value has to be right both at / in dev and at /tools/ on Pages.
+    // Writing /tools/ into the deploy workflow would duplicate a path
+    // vite.config.ts already derives from the repository name.
+    vi.stubEnv('VITE_HUSK_ENGINE_URL', 'husk-engine/');
+    vi.stubEnv('BASE_URL', '/tools/');
+    expect(engineBaseUrl()).toBe('/tools/husk-engine/');
+
+    vi.stubEnv('BASE_URL', '/');
+    expect(engineBaseUrl()).toBe('/husk-engine/');
+  });
+
+  it('leaves an absolute setting alone', () => {
+    vi.stubEnv('BASE_URL', '/tools/');
+    for (const configured of ['/elsewhere/engine/', 'https://cdn.example/engine/']) {
+      vi.stubEnv('VITE_HUSK_ENGINE_URL', configured);
+      expect(engineBaseUrl()).toBe(configured);
+    }
+  });
 });
 
 describe('probeEngine', () => {

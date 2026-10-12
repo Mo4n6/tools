@@ -163,10 +163,20 @@ readonly BUNDLE="$WORK/app/bin/Release/net8.0/browser-wasm/AppBundle"
 say "injecting the engine assemblies into the boot manifest"
 HUSK_DEPS="$WORK/deps/out" python3 "$REPO_ROOT/scripts/husk/engine/inject.py" "$BUNDLE"
 
+# ----------------------------------------------------------------- notice ---
+# MIT permits shipping these assemblies on one condition: the copyright notice
+# and the licence text travel with the copies. Publishing the bundle is
+# distributing them, so the notice goes in the bundle rather than only in the
+# repository. Generated from the packages that actually put a file here.
+say "writing the third-party notice"
+python3 "$REPO_ROOT/scripts/husk/engine/notice.py" \
+  "$WORK/deps/out/deps.deps.json" "$BUNDLE" "$BUNDLE/THIRD-PARTY-NOTICE.txt"
+
 say "copying the bundle to $OUT"
 rm -rf "$OUT"
 mkdir -p "$(dirname "$OUT")"
 cp -r "$BUNDLE" "$OUT"
 
 printf '\n%s\n' "engine built: $OUT"
+printf '%s\n' "third-party notice: $OUT/THIRD-PARTY-NOTICE.txt"
 printf '%s\n' "serve it at VITE_HUSK_ENGINE_URL, e.g. VITE_HUSK_ENGINE_URL=/husk-engine/"

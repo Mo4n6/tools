@@ -1306,12 +1306,43 @@ page mid-run, and a case-sensitive probe missed a line the UI renders in
 uppercase. A check that passes for the wrong reason is worse than no check, so
 both now match the summary line specifically.
 
-What is left is smaller than it was:
+### It deploys
 
-- **Serving the bundle.** The workflow uploads it as an artifact; something has
-  to put it where `VITE_HUSK_ENGINE_URL` points. Extending the Pages deploy to
-  fetch the artifact is the obvious next step and a change to a live site, so
-  it is a decision rather than a task.
+`deploy-pages.yml` builds the engine and serves it at `husk-engine/`. Four
+things make that safe to put in front of a live site:
+
+**Cached on the hash of its inputs** — the patch series, the spike sources, the
+build and inject scripts. A deploy that does not change the engine restores
+33 MB instead of spending half an hour rebuilding it, and a miss rebuilds
+rather than leaving anything stale.
+
+**The engine build is allowed to fail.** The tree-walker is a complete answer
+on its own and the engine is opt-in, so a broken engine build must not take the
+site down. `continue-on-error`, then a step that checks for the boot manifest
+and tells the build whether to set `VITE_HUSK_ENGINE_URL` at all. The run
+summary says so in as many words. The failure mode is a site with no engine
+offered, which is exactly the site that exists today.
+
+**The URL is relative** — `husk-engine/`, resolved against
+`import.meta.env.BASE_URL`. Writing `/tools/` into the workflow would duplicate
+a path `vite.config.ts` already derives from the repository name, and would be
+wrong the moment either moves.
+
+**The notice ships with it.** MIT permits distributing the assemblies on the
+condition that the copyright notice and the licence text travel with the
+copies, and publishing them is distributing them, so
+`THIRD-PARTY-NOTICE.txt` is written into the bundle by both build paths.
+`scripts/husk/engine/notice.py` generates it from the packages that actually
+put a file in the bundle — 14 of the 23 the build resolves, the other nine
+being reference-only or Windows-native — reading each one's licence out of its
+own `.nuspec`. All 14 are MIT, and the generator prints anything that is not.
+
+Verified at the real base path: `HUSK_BASE=/tools/ node
+scripts/husk/engine/e2e.mjs` passes all fourteen checks, the last two being
+that the notice is served and that it carries both the copyright line and the
+licence text.
+
+What is left is smaller than it was:
 - **`Save` needs the engine still loaded.** The client is terminated after a
   hard timeout, and a dropped file can only be read back from a live engine, so
   saving after that fails with "re-run the sample" rather than silently giving
