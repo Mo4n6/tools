@@ -255,10 +255,15 @@ describe('EngineClient', () => {
     await client.load('/husk-engine/');
     FakeWorker.last!.behaviour = 'silent';
 
-    const pending = client.run('while ($true) { }');
+    // The assertion is attached before the clock moves on purpose: the timer
+    // rejects during advanceTimersByTimeAsync, and a promise that is rejected
+    // with nothing listening is reported as an unhandled rejection even though
+    // the next line would have handled it.
+    const settled = expect(client.run('while ($true) { }')).rejects.toBeInstanceOf(
+      EngineTerminated,
+    );
     await vi.advanceTimersByTimeAsync(30_000);
-
-    await expect(pending).rejects.toBeInstanceOf(EngineTerminated);
+    await settled;
     expect(FakeWorker.last!.terminated).toBe(true);
   });
 
