@@ -1155,36 +1155,100 @@ The honest framing for 16 MB: it is a once-per-browser download, cached, for a
 tool that replaces a VM, and the tree-walker still serves the first paint and
 the `file://` case. The engine has to be a lazy import, not a page weight.
 
-### 7. Integrate with Husk proper — **the next thing to do**
+### 7. Integrate with Husk proper — the adapter and loader are in; the UI is not
 
-**Why:** everything about the engine is still a standalone spike under
-`scripts/husk/wasm-spike/`. None of it is wired to `analyze.ts`, the trace, the
-gap ledger or the UI, so an analyst cannot use any of it. The launcher parser
-(item 10) is the first piece that landed in the product.
+`src/features/husk/engine/` now exists in the product, with 37 tests:
 
-**Done when:** the engine is a `Frontend` behind the interface in
-`husk-sandbox-spec.md` §6, emitting the same canonical ops, so the existing IOC
-extraction and reporting work unchanged.
+| | |
+|---|---|
+| `types.ts` | the engine's wire shape, written down because it is a boundary |
+| `adapt.ts` | one engine run into a `Trace` |
+| `analyze.ts` | one engine run into an `AnalysisResult` |
+| `engine.worker.ts` | the engine, in a Worker |
+| `load.ts` | loading it, probing for it, and doing without it |
+| `paths.ts` | joining the configured base to a path |
 
-**The decision from item 3 has landed:** the engine wins, 98.0%/100.0% against
-80.7%/50.2%, so it becomes the default backend. The tree-walker stays for the
-`file://` single-file case, which the engine cannot serve — ES-module CORS — and
-for the first paint, since the engine costs ~12 MB and ~1.5 s of boot.
+**The spec's claim holds.** `analyzeRun` runs `scanAllLayers` and
+`extractIocs` over the engine's trace unchanged, and neither pass can tell
+which front-end produced it. Verified against the captured dropper: the
+extractor pulls `http://evil.test/stage2.ps1`, both file paths and the Run key
+out of engine output with no change to the extractor at all.
 
-**Known, and in rough order:**
+**A Worker is not a nicety, it is the only correct place for the engine.** It
+installs a `globalThis.fetch` hook — that is how a sample's traffic is recorded
+and refused below the CLR, where .NET cannot reach around it — and on the main
+thread that hook would be the *page's* fetch, so every request the rest of the
+app makes would pass through a boundary built for malware. Two things fall out
+of the Worker: the 16 MB download does not block the main thread, and the
+worker can be **terminated from outside**, which is the only limit that does
+not need the sample's cooperation. The in-engine budget is checked at sequence
+points, so it cannot interrupt a catastrophic regex backtrack inside .NET,
+which never reaches one. `HARD_TIMEOUT_MS` is that backstop.
 
-1. The four capture sources (`binder`, `cmdlet`, `provider`, `proxy`) have to
-   become `TraceEvent`s. The op vocabulary already matches `host/ops.ts`; the
-   source label is new and the UI should show it, because the layers differ in
-   how much they can be trusted.
-2. The registry dump and the dropped-file list are new artefacts with no home
-   in the current result shape.
-3. A budget stop is a *partial* result, not an error, and `AnalysisResult` has
-   no way to say that today.
-4. The 12 MB bundle must be lazy: nobody pays for it until they ask for the
-   engine.
-5. `measure.mjs`'s copy of the launcher unwrapping goes away once the engine
-   reads the TypeScript parser.
+### Writing it against real output found five defects
+
+The tests run against `engine/__tests__/fixtures/engine-output.json`, which is
+**captured from the engine**, not hand-written. Five cases: a layered IEX, a
+full dropper, a P/Invoke declaration, a budget stop, a tamper attempt. Three
+defects fell out of the capture and two more out of printing what an analyst
+would actually see.
+
+1. **The engine emitted `network.client`** for `New-Object Net.WebClient`, an
+   op that existed nowhere else — not in `host/ops.ts`, not in the spec.
+   Constructing a WebClient reaches nothing: no name resolved, no socket
+   opened, no request made, and every real operation on it is recorded when it
+   happens. Dropped. The adapter now reports an unknown op as a **gap**, since
+   the engine is a separate build and vocabulary drift should reach the analyst
+   rather than silently cost them an indicator.
+2. **`RegistryDump` could not tell a seeded value from a written one.** Eleven
+   of the twelve populated values in a dropper run were Husk's own scaffolding,
+   sitting beside the Run-key write looking identical. Values carry a `seeded`
+   flag now and the adapter reports only writes.
+3. **The fetch boundary filtered by file extension.** Anything ending `.js`,
+   `.json`, `.dll`, `.wasm` or `.dat` went to the real network, so a sample
+   only had to name its stage `stage2.js`. Latent rather than live — the binder
+   refuses every network op before fetch is reached — but it was the one thing
+   that boundary exists to prevent. Scoped by URL now, computed from the engine
+   module's own location. Verified: all five shapes blocked and recorded,
+   runtime assets still load, nothing left the page.
+4. **One engine instance carried a sample's registry writes into the next
+   sample's report.** The store is static, so every captured case after the
+   dropper came back owning its Run-key value. A report belongs to one sample;
+   the registry is reset and reseeded per run.
+5. **The wire shape could not say whether the pipeline finished.**
+   `Start-Process` failing is a non-terminating error and the script carries on
+   past it, so a run can complete *with* an error — and a budget stop throws
+   `PipelineStoppedException`, which the pipeline handles itself rather than
+   letting out to the host, so `Invoke` returns normally and the run looked
+   complete. There is a `completed` flag now, and a budget stop clears it.
+
+Also: the text scanner's events had no `origin`, so they read as `undefined`
+beside the engine's. They are `text-scan` — inferred from source, never
+observed — and the UI now shows every row's source with a note on how far to
+trust it. That is an improvement to the tree-walker today, not only to the
+engine.
+
+### What is left
+
+**The engine has nowhere to live.** 16 MB gzipped of .NET assemblies, which is
+a decision rather than a task:
+
+- commit them under `public/husk-engine/` — 43 MB raw in git, shipped with
+  every deploy, and the MIT notice obligation in `THIRD-PARTY.md` comes due;
+- build them in CI — needs the .NET SDK, the `wasm-tools` workload and the
+  fork, and this environment's network policy blocks the .NET CDN;
+- publish them as a release asset and fetch at runtime — a cross-origin
+  dependency for a tool whose whole claim is that nothing leaves the machine.
+
+`VITE_HUSK_ENGINE_URL` points at wherever that lands. Unset, which is the
+default, Husk uses the tree-walker and says nothing about an engine.
+
+**The UI has no backend switch.** The loader degrades honestly, so nothing is
+broken by its absence, but an analyst cannot choose the engine yet, and the
+artefacts only it can produce — dropped files with hashes, the registry as the
+sample left it, a partial-result banner for a budget stop — have no home on
+screen. That is the next piece of work, and it needs the hosting decision
+first, because an engine the UI offers and cannot load is worse than no offer.
 
 ### 8. Licensing and attribution — DONE
 

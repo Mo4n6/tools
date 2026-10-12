@@ -6,6 +6,7 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { HUSK_AUTHOR, HUSK_AUTHOR_URL, HUSK_COPYRIGHT, HUSK_SOURCE_URL } from './attribution';
 import type { GapRecord } from './core/gaps';
+import type { EventOrigin } from './core/trace';
 import type { Ioc, IocKind } from './ioc/types';
 import { useHusk } from './useHusk';
 
@@ -176,11 +177,18 @@ const HuskApp = (): JSX.Element => {
                 <div className={panel}>
                   <h2 className="mb-2 text-sm font-bold">Recorded calls</h2>
                   <p className="mb-2 text-xs text-emerald-300/60">
-                    Recognised and logged, never performed.
+                    Recognised and logged, never performed. Hover a row&rsquo;s source to see how
+                    far it can be trusted.
                   </p>
                   <ul className="flex flex-col gap-1 text-xs">
                     {result.events.map((event, index) => (
                       <li key={`${event.signature}-${index}`} className="break-all">
+                        <span
+                          className="text-emerald-300/40"
+                          title={originNote(event.origin)}
+                        >
+                          {event.origin ?? 'text-scan'}
+                        </span>{' '}
                         <span className="text-emerald-300/60">[{event.category}]</span>{' '}
                         <span className="text-emerald-200">{event.signature}</span>{' '}
                         <span className="text-emerald-100/70">{event.args.join(' , ')}</span>
@@ -317,6 +325,30 @@ const FidelityPanel = ({
  * A ready-to-file issue body. Only signatures and positions - argument values
  * can contain payload, which is fine locally and not fine in a public issue.
  */
+/**
+ * What a row's source means for trusting it.
+ *
+ * Two of these are not like the others. A `text-scan` row was never executed —
+ * it is a pattern in the source, and the call may never have happened. A
+ * `proxy` row was executed, but through a Husk stand-in that a sample can
+ * reach and therefore fake. The rest are chokepoints a sample cannot route
+ * around, and they differ only in what they can see.
+ */
+function originNote(origin: EventOrigin | undefined): string {
+  switch (origin) {
+    case 'binder':
+      return 'Observed: a .NET method call made from the script.';
+    case 'cmdlet':
+      return 'Observed: a cmdlet invocation, with its parameters as the sample wrote them.';
+    case 'provider':
+      return 'Observed: the write as it actually happened, with the path resolved.';
+    case 'proxy':
+      return 'Observed by a Husk stand-in. Script-reachable, so a sample could have forged it.';
+    default:
+      return 'Inferred from the source text. This call may never have run.';
+  }
+}
+
 function buildIssueText(gaps: readonly GapRecord[]): string {
   const actionable = gaps.filter((g) => g.kind === 'GAP');
   if (actionable.length === 0) return 'No unimplemented constructs.';
