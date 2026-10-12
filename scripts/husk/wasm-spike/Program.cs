@@ -97,6 +97,304 @@ public static class HuskHost
 }
 
 
+/// Where a downloaded stage comes from.
+///
+/// A browser cannot fetch a real C2. Cross-origin reads need the server to
+/// send Access-Control-Allow-Origin, and malware infrastructure does not, so
+/// an automatic fetch of `http://evil/stage2.ps1` is refused by the browser
+/// before any of this runs - measured, not assumed. That is a property of the
+/// web platform, not a gap in the engine, and it is why the analyst supplying
+/// the stage is the primary path rather than the fallback.
+///
+/// Reachable from PowerShell as [HuskNet]::ResolveText(...) because the web
+/// proxies are script. Same forgery trade as HuskHost: a sample can call it,
+/// which lets it hand itself content it already has. That wins nothing.
+public static class HuskNet
+{
+    /// Analyst-supplied bodies, matched in insertion order. A key is a whole
+    /// URL, a bare filename, or "*" for anything.
+    private static readonly List<KeyValuePair<string, byte[]>> s_supplied = new();
+
+    private static bool s_live;
+
+    // Caps, because a chain is attacker-controlled. A redirect loop or a
+    // stage that downloads itself would otherwise run until the client's hard
+    // timeout kills the worker, which loses the whole trace rather than
+    // ending the chain and keeping it.
+    private const int MaxResolutions = 16;
+    private const long MaxTotalBytes = 8L * 1024 * 1024;
+
+    private static int s_resolutions;
+    private static long s_bytes;
+
+    internal static void Reset()
+    {
+        lock (s_supplied)
+        {
+            s_supplied.Clear();
+            s_live = false;
+            s_resolutions = 0;
+            s_bytes = 0;
+            s_kept = 0;
+        }
+
+        // Clear last run's kept bodies off the disk, not just the counter.
+        // The engine is reused across samples and Keep() numbers from zero
+        // again, so a second sample writes over the first one's path - and the
+        // dropped-file diff, which baselines whatever is already there, then
+        // reports the stage as nothing at all. Found by running two samples in
+        // a row; a single run looks perfect.
+        try
+        {
+            if (Directory.Exists(KeptRoot)) { Directory.Delete(KeptRoot, recursive: true); }
+        }
+        catch (Exception)
+        {
+            // Leaving a stale body behind is better than failing the run; the
+            // worst case is the listing showing one sample's stage under the
+            // next, which the path makes obvious.
+        }
+
+        {
+        }
+    }
+
+    internal static void Supply(string key, byte[] content)
+    {
+        lock (s_supplied) { s_supplied.Add(new(key ?? "*", content ?? Array.Empty<byte>())); }
+    }
+
+    internal static void SetLive(bool live) { lock (s_supplied) { s_live = live; } }
+
+    /// The bytes for a requested URL, or null when nothing can serve it.
+    ///
+    /// Public for the script proxies. Records the attempt either way: a URL
+    /// that resolved to nothing is still the sample telling you where it
+    /// wanted to go, which is the IOC an analyst came for.
+    public static byte[]? ResolveBytes(string url, string native)
+    {
+        url ??= "";
+        byte[]? body = null;
+        string outcome;
+
+        lock (s_supplied)
+        {
+            if (s_resolutions >= MaxResolutions)
+            {
+                outcome = "refused: resolution cap (" + MaxResolutions + ")";
+            }
+            else if (TryMatch(url, out var matched, out var how))
+            {
+                if (s_bytes + matched.LongLength > MaxTotalBytes)
+                {
+                    outcome = "refused: total byte cap";
+                }
+                else
+                {
+                    body = matched;
+                    outcome = "supplied: " + how;
+                    s_resolutions++;
+                    s_bytes += matched.LongLength;
+                }
+            }
+            else if (s_live)
+            {
+                // Released while fetching: the XHR blocks this worker, and
+                // holding the lock across it would deadlock a nested call
+                // from the stage this one is about to return.
+                outcome = "";
+            }
+            else
+            {
+                outcome = "blocked";
+            }
+        }
+
+        if (body is null && outcome.Length == 0)
+        {
+            var fetched = Spike.FetchSync(url, "GET");
+            lock (s_supplied)
+            {
+                if (fetched.Length == 0)
+                {
+                    // main.js has already recorded the status or the CORS
+                    // error against the boundary, which is the honest place
+                    // for it - it is the only layer that saw the response.
+                    outcome = "live: no body (blocked by the browser, or empty)";
+                }
+                else if (s_bytes + fetched.LongLength > MaxTotalBytes)
+                {
+                    outcome = "refused: total byte cap";
+                }
+                else
+                {
+                    body = fetched;
+                    outcome = "live: " + fetched.Length + " bytes";
+                    s_resolutions++;
+                    s_bytes += fetched.LongLength;
+                }
+            }
+        }
+
+        HuskHost.Record("network.http", native, new[] { "GET", url, outcome });
+        return body;
+    }
+
+    /// The text for a requested URL, or null.
+    ///
+    /// Deliberately does not record a layer. Invoke-Expression records every
+    /// layer it is handed, and the cradle this exists for ends in IEX, so
+    /// recording here too would show the analyst the same stage twice. The
+    /// body is kept as an artifact instead, which is the part IEX cannot do.
+    public static string? ResolveText(string url, string native)
+    {
+        var bytes = ResolveBytes(url, native);
+        if (bytes is null) { return null; }
+
+        Keep(url, bytes);
+        return DecodeText(bytes);
+    }
+
+    /// Public so the proxies can decode a body they already hold.
+    public static string TextOf(byte[] bytes) => DecodeText(bytes ?? Array.Empty<byte>());
+
+    /// Park a body the sample never asked to be written, so it is still
+    /// listed and still saveable with the .malware suffix. A fetched stage is
+    /// something the sample caused to exist, which is what the dropped-file
+    /// listing is for - the directory is named so it cannot be mistaken for
+    /// a path the sample chose.
+    public static void Keep(string url, byte[] bytes)
+    {
+        var name = FileNameOf(url ?? "");
+        if (name.Length == 0) { name = "body"; }
+        Save("C:\\husk-downloads\\" + s_kept++ + "-" + Sanitise(name), bytes);
+    }
+
+    private static int s_kept;
+
+    /// Where Keep() parks bodies, as the virtual filesystem sees it. Kept next
+    /// to the mapping that produces it so the two cannot drift apart.
+    private const string KeptRoot = "/husk-c/husk-downloads";
+
+    /// Write bytes where the sample asked for them.
+    ///
+    /// The .NET file APIs do not go through PowerShell drives, so `C:\x` would
+    /// otherwise land as a literal filename in the working directory. Mapping
+    /// it onto the virtual C: root puts the artifact where the analyst expects
+    /// to find it, and where the dropped-file walker already looks.
+    public static void Save(string path, byte[] bytes)
+    {
+        try
+        {
+            var mapped = MapPath(path ?? "");
+            var dir = Path.GetDirectoryName(mapped);
+            if (!string.IsNullOrEmpty(dir)) { Directory.CreateDirectory(dir); }
+            File.WriteAllBytes(mapped, bytes ?? Array.Empty<byte>());
+        }
+        catch (Exception)
+        {
+            // A path the sample made up can be unwritable in any number of
+            // ways. The network record is already written, which is the
+            // evidence; losing the body is not worth ending the run.
+        }
+    }
+
+    private static string MapPath(string path)
+    {
+        var p = path.Replace('\\', '/');
+        if (p.Length >= 2 && p[1] == ':' && char.IsLetter(p[0]))
+        {
+            // Only C: is mounted; anything else keeps its letter so the
+            // listing still shows which drive the sample meant.
+            p = "/husk-" + char.ToLowerInvariant(p[0]) + p.Substring(2);
+        }
+
+        return p.StartsWith("/", StringComparison.Ordinal) ? p : "/husk-c/" + p;
+    }
+
+    private static string Sanitise(string name)
+    {
+        var sb = new StringBuilder();
+        foreach (var c in name)
+        {
+            sb.Append(char.IsLetterOrDigit(c) || c == '.' || c == '-' || c == '_' ? c : '_');
+        }
+
+        return sb.Length == 0 ? "body" : sb.ToString();
+    }
+
+    /// UTF-8 with the BOM stripped, and UTF-16LE when the bytes say so -
+    /// a PowerShell stage served as Unicode is common, and decoding it as
+    /// UTF-8 yields interleaved NULs that parse as nothing.
+    private static string DecodeText(byte[] bytes)
+    {
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+        {
+            return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+        }
+
+        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+        {
+            return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+        }
+
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    /// Exact URL, then the last path segment, then "*". Filename matching
+    /// earns its place: samples build URLs with a random query or a per-run
+    /// host, so the thing an analyst can actually key on is the name.
+    private static bool TryMatch(string url, out byte[] body, out string how)
+    {
+        foreach (var entry in s_supplied)
+        {
+            if (string.Equals(entry.Key, url, StringComparison.OrdinalIgnoreCase))
+            {
+                body = entry.Value;
+                how = "exact url";
+                return true;
+            }
+        }
+
+        var name = FileNameOf(url);
+        if (name.Length > 0)
+        {
+            foreach (var entry in s_supplied)
+            {
+                if (string.Equals(entry.Key, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    body = entry.Value;
+                    how = "filename " + name;
+                    return true;
+                }
+            }
+        }
+
+        foreach (var entry in s_supplied)
+        {
+            if (entry.Key == "*")
+            {
+                body = entry.Value;
+                how = "wildcard";
+                return true;
+            }
+        }
+
+        body = Array.Empty<byte>();
+        how = "";
+        return false;
+    }
+
+    private static string FileNameOf(string url)
+    {
+        var cut = url.IndexOfAny(new[] { '?', '#' });
+        var path = cut >= 0 ? url.Substring(0, cut) : url;
+        var slash = path.LastIndexOf('/');
+        return slash >= 0 && slash + 1 < path.Length ? path.Substring(slash + 1) : "";
+    }
+}
+
+
 /// A PSHost that captures instead of writing to a terminal.
 ///
 /// The default console host P/Invokes libpsl-native for terminal handling, so
@@ -201,6 +499,39 @@ public static partial class Spike
     private static HuskPSHost? _host;
     private static int _cmdletCount;
     private static int _aliasCount;
+
+    /// A synchronous download, which is the only kind a PowerShell proxy can
+    /// make.
+    ///
+    /// HttpClient would be the obvious choice and cannot be used: on wasm it
+    /// is implemented over `fetch`, so it is async, and this runspace is
+    /// single-threaded on the current thread - blocking on the task deadlocks
+    /// the thread the fetch needs to complete. Synchronous XMLHttpRequest is
+    /// forbidden on a document but permitted in a worker, which is where the
+    /// engine runs, so the JS side uses that and hands the bytes back.
+    ///
+    /// Empty means nothing arrived: blocked by the browser, refused by the
+    /// mode, or genuinely empty. main.js records which against the boundary.
+    [JSImport("globalThis.huskFetchSync")]
+    internal static partial byte[] FetchSync(string url, string method);
+
+    /// Give the resolver a body to serve. Key: a whole URL, a bare filename,
+    /// or "*" for anything the sample asks for.
+    [JSExport]
+    internal static void SupplyDownload(string key, byte[] content)
+        => HuskNet.Supply(key, content);
+
+    /// Clear the supplied bodies and the per-run caps. The host calls this
+    /// before each run: a stage supplied for one sample must not be served to
+    /// the next, the way layers and registry state are also reset per run.
+    [JSExport]
+    internal static void ResetDownloads() => HuskNet.Reset();
+
+    /// Let unmatched URLs try the network. Off unless the analyst says so:
+    /// a live fetch tells the operator their payload is being looked at, and
+    /// hands them the analyst's address to go with it.
+    [JSExport]
+    internal static void SetNetworkLive(bool live) => HuskNet.SetLive(live);
 
     /// What the wasm runtime actually reports for the paths SMA derives
     /// $PSHOME from. Guessing at these cost two build cycles.
@@ -642,16 +973,29 @@ function Invoke-WebRequest {
         $Body, $Headers, $OutFile, $UserAgent,
         [Parameter(ValueFromRemainingArguments=$true)] $Rest
     )
-    [HuskHost]::Record('network.http', 'Invoke-WebRequest', @($Method, [string]$Uri))
+    $body = [HuskNet]::ResolveBytes([string]$Uri, ""Invoke-WebRequest $Method"")
     if ($OutFile) {
         [HuskHost]::Record('filesystem.write', 'Invoke-WebRequest -OutFile', @([string]$OutFile))
+        if ($null -ne $body) { [HuskNet]::Save([string]$OutFile, $body) }
     }
     $r = New-Object PSObject
-    $r | Add-Member NoteProperty StatusCode 523
-    $r | Add-Member NoteProperty StatusDescription 'Husk: network blocked'
-    $r | Add-Member NoteProperty Content $null
-    $r | Add-Member NoteProperty RawContent $null
-    $r | Add-Member NoteProperty HuskBlocked $true
+    if ($null -ne $body) {
+        # A real response object, because the next line of a downloader reads
+        # .Content and runs it. Returning 523 here is what made the chain stop.
+        $text = [HuskNet]::TextOf($body)
+        $r | Add-Member NoteProperty StatusCode 200
+        $r | Add-Member NoteProperty StatusDescription 'OK'
+        $r | Add-Member NoteProperty Content $text
+        $r | Add-Member NoteProperty RawContent $text
+        $r | Add-Member NoteProperty RawContentLength $body.Length
+        $r | Add-Member NoteProperty HuskBlocked $false
+    } else {
+        $r | Add-Member NoteProperty StatusCode 523
+        $r | Add-Member NoteProperty StatusDescription 'Husk: nothing to serve'
+        $r | Add-Member NoteProperty Content $null
+        $r | Add-Member NoteProperty RawContent $null
+        $r | Add-Member NoteProperty HuskBlocked $true
+    }
     $r
 }
 Set-Alias iwr Invoke-WebRequest -Scope Global -Force
@@ -666,15 +1010,16 @@ function Invoke-RestMethod {
         $Body, $Headers, $OutFile,
         [Parameter(ValueFromRemainingArguments=$true)] $Rest
     )
-    [HuskHost]::Record('network.http', 'Invoke-RestMethod', @($Method, [string]$Uri))
-    $null
+    [HuskNet]::ResolveText([string]$Uri, ""Invoke-RestMethod $Method"")
 }
 Set-Alias irm Invoke-RestMethod -Scope Global -Force
 
 function Start-BitsTransfer {
     [CmdletBinding()]
     param($Source, $Destination, [Parameter(ValueFromRemainingArguments=$true)] $Rest)
-    [HuskHost]::Record('network.download', 'Start-BitsTransfer', @([string]$Source, [string]$Destination))
+    $body = [HuskNet]::ResolveBytes([string]$Source, 'Start-BitsTransfer')
+    [HuskHost]::Record('filesystem.write', 'Start-BitsTransfer', @([string]$Destination))
+    if ($null -ne $body) { [HuskNet]::Save([string]$Destination, $body) }
     $null
 }
 
@@ -751,9 +1096,14 @@ function New-Object {
         # vocabulary stops being one.
         $w = & $global:HuskRealNewObject -TypeName PSObject
         $w | Add-Member NoteProperty Headers (& $global:HuskRealNewObject -TypeName PSObject) -Force
-        $w | Add-Member ScriptMethod DownloadString { param($u) [HuskHost]::Record('network.http', 'Net.WebClient.DownloadString', @('GET', [string]$u)); $null } -Force
-        $w | Add-Member ScriptMethod DownloadData { param($u) [HuskHost]::Record('network.http', 'Net.WebClient.DownloadData', @('GET', [string]$u)); $null } -Force
-        $w | Add-Member ScriptMethod DownloadFile { param($u,$f) [HuskHost]::Record('network.download', 'Net.WebClient.DownloadFile', @([string]$u, [string]$f)); [HuskHost]::Record('filesystem.write', 'Net.WebClient.DownloadFile', @([string]$f)); $null } -Force
+        $w | Add-Member ScriptMethod DownloadString { param($u) [HuskNet]::ResolveText([string]$u, 'Net.WebClient.DownloadString') } -Force
+        $w | Add-Member ScriptMethod DownloadData { param($u) $b = [HuskNet]::ResolveBytes([string]$u, 'Net.WebClient.DownloadData'); if ($null -ne $b) { [HuskNet]::Keep([string]$u, $b) }; $b } -Force
+        $w | Add-Member ScriptMethod DownloadFile { param($u,$f) $b = [HuskNet]::ResolveBytes([string]$u, 'Net.WebClient.DownloadFile'); [HuskHost]::Record('filesystem.write', 'Net.WebClient.DownloadFile', @([string]$f)); if ($null -ne $b) { [HuskNet]::Save([string]$f, $b) }; $null } -Force
+        # The async pair matters: a cradle that calls DownloadStringAsync and
+        # then reads the result would otherwise reach the real WebClient.
+        $w | Add-Member ScriptMethod DownloadStringAsync { param($u) [HuskNet]::ResolveText([string]$u, 'Net.WebClient.DownloadStringAsync') } -Force
+        $w | Add-Member ScriptMethod DownloadFileAsync { param($u,$f) $b = [HuskNet]::ResolveBytes([string]$u, 'Net.WebClient.DownloadFileAsync'); [HuskHost]::Record('filesystem.write', 'Net.WebClient.DownloadFileAsync', @([string]$f)); if ($null -ne $b) { [HuskNet]::Save([string]$f, $b) }; $null } -Force
+        $w | Add-Member ScriptMethod OpenRead { param($u) $b = [HuskNet]::ResolveBytes([string]$u, 'Net.WebClient.OpenRead'); if ($null -eq $b) { $null } else { New-Object System.IO.MemoryStream -ArgumentList @(,$b) } } -Force
         $w | Add-Member ScriptMethod UploadString { param($u,$d) [HuskHost]::Record('network.upload', 'Net.WebClient.UploadString', @([string]$u)); $null } -Force
         return $w
     }

