@@ -57,6 +57,106 @@ mode but not AOT. Plausible on .NET 8+; no known working build.
 in under 3 seconds. That would be worth revisiting for fidelity — but the
 ceiling would still be set by information availability, not by us.
 
+**Falsifier tested, 2026-10-11. Microsoft ships no such build — but one was
+assembled by hand and got most of the way, which is the more useful result.**
+
+Measured with .NET SDK 8.0.131 and the `wasm-tools` workload:
+
+- `System.Management.Automation` 7.4.6 resolves for `browser-wasm` with
+  `compile` → `ref/net8.0/System.Management.Automation.dll` and **no
+  `runtimeTargets` entry at all**. The package ships implementations for the
+  `unix` and `win` RIDs only.
+- A project referencing it **builds clean, 0 errors**, and publishes a working
+  wasm bundle **containing no SMA**. It compiles against the reference
+  assembly's API surface and would throw on first use. A green build here means
+  nothing; the assembly list is the thing to check.
+- Three attempts to force the `unix` IL in — `<Reference>` with `Private`,
+  `ExcludeAssets="runtime"` plus `<Reference>`, and `WasmAssembliesToBundle` —
+  were all ignored silently. The wasm pipeline builds its assembly list from the
+  runtime pack and package runtime assets.
+- SMA P/Invokes `libpsl-native` (plus Windows-only `api-ms-win-*` sets on
+  guarded paths). A from-source browser-wasm build would have to cross-compile
+  that native library to wasm first.
+- The SMA-less bundle is 24MB raw / **8.88MB gzipped**. That is the floor a real
+  build sits above; SMA's own IL is 6.79MB before the native side.
+
+So the route is not "configure the build correctly" but "port PowerShell to
+browser-wasm". That port was then attempted far enough to cost it properly.
+
+### How far a hand-assembled build gets
+
+Disabling webcil (`WasmEnableWebcil=false`) keeps assemblies as plain `.dll`,
+so SMA's `unix` IL and its 14 managed dependencies can be copied into
+`_framework/` and registered in `blazor.boot.json` with their SHA-256 hashes.
+Driven in headless Chromium against a local server:
+
+- **The runtime boots in ~0.9–1.1 seconds** with 183 assemblies registered.
+- **SMA's managed IL loads.** Nothing about mono-wasm rejects it.
+- **Bundle: 31MB raw, 11.26MB gzipped** — inside the 15MB falsifier.
+
+Execution then hits a chain of platform assumptions, each needing a source
+patch rather than configuration:
+
+1. `TypeLoadException` on `ApplicationInsightsTelemetry` — SMA's dependency
+   closure is absent from the wasm publish. **Fixed** by harvesting the 14
+   managed DLLs from a `linux-x64` publish and injecting them.
+2. `ArgumentNullException (path1)` in `PSSnapInReader.ReadCoreEngineSnapIn`.
+   SMA derives `$PSHOME` from `typeof(PSObject).Assembly.Location`, which is
+   empty under wasm, so `Path.GetDirectoryName("")` returns null. Setting
+   `APP_CONTEXT_BASE_DIRECTORY` does not help — it is read at startup.
+   **Avoided** with `InitialSessionState.Create()` instead of `CreateDefault2()`,
+   at the cost of the cmdlet surface.
+3. `TypeInitializationException` in `Tracing.PSSysLogProvider` — the syslog
+   provider P/Invokes `libpsl-native`, which has no wasm build. **Not fixable
+   from the outside.**
+
+So the port is viable and the blockers are ordinary, but each is a patch to
+PowerShell's own source. The work is: fork PowerShell, patch the platform
+assumptions as they surface, cross-compile or stub `libpsl-native` for wasm,
+and carry that fork forward against upstream. Days to weeks, and a maintenance
+commitment afterwards — not an afternoon of MSBuild.
+
+### Threading looked fatal and was not
+
+Probed in the browser before any source patching, because it was the cheapest
+thing that could invalidate the rest:
+
+```
+Thread.Start     = PlatformNotSupportedException
+Task.Run + Wait  = timeout
+```
+
+`Task.Run(...).Wait()` deadlocks on single-threaded wasm — the continuation is
+queued to the thread that is blocking. `PowerShell.Invoke()` is exactly that
+pattern, and `Runspace.Open()` uses wait handles the same way. Running SMA
+single-threaded means making it async throughout, which is a rewrite of its
+core rather than a fork patch.
+
+That conclusion was wrong. `PowerShell.Invoke()` is only that pattern when the
+pipeline runs on another thread; with `PSThreadOptions.UseCurrentThread` it
+runs inline and never waits on queued work. Generalising from a synthetic
+probe to PowerShell's behaviour, instead of testing PowerShell, cost a reversed
+conclusion.
+
+**With the patches applied, real PowerShell runs single-threaded on ordinary
+static hosting** — no COOP/COEP, no `SharedArrayBuffer`. `2+2` returns `4`,
+`[array]::Reverse` round-trips, `[Convert]::FromBase64String` decodes.
+`file://` does not work, but for an unrelated reason: Chrome blocks ES module
+scripts from `file://` origins, which affects any .NET wasm app.
+
+So the engine is real and hostable. What it costs is a maintained PowerShell
+fork, a 12 MB gzipped payload, and the loss of the disk-runnable copy — not,
+as recorded here earlier, the hosting model itself. Full detail and the patch
+series in [`husk-wasm-port-log.md`](husk-wasm-port-log.md).
+
+**Revisited.** Once the objective grew to capturing host calls rather than only
+deobfuscating, reason 3 became decisive rather than merely persuasive: a real
+runtime gives perfect fidelity and partial capture, and a missed syscall is
+invisible where a missing member is a recorded gap. The decision stands, and the
+falsifier above no longer reverses it. Real PowerShell is still worth having —
+as a **differential oracle** rather than as the engine, which is how the
+tokenizer reached 100%. See [`husk-sandbox-spec.md`](husk-sandbox-spec.md) §1.
+
 ## 2) The honest ceiling
 
 100% deobfuscation is not achievable, and targeting it makes the tool less
@@ -420,10 +520,22 @@ What is real, and what the UI should carry instead:
 
 ## 10) Open questions
 
-- Ship threshold: phases 1+3 early, or hold for phase 2 depth? Spec assumes
-  early.
-- Whether the lexer is a selective port of `tokenizer.cs` or built from the
-  3.0 specification with the source consulted for edge cases.
+Both resolved; kept with their answers rather than deleted, because the
+reasoning is what makes the next decision easier.
+
+- ~~Ship threshold: phases 1+3 early, or hold for phase 2 depth?~~ Shipped
+  early, as assumed. Correct call: real samples found a ReDoS, two regex
+  crashes and three multi-megabyte failures that no amount of phase 2 depth
+  would have surfaced.
+- ~~Whether the lexer is a selective port of `tokenizer.cs` or built from the
+  3.0 specification with the source consulted for edge cases.~~ Ported, via
+  generators, from the authoritative tables. Reached 100% agreement against the
+  oracle. Building from the specification would not have caught the sparse
+  `TokenKind` enum or the `s_tokenText`-versus-lookup-table distinction, both of
+  which were found by diffing rather than by reading.
+
+Open questions for the host layer are in
+[`husk-sandbox-spec.md`](husk-sandbox-spec.md) §10.
 
 ## 11) Prior art
 

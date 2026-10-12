@@ -6,6 +6,8 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { HUSK_AUTHOR, HUSK_AUTHOR_URL, HUSK_COPYRIGHT, HUSK_SOURCE_URL } from './attribution';
 import type { GapRecord } from './core/gaps';
+import type { EventOrigin } from './core/trace';
+import { isEngineResult } from './engine/analyze';
 import type { Ioc, IocKind } from './ioc/types';
 import { useHusk } from './useHusk';
 
@@ -41,11 +43,20 @@ const SAMPLE = String.raw`powershell -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0
 const HuskApp = (): JSX.Element => {
   const [source, setSource] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
-  const { state, run, reset } = useHusk();
+  const { state, engine, run, readDropped, reset } = useHusk();
+  const [useEngine, setUseEngine] = useState(false);
+  const [saving, setSaving] = useState<string | null>(null);
 
   const result = state.result;
+  const engineResult = result !== undefined && isEngineResult(result) ? result : undefined;
+  // Only offered when a published engine actually answered the probe. An
+  // engine the UI offers and cannot load is worse than no offer.
+  const engineAvailable = engine?.available === true;
 
-  const handleRun = useCallback(() => run(source), [run, source]);
+  const handleRun = useCallback(
+    () => run(source, undefined, useEngine && engineAvailable ? 'engine' : 'tree-walker'),
+    [engineAvailable, run, source, useEngine],
+  );
 
   const handleClear = useCallback(() => {
     setSource('');
@@ -73,6 +84,32 @@ const HuskApp = (): JSX.Element => {
   );
 
   const gapIssue = useMemo(() => buildIssueText(result?.gaps ?? []), [result]);
+
+  /**
+   * Hands a dropped file to the analyst, with `.malware` on the end.
+   *
+   * The suffix is not decoration. This is a real payload leaving the sandbox
+   * for the analyst's own disk, and it should land somewhere no shell, handler
+   * or preview will open by double-click.
+   */
+  const saveDropped = useCallback(
+    async (enginePath: string, windowsPath: string) => {
+      setSaving(enginePath);
+      try {
+        const bytes = await readDropped(enginePath);
+        const name = `${windowsPath.split(/[\\/]/).pop() ?? 'dropped'}.malware`;
+        const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = name;
+        anchor.click();
+        URL.revokeObjectURL(url);
+      } finally {
+        setSaving(null);
+      }
+    },
+    [readDropped],
+  );
 
   return (
     <div className="flex w-full flex-col p-2 font-mono text-emerald-100 md:p-4">
@@ -111,6 +148,22 @@ const HuskApp = (): JSX.Element => {
             </button>
           </div>
 
+          {engineAvailable ? (
+            <label className="flex items-start gap-2 text-xs text-emerald-300/70">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={useEngine}
+                onChange={(event) => setUseEngine(event.target.checked)}
+              />
+              <span>
+                Run it on real PowerShell, in this tab. Sees what the sample actually did — the
+                files it dropped, the registry it wrote — rather than what its source says. Costs a
+                one-off 13 MB download, and cannot work from a <code>file://</code> copy.
+              </span>
+            </label>
+          ) : null}
+
           {state.status === 'error' ? (
             <p className={`${panel} border-rose-500/40 text-rose-200`}>{state.error}</p>
           ) : null}
@@ -126,6 +179,7 @@ const HuskApp = (): JSX.Element => {
               <div className={panel}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs uppercase tracking-wide text-emerald-300/60">
+                    {state.backend === 'engine' ? 'real PowerShell · ' : null}
                     {result.layers.length} layer{result.layers.length === 1 ? '' : 's'} ·{' '}
                     {result.iocs.indicators.length} indicator
                     {result.iocs.indicators.length === 1 ? '' : 's'} · {result.elapsedMs}ms
@@ -153,6 +207,60 @@ const HuskApp = (): JSX.Element => {
                 ) : null}
               </div>
 
+              {engineResult?.stoppedBy !== undefined ? (
+                <p className={`${panel} border-amber-500/40 text-amber-200`}>
+                  The run was cut short: {engineResult.stoppedBy}. Everything below is still
+                  evidence — the sample may simply have had more to do.
+                </p>
+              ) : null}
+
+              {engineResult !== undefined && engineResult.dropped.length > 0 ? (
+                <div className={panel}>
+                  <h2 className="mb-2 text-sm font-bold">Files the sample wrote</h2>
+                  <p className="mb-2 text-xs text-emerald-300/60">
+                    Written to an in-memory filesystem, never to your disk. Saving one puts a real
+                    payload on it, so the name gets a <code>.malware</code> suffix.
+                  </p>
+                  <ul className="flex flex-col gap-2 text-xs">
+                    {engineResult.dropped.map((file) => (
+                      <li key={file.enginePath} className="flex flex-wrap items-baseline gap-2">
+                        <span className="break-all text-emerald-200">{file.path}</span>
+                        <span className="text-emerald-300/60">{file.size} bytes</span>
+                        <span className="break-all text-emerald-300/40">
+                          {file.sha256.slice(0, 16)}…
+                        </span>
+                        <button
+                          className="text-emerald-300/70 underline hover:text-emerald-200"
+                          disabled={saving === file.enginePath}
+                          onClick={() => void saveDropped(file.enginePath, file.path)}
+                        >
+                          {saving === file.enginePath ? 'Saving…' : 'Save'}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {engineResult !== undefined && engineResult.registryWrites.length > 0 ? (
+                <div className={panel}>
+                  <h2 className="mb-2 text-sm font-bold">Registry the sample wrote</h2>
+                  <p className="mb-2 text-xs text-emerald-300/60">
+                    A virtual registry, so nothing reached a real one. Values Husk seeded for the
+                    sample to read are not listed.
+                  </p>
+                  <ul className="flex flex-col gap-1 text-xs">
+                    {engineResult.registryWrites.map((write) => (
+                      <li key={`${write.key}-${write.name}`} className="break-all">
+                        <span className="text-emerald-300/60">{write.key}</span>{' '}
+                        <span className="text-emerald-200">{write.name}</span>{' '}
+                        <span className="text-emerald-100/70">= {write.value}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
               {iocGroups.length > 0 ? (
                 <div className={panel}>
                   <div className="mb-2 flex items-center justify-between gap-2">
@@ -176,11 +284,18 @@ const HuskApp = (): JSX.Element => {
                 <div className={panel}>
                   <h2 className="mb-2 text-sm font-bold">Recorded calls</h2>
                   <p className="mb-2 text-xs text-emerald-300/60">
-                    Recognised and logged, never performed.
+                    Recognised and logged, never performed. Hover a row&rsquo;s source to see how
+                    far it can be trusted.
                   </p>
                   <ul className="flex flex-col gap-1 text-xs">
                     {result.events.map((event, index) => (
                       <li key={`${event.signature}-${index}`} className="break-all">
+                        <span
+                          className="text-emerald-300/40"
+                          title={originNote(event.origin)}
+                        >
+                          {event.origin ?? 'text-scan'}
+                        </span>{' '}
                         <span className="text-emerald-300/60">[{event.category}]</span>{' '}
                         <span className="text-emerald-200">{event.signature}</span>{' '}
                         <span className="text-emerald-100/70">{event.args.join(' , ')}</span>
@@ -317,6 +432,30 @@ const FidelityPanel = ({
  * A ready-to-file issue body. Only signatures and positions - argument values
  * can contain payload, which is fine locally and not fine in a public issue.
  */
+/**
+ * What a row's source means for trusting it.
+ *
+ * Two of these are not like the others. A `text-scan` row was never executed —
+ * it is a pattern in the source, and the call may never have happened. A
+ * `proxy` row was executed, but through a Husk stand-in that a sample can
+ * reach and therefore fake. The rest are chokepoints a sample cannot route
+ * around, and they differ only in what they can see.
+ */
+function originNote(origin: EventOrigin | undefined): string {
+  switch (origin) {
+    case 'binder':
+      return 'Observed: a .NET method call made from the script.';
+    case 'cmdlet':
+      return 'Observed: a cmdlet invocation, with its parameters as the sample wrote them.';
+    case 'provider':
+      return 'Observed: the write as it actually happened, with the path resolved.';
+    case 'proxy':
+      return 'Observed by a Husk stand-in. Script-reachable, so a sample could have forged it.';
+    default:
+      return 'Inferred from the source text. This call may never have run.';
+  }
+}
+
 function buildIssueText(gaps: readonly GapRecord[]): string {
   const actionable = gaps.filter((g) => g.kind === 'GAP');
   if (actionable.length === 0) return 'No unimplemented constructs.';

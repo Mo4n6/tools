@@ -363,4 +363,5 @@ GitHub's sidebar shows this repository's licence as "Other", because PolyForm is
 
 - [Tools shell routing and UI conventions](docs/tools-shell-routing-and-ui.md)
 - [Husk design record](docs/husk-spec.md)
+- [Husk virtual host design](docs/husk-sandbox-spec.md) — the recording fake of an OS that captures what a sample tries to do
 - [Performance budgets](docs/perf-budgets.md)

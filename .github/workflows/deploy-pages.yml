@@ -44,11 +44,83 @@ jobs:
       - name: Prebuild guard (typecheck + merge leftovers)
         run: npm run ci:prebuild
 
+      # ---------------------------------------------------------------------
+      # Husk's wasm PowerShell engine.
+      #
+      # Cached on the hash of everything that goes into it, so a deploy that
+      # does not change the engine restores 33 MB instead of spending half an
+      # hour rebuilding it. A miss rebuilds; there is no state that can go
+      # stale into a wrong bundle.
+      #
+      # The build is allowed to fail. Husk's tree-walker is a complete answer
+      # on its own and the engine is an opt-in extra, so a broken engine build
+      # must not take the whole site down with it - the loader probes for the
+      # bundle and simply does not offer the engine when it is missing.
+      # ---------------------------------------------------------------------
+      - name: Restore the Husk engine
+        id: engine-cache
+        uses: actions/cache@v4
+        with:
+          path: husk-engine
+          key: >-
+            husk-engine-v1-${{ runner.os }}-${{ hashFiles(
+              'scripts/husk/wasm-spike/patches/0001-powershell-browser-wasm.patch',
+              'scripts/husk/wasm-spike/Program.cs',
+              'scripts/husk/wasm-spike/HuskRegistry.cs',
+              'scripts/husk/wasm-spike/main.js',
+              'scripts/husk/wasm-spike/pswasm.csproj',
+              'scripts/husk/engine/build.sh',
+              'scripts/husk/engine/inject.py',
+              'scripts/husk/engine/notice.py'
+            ) }}
+
+      - name: Set up .NET for the engine build
+        if: steps.engine-cache.outputs.cache-hit != 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build the engine
+        id: engine-build
+        if: steps.engine-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          dotnet workload install wasm-tools
+          scripts/husk/engine/build.sh "$GITHUB_WORKSPACE/husk-engine"
+
+      - name: Decide whether the engine ships
+        id: engine
+        run: |
+          if [ -f husk-engine/_framework/blazor.boot.json ]; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+            # Relative on purpose: the app resolves it against the site
+            # base, which vite.config.ts derives from the repository name.
+            echo 'url=husk-engine/' >> "$GITHUB_OUTPUT"
+            echo "engine present, $(du -sh husk-engine | cut -f1) raw" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            echo 'url=' >> "$GITHUB_OUTPUT"
+            {
+              echo '> **Husk is deploying without its PowerShell engine.**'
+              echo '> The tree-walker still works; the engine is simply not offered.'
+              echo '> See the "Build the engine" step for why.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Build
         run: npm run build
         env:
           VITE_ENABLE_URL_INGEST: 'false'
           VITE_SKIP_KOKORO_INIT_ON_PAGES: 'false'
+          # Empty when the engine is absent, which is how the app learns to
+          # keep quiet about it rather than offering something that 404s.
+          VITE_HUSK_ENGINE_URL: ${{ steps.engine.outputs.url }}
+
+      - name: Add the engine to the site
+        if: steps.engine.outputs.available == 'true'
+        run: |
+          cp -r husk-engine dist/husk-engine
+          test -f dist/husk-engine/THIRD-PARTY-NOTICE.txt
 
       - name: Validate Kokoro chunk output
         run: npm run check:kokoro-chunk
