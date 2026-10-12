@@ -21,6 +21,7 @@
 // separately, loaded from a URL at runtime, so this file must never import it
 // statically.
 
+import { analyzeRun, type EngineAnalysisResult } from './analyze';
 import { engineUrl } from './paths';
 import type { EngineRun } from './types';
 
@@ -64,9 +65,14 @@ export type EngineRequest = EngineInit | EngineRunRequest | EngineReadRequest;
 export type EngineResponse =
   | { readonly kind: 'ready'; readonly ok: true }
   | { readonly kind: 'ready'; readonly ok: false; readonly error: string }
-  | { readonly kind: 'run'; readonly id: number; readonly ok: true; readonly run: EngineRun }
+  | {
+      readonly kind: 'run';
+      readonly id: number;
+      readonly ok: true;
+      readonly result: EngineAnalysisResult;
+    }
   | { readonly kind: 'run'; readonly id: number; readonly ok: false; readonly error: string }
-  | { readonly kind: 'read'; readonly id: number; readonly ok: true; readonly bytes: Uint8Array }
+  | { readonly kind: 'read'; readonly id: number; readonly ok: true; readonly bytes: Uint8Array<ArrayBuffer> }
   | { readonly kind: 'read'; readonly id: number; readonly ok: false; readonly error: string };
 
 let engine: EngineGlobals | undefined;
@@ -104,7 +110,7 @@ async function load(baseUrl: string): Promise<EngineGlobals> {
 }
 
 /** Hex, as `readDropped` returns it, into bytes. */
-function fromHex(hex: string): Uint8Array {
+function fromHex(hex: string): Uint8Array<ArrayBuffer> {
   const clean = hex.trim();
   const bytes = new Uint8Array(clean.length >> 1);
   for (let i = 0; i < bytes.length; i += 1) {
@@ -149,17 +155,25 @@ self.onmessage = async (event: MessageEvent<EngineRequest>): Promise<void> => {
     engine.proxyCalls();
     engine.snapshotFs();
 
-    const result = engine.runFixture(message.script);
+    const started = Date.now();
+    const run: EngineRun = {
+      result: engine.runFixture(message.script),
+      hostCalls: engine.hostCalls(),
+      registry: engine.registryDump(),
+      dropped: engine.droppedFiles(),
+    };
+
+    // Analysed here rather than on the main thread. The host scan and the IOC
+    // extraction run regexes over the sample's own text, and the one rule the
+    // whole design turns on is that the payload never reaches the page. The
+    // IOC index is a Map, which structured cloning carries but React cannot
+    // read back conveniently, so it is rebuilt on the other side.
+    const result = analyzeRun(message.script, run, Date.now() - started);
     post({
       kind: 'run',
       id: message.id,
       ok: true,
-      run: {
-        result,
-        hostCalls: engine.hostCalls(),
-        registry: engine.registryDump(),
-        dropped: engine.droppedFiles(),
-      },
+      result: { ...result, iocs: { ...result.iocs, byKind: new Map() } },
     });
   } catch (error) {
     post({

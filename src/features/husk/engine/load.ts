@@ -17,8 +17,8 @@ import type {
   EngineResponse,
   EngineRunRequest,
 } from './engine.worker';
+import type { EngineAnalysisResult } from './analyze';
 import { engineUrl } from './paths';
-import type { EngineRun } from './types';
 
 export { engineUrl } from './paths';
 
@@ -147,14 +147,22 @@ export class EngineClient {
     await ready;
   }
 
-  /** Runs one script. Rejects with `EngineTerminated` if it had to be killed. */
-  run(script: string): Promise<EngineRun> {
-    return this.send<EngineRun>((id) => ({ kind: 'run', id, script }) satisfies EngineRunRequest);
+  /**
+   * Runs one script and returns the finished analysis.
+   *
+   * Rejects with `EngineTerminated` if the worker had to be killed. The
+   * analysis happens in the worker, so the sample's text never reaches the
+   * page.
+   */
+  run(script: string): Promise<EngineAnalysisResult> {
+    return this.send<EngineAnalysisResult>(
+      (id) => ({ kind: 'run', id, script }) satisfies EngineRunRequest,
+    );
   }
 
   /** The bytes of a file the sample dropped, for the analyst to save. */
-  read(enginePath: string): Promise<Uint8Array> {
-    return this.send<Uint8Array>(
+  read(enginePath: string): Promise<Uint8Array<ArrayBuffer>> {
+    return this.send<Uint8Array<ArrayBuffer>>(
       (id) => ({ kind: 'read', id, path: enginePath }) satisfies EngineReadRequest,
     );
   }
@@ -203,7 +211,7 @@ export class EngineClient {
     clearTimeout(entry.timer);
 
     if (message.ok) {
-      entry.resolve((message.kind === 'run' ? message.run : message.bytes) as never);
+      entry.resolve((message.kind === 'run' ? message.result : message.bytes) as never);
     } else {
       entry.reject(new Error(message.error));
     }

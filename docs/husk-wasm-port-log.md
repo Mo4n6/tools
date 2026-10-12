@@ -1268,12 +1268,33 @@ again.
 `VITE_HUSK_ENGINE_URL` points at wherever the bundle is served. Unset, which is
 the default, Husk uses the tree-walker and says nothing about an engine.
 
-**The UI has no backend switch.** The loader degrades honestly, so nothing is
-broken by its absence, but an analyst cannot choose the engine yet, and the
-artefacts only it can produce — dropped files with hashes, the registry as the
-sample left it, a partial-result banner for a budget stop — have no home on
-screen. That is the next piece of work, and it needs the hosting decision
-first, because an engine the UI offers and cannot load is worse than no offer.
+**The UI offers it, when it is there.** A checkbox appears only if the probe
+found a published engine, because an engine the UI offers and cannot load is
+worse than no offer; unset, which is the default, Husk looks exactly as it did.
+The engine's own artefacts have homes now: the files the sample wrote, with
+sizes and hashes and a **Save** button that appends `.malware` — that suffix is
+not decoration, it is a real payload landing on the analyst's disk and it
+should go somewhere no shell or preview handler opens by double-click — the
+registry as the sample left it with Husk's seeds excluded, and an amber banner
+for a run a budget cut short.
+
+**The analysis happens in the engine's worker, not on the page.** The host scan
+and the IOC extraction run regexes over the sample's own text, and the one rule
+the whole design turns on is that the payload never reaches the main thread. So
+the worker returns a finished `AnalysisResult` rather than a raw run.
+
+What is left is smaller than it was:
+
+- **Serving the bundle.** The workflow uploads it as an artifact; something has
+  to put it where `VITE_HUSK_ENGINE_URL` points. Extending the Pages deploy to
+  fetch the artifact is the obvious next step and a change to a live site, so
+  it is a decision rather than a task.
+- **`Save` needs the engine still loaded.** The client is terminated after a
+  hard timeout, and a dropped file can only be read back from a live engine, so
+  saving after that fails with "re-run the sample" rather than silently giving
+  an empty file.
+- **No `file://` story for the engine**, and there cannot be one: ES-module
+  CORS. The tree-walker keeps that case, which is one reason it stays.
 
 ### 8. Licensing and attribution — DONE
 

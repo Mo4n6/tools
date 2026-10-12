@@ -3,7 +3,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { EngineClient, EngineTerminated, engineUrl, probeEngine } from '../load';
+import { analyzeRun } from '../analyze';
+import { EngineClient, EngineTerminated, engineBaseUrl, engineUrl, probeEngine } from '../load';
 import type { EngineRequest, EngineResponse } from '../engine.worker';
 
 /**
@@ -59,12 +60,16 @@ class FakeWorker implements Partial<Worker> {
         kind: 'run',
         id: message.id,
         ok: true,
-        run: {
-          result: { output: 'ran', error: '', completed: true, layers: [] },
-          hostCalls: [],
-          registry: [],
-          dropped: [],
-        },
+        result: analyzeRun(
+          message.script,
+          {
+            result: { output: 'ran', error: '', completed: true, layers: [] },
+            hostCalls: [],
+            registry: [],
+            dropped: [],
+          },
+          7,
+        ),
       });
       return;
     }
@@ -93,6 +98,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.useRealTimers();
 });
 
@@ -106,6 +112,23 @@ describe('engineUrl', () => {
     expect(engineUrl('https://cdn.example/e/', '_framework/x.dll')).toBe(
       'https://cdn.example/e/_framework/x.dll',
     );
+  });
+});
+
+describe('engineBaseUrl', () => {
+  it('is undefined by default, so Husk ships without an engine', () => {
+    // The default has to be "no engine": the tree-walker is a complete answer
+    // and the only one that works from a file:// copy, and an engine the UI
+    // offers and cannot load is worse than no offer.
+    expect(engineBaseUrl()).toBeUndefined();
+  });
+
+  it('treats a blank setting as unset rather than as an empty base', () => {
+    vi.stubEnv('VITE_HUSK_ENGINE_URL', '   ');
+    expect(engineBaseUrl()).toBeUndefined();
+
+    vi.stubEnv('VITE_HUSK_ENGINE_URL', '/husk-engine/');
+    expect(engineBaseUrl()).toBe('/husk-engine/');
   });
 });
 
@@ -195,9 +218,10 @@ describe('EngineClient', () => {
     const client = new EngineClient();
     await client.load('/husk-engine/');
 
-    const run = await client.run('Write-Host hi');
+    const result = await client.run('Write-Host hi');
 
-    expect(run.result.output).toBe('ran');
+    expect(result.output).toBe('ran');
+    expect(result.backend).toBe('engine');
     expect(FakeWorker.last!.sent[1]).toMatchObject({ kind: 'run', script: 'Write-Host hi' });
   });
 

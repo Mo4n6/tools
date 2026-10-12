@@ -41,6 +41,16 @@ export interface EngineAnalysisResult extends AnalysisResult {
 }
 
 /**
+ * Narrows a result to an engine one.
+ *
+ * Checks the discriminant rather than a flag the caller passes in, so a result
+ * that travelled through structured cloning still answers correctly.
+ */
+export function isEngineResult(result: AnalysisResult): result is EngineAnalysisResult {
+  return (result as EngineAnalysisResult).backend === 'engine';
+}
+
+/**
  * Turns one engine run into the result the rest of Husk already renders.
  *
  * `source` is what the analyst pasted, which may be a launcher command line;
