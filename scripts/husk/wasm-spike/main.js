@@ -104,7 +104,94 @@ globalThis.setNetworkMode = (mode) => {
     throw new Error(`unknown network mode: ${mode}`);
   }
   networkMode = mode;
+  // One switch, not two: the engine's own resolver asks before it reaches for
+  // the network, and it must agree with the boundary that wraps fetch.
+  e.Spike.SetNetworkLive(mode === 'live');
   return networkMode;
+};
+
+globalThis.resetDownloads = () => e.Spike.ResetDownloads();
+
+/**
+ * Give the engine a body to serve for a URL the sample asks for.
+ *
+ * The key is a whole URL, a bare filename, or '*' for anything. Filenames and
+ * the wildcard exist because a sample usually builds its URL at runtime with
+ * a random host or query, so the only part an analyst can key on in advance
+ * is the name - or nothing at all.
+ */
+globalThis.supplyDownload = (key, content) => {
+  const bytes =
+    typeof content === 'string' ? new TextEncoder().encode(content) : new Uint8Array(content);
+  e.Spike.SupplyDownload(String(key ?? '*'), bytes);
+  return bytes.length;
+};
+
+/**
+ * A synchronous download, for the engine's web proxies.
+ *
+ * Synchronous on purpose and unavoidably: PowerShell's DownloadString is a
+ * synchronous call, the runspace is single-threaded on this thread, and
+ * blocking on an async fetch would deadlock the thread that fetch needs in
+ * order to finish. Synchronous XHR is forbidden on a document but allowed in
+ * a worker, which is where the engine runs.
+ *
+ * Returns an empty array when nothing arrived, and records why against the
+ * boundary - the only layer that sees the actual response.
+ *
+ * Worth being blunt about what this cannot do: a cross-origin read needs the
+ * server to send Access-Control-Allow-Origin, and C2 infrastructure does not,
+ * so for most real URLs the browser refuses this before it leaves the tab.
+ * That is why supplyDownload is the primary path and this is the exception.
+ */
+globalThis.huskFetchSync = (url, method) => {
+  const entry = {
+    seq: seq++,
+    op: 'network.http',
+    method: (method || 'GET').toUpperCase(),
+    url,
+    at: Date.now(),
+    outcome: networkMode,
+    via: 'xhr-sync',
+  };
+  hostLog.push(entry);
+
+  if (networkMode !== 'live') {
+    entry.outcome = 'blocked';
+    return new Uint8Array(0);
+  }
+
+  try {
+    const x = new XMLHttpRequest();
+    x.open(entry.method, url, false);
+
+    // Allowed in a worker, throws on a document - and this module is also
+    // loaded by the dev harness page. Falling back to text keeps that case
+    // working; it would mangle a binary stage, which the harness never has.
+    let binary = true;
+    try {
+      x.responseType = 'arraybuffer';
+    } catch {
+      binary = false;
+    }
+
+    x.send(null);
+    entry.status = x.status;
+
+    const bytes =
+      binary && x.response
+        ? new Uint8Array(x.response)
+        : new TextEncoder().encode(x.responseText ?? '');
+    entry.bytes = bytes.length;
+    if (!binary) entry.note = 'read as text: no worker context';
+    return bytes;
+  } catch (err) {
+    // The CORS refusal lands here, as a NetworkError with no detail - the
+    // browser deliberately does not say more. Recorded as what it is.
+    entry.outcome = 'error';
+    entry.error = String(err).slice(0, 200);
+    return new Uint8Array(0);
+  }
 };
 
 /**

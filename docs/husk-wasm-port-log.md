@@ -1503,11 +1503,95 @@ because it is a `.mjs` build-time harness and cannot import the TypeScript. The
 two have to stay in step until the engine lands in the product, at which point
 the TypeScript is the only copy.
 
+### 11. Stage 2 — following the chain, and the wall in the way
+
+A downloader is most of what gets pasted into Husk, and it used to stop at the
+download. `DownloadString` recorded the URL and returned `$null`, so the next
+line - `IEX $null` - ran nothing. Everything interesting about a downloader is
+in the stage it fetches.
+
+**The first thing to establish was that fetching it is impossible**, which is
+measured rather than argued. A probe in a worker, against three servers:
+
+| | result |
+|---|---|
+| same origin, synchronous XHR | 200, body read |
+| cross-origin, no CORS headers | `NetworkError: Failed to load` |
+| cross-origin, `Access-Control-Allow-Origin: *` | 200, body read |
+
+A browser will not let a page read a cross-origin response unless the server
+opts in, and C2 infrastructure does not opt in. So automatic stage-2 fetching
+is not a feature that was missing; it is one the web platform refuses. The
+live-fetch path that already existed in `main.js` had the same ceiling and
+would have failed on nearly every real URL.
+
+What works is what offline sandboxes do: **the analyst supplies the stage.**
+`HuskNet` serves a supplied body when the sample downloads one, matched on the
+whole URL, then the bare filename, then `*` - filenames matter because samples
+build their URL at runtime with a random host or a cache-buster, so the name is
+the only part that can be keyed on in advance.
+
+The execution half needed nothing. `Invoke-Expression` was already real - it
+records the layer and calls the genuine cmdlet - so the moment a download
+returns content, the stage runs and every layer below it is captured by the
+same four layers as the first stage. The feature was a resolver, not an
+interpreter.
+
+**Synchronous, unavoidably.** `DownloadString` is a synchronous call and the
+runspace is single-threaded on the current thread, so awaiting a `fetch`
+deadlocks the thread the fetch needs in order to finish - the same shape as the
+deadlock that `PSThreadOptions.UseCurrentThread` was chosen to avoid. The way
+out is synchronous `XMLHttpRequest`, which is forbidden on a document and
+permitted in a worker, which is where the engine runs. `HttpClient` is in the
+bundle and cannot be used for this at all.
+
+Caps, because a chain is attacker-controlled: 16 resolutions and 8 MB in total.
+Without them a stage that downloads itself runs until the client's 30-second
+kill, which loses the whole trace instead of ending the chain and keeping it.
+The refusal is recorded, so a truncated chain says it was truncated.
+
+Verified by `scripts/husk/wasm-spike/stage2-probe.mjs`, 17 checks against a
+real bundle, including a three-stage chain, `iwr .Content`, the cap, and both
+live cases - the CORS-permissive host that works and the realistic one that
+does not, where the boundary records `NetworkError` so an empty result cannot
+be misread as "the server was down".
+
+Two bugs the probe found that a single run would not have:
+
+**The kept body vanished on the second sample.** A body with no destination is
+parked under `C:\husk-downloads\` so it stays saveable, numbered from zero -
+and the engine is reused between runs, so sample B wrote over sample A's path.
+The dropped-file diff baselines whatever is already on disk, so B's stage was
+then reported as nothing at all. `Reset` now deletes the directory, and the
+worker resets before taking the baseline rather than after. The ordering is the
+actual fix; the delete alone would still have been baselined.
+
+**The probe's own hang.** `DroppedFiles()` with no prior `snapshotFs()` has
+nothing to diff against and hashes the entire virtual filesystem. From the
+outside that is indistinguishable from a hang, and it cost an hour of looking
+for a deadlock in the new synchronous fetch - which was innocent. The harness
+now snapshots the way the worker does.
+
+A supplied body may be bytes rather than text. An executable round-tripped
+through a string comes back corrupted, and the analyst would only find out
+after saving it and checking the hash.
+
+What is left:
+- **Binary stages are supplied, not fetched, like every other stage.** Nothing
+  changes that; it is the CORS wall again.
+- **No stage is inferred.** Husk will not guess that `a.ps1` and `a.ps1?v=2`
+  are the same file beyond the filename match, and will not follow a redirect
+  it never saw.
+- **`live` mode stays off by default**, and says in the UI that using it tells
+  the operator their payload is being analysed and hands them the analyst's
+  address. That cost is real and belongs next to the switch, not in a doc.
+
 ### Known gaps not yet scheduled
 
 - `file://` cannot work (ES module CORS). The tree-walker keeps that property.
 - WebClient and the web cmdlets are proxied, not implemented; a sample that
-  inspects the returned object closely will notice.
+  inspects the returned object closely will notice. They do now serve a body
+  the analyst supplies, so a chain gets followed - see "Stage 2".
 - A sample that times its own sleep can tell it was clamped. See "Sleeps are
   the one hole Tick cannot cover" — the trade is deliberate.
 - Threads are off. If anything later needs them, it costs COOP/COEP and

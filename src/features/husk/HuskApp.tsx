@@ -8,6 +8,7 @@ import { HUSK_AUTHOR, HUSK_AUTHOR_URL, HUSK_COPYRIGHT, HUSK_SOURCE_URL } from '.
 import type { GapRecord } from './core/gaps';
 import type { EventOrigin } from './core/trace';
 import { isEngineResult } from './engine/analyze';
+import type { SuppliedDownload as SuppliedStage } from './engine/engine.worker';
 import type { Ioc, IocKind } from './ioc/types';
 import { useHusk } from './useHusk';
 
@@ -46,6 +47,8 @@ const HuskApp = (): JSX.Element => {
   const { state, engine, run, readDropped, reset } = useHusk();
   const [useEngine, setUseEngine] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
+  const [stages, setStages] = useState<SuppliedStage[]>([]);
+  const [live, setLive] = useState(false);
 
   const result = state.result;
   const engineResult = result !== undefined && isEngineResult(result) ? result : undefined;
@@ -53,10 +56,13 @@ const HuskApp = (): JSX.Element => {
   // engine the UI offers and cannot load is worse than no offer.
   const engineAvailable = engine?.available === true;
 
-  const handleRun = useCallback(
-    () => run(source, undefined, useEngine && engineAvailable ? 'engine' : 'tree-walker'),
-    [engineAvailable, run, source, useEngine],
-  );
+  const handleRun = useCallback(() => {
+    const onEngine = useEngine && engineAvailable;
+    run(source, undefined, onEngine ? 'engine' : 'tree-walker', {
+      downloads: stages.filter((stage) => stage.key.trim().length > 0),
+      networkMode: live ? 'live' : 'blocked',
+    });
+  }, [engineAvailable, live, run, source, stages, useEngine]);
 
   const handleClear = useCallback(() => {
     setSource('');
@@ -162,6 +168,15 @@ const HuskApp = (): JSX.Element => {
                 one-off 13 MB download, and cannot work from a <code>file://</code> copy.
               </span>
             </label>
+          ) : null}
+
+          {engineAvailable && useEngine ? (
+            <StagePanel
+              stages={stages}
+              setStages={setStages}
+              live={live}
+              setLive={setLive}
+            />
           ) : null}
 
           {state.status === 'error' ? (
@@ -474,5 +489,121 @@ function buildIssueText(gaps: readonly GapRecord[]): string {
   ];
   return lines.join('\n');
 }
+
+/**
+ * Stages the analyst hands over, so a downloader can be followed.
+ *
+ * This exists because of a hard limit, not a missing feature: a browser can
+ * only read a cross-origin response when the server sends CORS headers, and
+ * C2 infrastructure does not, so fetching stage 2 automatically is refused by
+ * the browser before Husk sees it. Supplying the body is how the chain gets
+ * followed - the stage then executes for real, and everything it does is
+ * captured the same way the first stage was.
+ */
+const StagePanel = ({
+  stages,
+  setStages,
+  live,
+  setLive,
+}: {
+  stages: SuppliedStage[];
+  setStages: (next: SuppliedStage[]) => void;
+  live: boolean;
+  setLive: (next: boolean) => void;
+}): JSX.Element => {
+  const update = (at: number, patch: Partial<SuppliedStage>): void =>
+    setStages(stages.map((stage, i) => (i === at ? { ...stage, ...patch } : stage)));
+
+  const addFiles = async (files: FileList | null): Promise<void> => {
+    if (files === null) return;
+    const added: SuppliedStage[] = [];
+    for (const file of Array.from(files)) {
+      // Bytes, not text: the file may be the payload rather than a script,
+      // and decoding it would corrupt what the analyst then saves.
+      added.push({ key: file.name, content: new Uint8Array(await file.arrayBuffer()) });
+    }
+    setStages([...stages, ...added]);
+  };
+
+  return (
+    <div className={`${panel} flex flex-col gap-3 text-xs text-emerald-300/70`}>
+      <p>
+        <span className="text-emerald-200">Stages to serve.</span> A downloader stops at the
+        download: a browser cannot read a response from a server that sends no CORS headers, and
+        malware servers send none. Give Husk the body and the chain runs for real — every IOC in
+        stage 2 and beyond is captured, and what it writes to disk is saveable.
+      </p>
+
+      {stages.length > 0 ? (
+        <ul className="flex flex-col gap-2">
+          {stages.map((stage, at) => (
+            <li key={at} className="flex flex-col gap-1 border-l border-emerald-500/20 pl-2">
+              <div className="flex items-center gap-2">
+                <input
+                  className="min-w-0 flex-1 bg-black/30 px-2 py-1 font-mono text-emerald-200"
+                  placeholder="stage2.ps1, or the whole URL, or * for anything"
+                  value={stage.key}
+                  onChange={(event) => update(at, { key: event.target.value })}
+                />
+                <button
+                  className="text-emerald-300/70 underline hover:text-emerald-200"
+                  onClick={() => setStages(stages.filter((_, i) => i !== at))}
+                >
+                  Remove
+                </button>
+              </div>
+              {typeof stage.content === 'string' ? (
+                <textarea
+                  className="h-20 w-full resize-y bg-black/30 px-2 py-1 font-mono text-emerald-200"
+                  placeholder="What the server would have returned."
+                  value={stage.content}
+                  onChange={(event) => update(at, { content: event.target.value })}
+                />
+              ) : (
+                <span className="text-emerald-300/50">
+                  {stage.content.length.toLocaleString()} bytes from a file, served as-is
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          className="text-emerald-300/70 underline hover:text-emerald-200"
+          onClick={() => setStages([...stages, { key: '', content: '' }])}
+        >
+          Add a stage
+        </button>
+        <label className="cursor-pointer text-emerald-300/70 underline hover:text-emerald-200">
+          <input
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(event) => void addFiles(event.target.files)}
+          />
+          Add from files
+        </label>
+      </div>
+
+      <label className="flex items-start gap-2 border-t border-emerald-500/20 pt-2">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={live}
+          onChange={(event) => setLive(event.target.checked)}
+        />
+        <span>
+          <span className="text-amber-300">Let unmatched URLs reach the network.</span> Two things
+          to know before you do. It tells whoever runs that server their payload is being analysed,
+          and gives them your address to go with it. And it mostly will not work anyway — without
+          CORS headers the browser refuses the read, so this only helps for a host that happens to
+          allow it. Off by default on purpose.
+        </span>
+      </label>
+    </div>
+  );
+};
 
 export default HuskApp;

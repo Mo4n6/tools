@@ -16,6 +16,7 @@ import type {
   EngineRequest,
   EngineResponse,
   EngineRunRequest,
+  SuppliedDownload,
 } from './engine.worker';
 import type { EngineAnalysisResult } from './analyze';
 import { engineUrl } from './paths';
@@ -115,6 +116,12 @@ type Pending = {
  * deliberate — after a hard timeout the engine's state is whatever the sample
  * left it, and reusing it would mix one sample's evidence into the next.
  */
+/** Per-run inputs that are about the sample, not about the session. */
+export interface RunOptions {
+  readonly downloads?: readonly SuppliedDownload[];
+  readonly networkMode?: 'blocked' | 'live';
+}
+
 export class EngineClient {
   private worker?: Worker;
   private nextId = 1;
@@ -159,13 +166,25 @@ export class EngineClient {
   /**
    * Runs one script and returns the finished analysis.
    *
+   * `options.downloads` gives the engine bodies to serve when the sample
+   * downloads something, which is how a chain gets followed: a browser cannot
+   * read a response from a server that sends no CORS headers, and C2
+   * infrastructure sends none, so the analyst supplies the stage.
+   *
    * Rejects with `EngineTerminated` if the worker had to be killed. The
    * analysis happens in the worker, so the sample's text never reaches the
    * page.
    */
-  run(script: string): Promise<EngineAnalysisResult> {
+  run(script: string, options: RunOptions = {}): Promise<EngineAnalysisResult> {
     return this.send<EngineAnalysisResult>(
-      (id) => ({ kind: 'run', id, script }) satisfies EngineRunRequest,
+      (id) =>
+        ({
+          kind: 'run',
+          id,
+          script,
+          downloads: options.downloads,
+          networkMode: options.networkMode,
+        }) satisfies EngineRunRequest,
     );
   }
 

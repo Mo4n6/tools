@@ -38,6 +38,10 @@ interface EngineGlobals {
   snapshotFs(): number;
   setNetworkMode(mode: 'blocked' | 'live'): void;
   setBudget(steps: number, milliseconds: number): void;
+  /** Clears supplied bodies and the per-run download caps. */
+  resetDownloads(): void;
+  /** Key: a whole URL, a bare filename, or '*' for anything. */
+  supplyDownload(key: string, content: string | Uint8Array): number;
 }
 
 export interface EngineInit {
@@ -48,10 +52,36 @@ export interface EngineInit {
   readonly budget?: { readonly steps: number; readonly milliseconds: number };
 }
 
+/**
+ * A body the engine serves when the sample downloads it.
+ *
+ * Supplied per run rather than per session, because a stage belongs to one
+ * sample: carrying it into the next run would answer another sample's download
+ * with the previous one's payload, the way registry and layer state are also
+ * reset per run.
+ */
+export interface SuppliedDownload {
+  /** A whole URL, a bare filename, or '*' for anything the sample asks for. */
+  readonly key: string;
+  /**
+   * Bytes for a payload, a string for a script. Both survive structured
+   * cloning, and the distinction matters: an executable round-tripped through
+   * a string comes out corrupted, and the analyst would only find out after
+   * saving it and looking at the hash.
+   */
+  readonly content: string | Uint8Array;
+}
+
 export interface EngineRunRequest {
   readonly kind: 'run';
   readonly id: number;
   readonly script: string;
+  readonly downloads?: readonly SuppliedDownload[];
+  /**
+   * Overrides the mode `init` set, for this run. Live fetching only reaches
+   * hosts that send CORS headers, which real C2 infrastructure does not.
+   */
+  readonly networkMode?: 'blocked' | 'live';
 }
 
 export interface EngineReadRequest {
@@ -161,9 +191,21 @@ self.onmessage = async (event: MessageEvent<EngineRequest>): Promise<void> => {
       return;
     }
 
-    // Drain both ledgers first, so this run's evidence is only this run's.
+    // Downloads reset before the baseline is taken, not after: resetting
+    // deletes the bodies the last run kept, and a snapshot taken first would
+    // record them as pre-existing and then hide this run's from the diff.
+    // Unconditional, because the per-run caps live behind the same call -
+    // skipping it would let one sample's resolution count limit the next.
+    engine.resetDownloads();
+
+    // Drain both ledgers, so this run's evidence is only this run's.
     engine.proxyCalls();
     engine.snapshotFs();
+
+    if (message.networkMode !== undefined) engine.setNetworkMode(message.networkMode);
+    for (const supplied of message.downloads ?? []) {
+      engine.supplyDownload(supplied.key, supplied.content);
+    }
 
     const started = Date.now();
     const run: EngineRun = {

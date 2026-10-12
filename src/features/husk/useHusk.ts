@@ -6,7 +6,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { AnalysisResult, AnalyzeOptions } from './analyze';
-import { EngineClient, probeEngine, type EngineAvailability } from './engine/load';
+import {
+  EngineClient,
+  probeEngine,
+  type EngineAvailability,
+  type RunOptions as EngineRunOptions,
+} from './engine/load';
 import type { HuskRequest, HuskResponse } from './husk.worker';
 import type { Ioc, IocKind } from './ioc/types';
 
@@ -43,7 +48,12 @@ export function useHusk(): {
   state: HuskState;
   /** Undefined until the probe answers; then whether an engine is there. */
   engine?: EngineAvailability;
-  run: (source: string, options?: AnalyzeOptions, backend?: HuskBackend) => void;
+  run: (
+    source: string,
+    options?: AnalyzeOptions,
+    backend?: HuskBackend,
+    engineOptions?: EngineRunOptions,
+  ) => void;
   /**
    * The bytes of a file the sample dropped. Only the engine produces these —
    * the tree-walker never executes, so nothing is ever written.
@@ -117,7 +127,8 @@ export function useHusk(): {
    * whatever the sample left, and reusing it would mix one sample's evidence
    * into the next — so a fresh client is made per failure rather than per run.
    */
-  const runEngine = useCallback(async (source: string, baseUrl: string, id: number) => {
+  const runEngine = useCallback(
+    async (source: string, baseUrl: string, id: number, engineOptions?: EngineRunOptions) => {
     try {
       if (engineRef.current === null) {
         const client = new EngineClient();
@@ -125,7 +136,7 @@ export function useHusk(): {
         engineRef.current = client;
       }
 
-      const result = await engineRef.current.run(source);
+      const result = await engineRef.current.run(source, engineOptions ?? {});
       if (id !== latestId.current) return;
 
       setState({
@@ -147,7 +158,12 @@ export function useHusk(): {
   }, []);
 
   const run = useCallback(
-    (source: string, options?: AnalyzeOptions, backend: HuskBackend = 'tree-walker') => {
+    (
+      source: string,
+      options?: AnalyzeOptions,
+      backend: HuskBackend = 'tree-walker',
+      engineOptions?: EngineRunOptions,
+    ) => {
       if (source.trim().length === 0) {
         setState({ status: 'idle' });
         return;
@@ -166,7 +182,7 @@ export function useHusk(): {
           });
           return;
         }
-        void runEngine(source, baseUrl, latestId.current);
+        void runEngine(source, baseUrl, latestId.current, engineOptions);
         return;
       }
 
