@@ -48,7 +48,6 @@ const HuskApp = (): JSX.Element => {
   const [useEngine, setUseEngine] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
   const [stages, setStages] = useState<SuppliedStage[]>([]);
-  const [live, setLive] = useState(false);
 
   const result = state.result;
   const engineResult = result !== undefined && isEngineResult(result) ? result : undefined;
@@ -60,9 +59,9 @@ const HuskApp = (): JSX.Element => {
     const onEngine = useEngine && engineAvailable;
     run(source, undefined, onEngine ? 'engine' : 'tree-walker', {
       downloads: stages.filter((stage) => stage.key.trim().length > 0),
-      networkMode: live ? 'live' : 'blocked',
+      networkMode: 'blocked',
     });
-  }, [engineAvailable, live, run, source, stages, useEngine]);
+  }, [engineAvailable, run, source, stages, useEngine]);
 
   const handleClear = useCallback(() => {
     setSource('');
@@ -171,12 +170,7 @@ const HuskApp = (): JSX.Element => {
           ) : null}
 
           {engineAvailable && useEngine ? (
-            <StagePanel
-              stages={stages}
-              setStages={setStages}
-              live={live}
-              setLive={setLive}
-            />
+            <StagePanel stages={stages} setStages={setStages} />
           ) : null}
 
           {state.status === 'error' ? (
@@ -503,13 +497,9 @@ function buildIssueText(gaps: readonly GapRecord[]): string {
 const StagePanel = ({
   stages,
   setStages,
-  live,
-  setLive,
 }: {
   stages: SuppliedStage[];
   setStages: (next: SuppliedStage[]) => void;
-  live: boolean;
-  setLive: (next: boolean) => void;
 }): JSX.Element => {
   const update = (at: number, patch: Partial<SuppliedStage>): void =>
     setStages(stages.map((stage, i) => (i === at ? { ...stage, ...patch } : stage)));
@@ -587,21 +577,13 @@ const StagePanel = ({
         </label>
       </div>
 
-      <label className="flex items-start gap-2 border-t border-emerald-500/20 pt-2">
-        <input
-          type="checkbox"
-          className="mt-0.5"
-          checked={live}
-          onChange={(event) => setLive(event.target.checked)}
-        />
-        <span>
-          <span className="text-amber-300">Let unmatched URLs reach the network.</span> Two things
-          to know before you do. It tells whoever runs that server their payload is being analysed,
-          and gives them your address to go with it. And it mostly will not work anyway — without
-          CORS headers the browser refuses the read, so this only helps for a host that happens to
-          allow it. Off by default on purpose.
-        </span>
-      </label>
+      <p className="border-t border-emerald-500/20 pt-2 text-emerald-300/50">
+        There is no option to fetch an unmatched URL. A download has to be synchronous for a
+        PowerShell proxy to return it, and a synchronous request made from inside the engine kills
+        the worker it runs in — measured, with a control run that leaves the engine alive when
+        nothing is downloaded. It would mostly have been refused by the browser anyway, for want of
+        CORS headers on the far end.
+      </p>
     </div>
   );
 };

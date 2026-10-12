@@ -40,6 +40,8 @@ interface EngineGlobals {
   setBudget(steps: number, milliseconds: number): void;
   /** Clears supplied bodies and the per-run download caps. */
   resetDownloads(): void;
+  /** Empties the JS boundary ledger. The other half of `proxyCalls()`. */
+  drainBoundary(): number;
   /** Key: a whole URL, a bare filename, or '*' for anything. */
   supplyDownload(key: string, content: string | Uint8Array): number;
 }
@@ -108,6 +110,12 @@ export type EngineResponse =
 
 let engine: EngineGlobals | undefined;
 
+/**
+ * What `init` asked for, so a run that says nothing about the network gets the
+ * session's answer rather than the previous run's.
+ */
+let defaultNetworkMode: 'blocked' | 'live' = 'blocked';
+
 const post = (message: EngineResponse): void =>
   (self as unknown as Worker).postMessage(message);
 
@@ -160,7 +168,8 @@ self.onmessage = async (event: MessageEvent<EngineRequest>): Promise<void> => {
   if (message.kind === 'init') {
     try {
       engine = await load(message.baseUrl);
-      if (message.networkMode !== undefined) engine.setNetworkMode(message.networkMode);
+      defaultNetworkMode = message.networkMode ?? 'blocked';
+      engine.setNetworkMode(defaultNetworkMode);
       if (message.budget !== undefined) {
         engine.setBudget(message.budget.steps, message.budget.milliseconds);
       }
@@ -198,8 +207,17 @@ self.onmessage = async (event: MessageEvent<EngineRequest>): Promise<void> => {
     // skipping it would let one sample's resolution count limit the next.
     engine.resetDownloads();
 
-    // Drain both ledgers, so this run's evidence is only this run's.
+    // Set unconditionally, against the mode `init` chose rather than against
+    // whatever the last run left behind. Applying it only when the field was
+    // present let one run's `live` persist into a run that did not ask for it,
+    // and reset it out from under an engine initialised live.
+    engine.setNetworkMode(message.networkMode ?? defaultNetworkMode);
+
+    // Drain all three ledgers, so this run's evidence is only this run's. The
+    // boundary one was the half that got missed, and it is the one that holds
+    // network records.
     engine.proxyCalls();
+    engine.drainBoundary();
     engine.snapshotFs();
 
     if (message.networkMode !== undefined) engine.setNetworkMode(message.networkMode);

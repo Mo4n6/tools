@@ -1576,6 +1576,91 @@ A supplied body may be bytes rather than text. An executable round-tripped
 through a string comes back corrupted, and the analyst would only find out
 after saving it and checking the hash.
 
+#### Four more, from a review, and why 17 checks missed them
+
+A code review on the merged change found four real defects. All four survived
+a probe that passed 17 checks, and they have one thing in common: **every one
+lives in state that outlives a run, or in live mode** - and every case in that
+probe ran once, in blocked mode. The coverage was wide and one run deep.
+
+**The boundary ledger never drained.** `hostCalls()` concatenates the C#
+records with `hostLog` from `main.js`, and the worker drained only the C# half.
+Every later run in a reused engine re-emitted the previous sample's network
+records, so one sample's URLs appeared in the next sample's IOC list. The C#
+ledger really drains, for exactly this reason, and had been saying so in a
+comment since the beginning; the JS half simply never got the same treatment.
+It only became reachable here, because before this change nothing in the
+product ever reached the fetch boundary.
+
+**The method was hard-coded to GET.** `ResolveBytes` recorded `"GET"` whatever
+the sample asked for, where the proxy it replaced had recorded `$Method`. A
+POST cradle was reported as a GET, and in live mode an actual GET went out -
+which can return a different stage, or none.
+
+**`Reset` cleared the network mode.** It belongs to the session, not to the
+sample, and clearing it per run left the two halves of one switch disagreeing:
+the JS boundary still live from the previous run while the resolver had gone
+back to blocked, so a direct CLR request could leave while a proxied one could
+not. The mirror case was as bad - an engine initialised live had its resolver
+silently blocked by its own first run. The worker now applies the effective
+mode unconditionally against what `init` chose, rather than only when a run
+names one.
+
+**A 404 body was executed as a stage.** From a host permissive enough to allow
+the read, an error page came back as content and got handed to `IEX`, which
+produces spurious layers and parse errors instead of the failure `WebClient`
+would have raised.
+
+The probe now covers all four, cross-run and live on purpose: a POST recorded
+as POST, a second sample with no trace of the first one's URLs, a reset that
+leaves the network where the host put it, and a 404 that is recorded but not
+run. The lesson is about shape rather than any one bug - a harness where every
+case is independent and every case is the happy path will not find the bugs
+that live between cases.
+
+#### Closing that gap found the real bug: live mode never worked
+
+The gap was that the probe drains the ledgers itself, so it proves
+`drainBoundary()` works and not that the worker calls it. Closing it needed a
+live run through the product, against a same-origin stage - a real URL cannot
+be used, because `e2e.mjs` asserts nothing leaves the page.
+
+The check failed on its first run, and not for the reason it was written.
+**A synchronous request made from inside the engine kills the worker it runs
+in.** The request goes out and the stage is served - the harness logs the hit -
+and 2.8 seconds later the engine worker is gone. Isolated with a control: the
+same run in live mode downloading nothing leaves the engine alive and produces
+a result, so it is the request and not the mode.
+
+It had passed in `stage2-probe.mjs` because that probe drives the engine from
+the page's main thread, which tolerates a synchronous request. The product runs
+the engine in a worker, and nothing before this had ever made the engine fetch
+from inside one. Two contexts, one of which the product does not use.
+
+There is no fix inside the current design. The request has to be synchronous,
+because `DownloadString` is a synchronous call that must return a value, and
+`HttpClient` on wasm is async for the same reason the deadlock was there to
+begin with. Synchronous XHR was the only lever and it takes the worker with it.
+
+So the control is gone from the UI, and `e2e.mjs` asserts it stays gone. What
+the engine can still do is serve a body the analyst supplies, which is the path
+that works, the path CORS would have forced anyway, and the one the whole
+feature was built around.
+
+The way live fetching could work is to move it out of the engine: when a run
+asks for a URL nothing supplies, record it, let that resolution come back
+empty, and offer the analyst a fetch-and-re-run action on the main thread -
+asynchronous, nothing blocking inside wasm, the result handed back as a
+supplied stage. That is a better shape than the one that crashed: the fetch is
+visible, it is the analyst's decision each time, and a refusal is a message
+rather than a dead worker. Not built. `e2e.mjs` keeps serving the same-origin
+stage it no longer fetches, because that is what it would be tested against.
+
+One consequence worth stating: with no live fetching, the boundary ledger
+cannot fill in the product at all, so nothing can leak between runs through it
+and the `drainBoundary()` call is now defensive. It stays, because it is correct
+and it is needed the moment a fetch returns from anywhere.
+
 What is left:
 - **Binary stages are supplied, not fetched, like every other stage.** Nothing
   changes that; it is the CORS wall again.

