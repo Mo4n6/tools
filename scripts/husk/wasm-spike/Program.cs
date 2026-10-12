@@ -744,7 +744,11 @@ function New-Object {
     }
 
     if ($TypeName -match '(^|\.)WebClient$') {
-        [HuskHost]::Record('network.client', ""New-Object $TypeName"", @([string]$TypeName))
+        # Deliberately not recorded. Constructing a WebClient reaches nothing:
+        # no name resolved, no socket opened, no request made. Every actual
+        # operation on it is recorded when it happens, and 'network.client'
+        # was not a canonical op - it existed only here, which is how a
+        # vocabulary stops being one.
         $w = & $global:HuskRealNewObject -TypeName PSObject
         $w | Add-Member NoteProperty Headers (& $global:HuskRealNewObject -TypeName PSObject) -Force
         $w | Add-Member ScriptMethod DownloadString { param($u) [HuskHost]::Record('network.http', 'Net.WebClient.DownloadString', @('GET', [string]$u)); $null } -Force
@@ -869,12 +873,15 @@ function New-Object {
         var keys = new List<string>();
         foreach (var key in VirtualRegistry.Populated())
         {
+            // Each value says whether it is Husk's or the sample's. A dump
+            // that cannot tell them apart is not evidence of anything.
             var values = key.Values.Select(v =>
-                HuskHost.JsonQuotePublic(v.Key) + ":" +
-                HuskHost.JsonQuotePublic(v.Value?.ToString() ?? "$null"));
+                "{\"name\":" + HuskHost.JsonQuotePublic(v.Key) +
+                ",\"value\":" + HuskHost.JsonQuotePublic(v.Value?.ToString() ?? "$null") +
+                ",\"seeded\":" + (key.Seeded.Contains(v.Key) ? "true" : "false") + "}");
             keys.Add(
                 "{\"path\":" + HuskHost.JsonQuotePublic(key.Path) +
-                ",\"values\":{" + string.Join(",", values) + "}}");
+                ",\"values\":[" + string.Join(",", values) + "]}");
         }
 
         return "[" + string.Join(",", keys) + "]";

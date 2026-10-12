@@ -35,6 +35,16 @@ internal sealed class RegKey
     public Dictionary<string, RegKey> Keys { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public Dictionary<string, object?> Values { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Value names this key was seeded with, so the dump can tell what the
+    /// sample wrote from what Husk put there for it to read.
+    ///
+    /// Without this an analyst reading the dump sees the Shell Folders seed
+    /// next to a Run-key write with nothing to distinguish them, which makes
+    /// the whole artefact untrustworthy.
+    /// </summary>
+    public HashSet<string> Seeded { get; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>The store. One per page; no persistence between runs.</summary>
@@ -115,6 +125,7 @@ internal static class VirtualRegistry
         foreach (var (name, value) in values)
         {
             key.Values[name] = value;
+            key.Seeded.Add(name);
         }
     }
 

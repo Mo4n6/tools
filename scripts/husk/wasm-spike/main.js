@@ -16,10 +16,23 @@ const realFetch = globalThis.fetch.bind(globalThis);
 
 // The runtime fetches its own assemblies through the same function, so those
 // have to pass through untouched or nothing boots.
-const isRuntimeAsset = (url) =>
-  url.includes('/_framework/') || url.endsWith('.dll') ||
-  url.endsWith('.wasm') || url.endsWith('.dat') ||
-  url.endsWith('.js') || url.endsWith('.json') || url.endsWith('.symbols');
+//
+// Scoped by URL, not by file extension. The first version allowed anything
+// ending in .js, .json, .dll or .wasm, which let a sample reach the real
+// network just by naming its stage `stage2.js` - the one thing this boundary
+// exists to prevent. The engine's own directory is the only thing that may
+// pass, and it is computed from this module's own location rather than
+// hardcoded, so it stays right wherever the bundle is deployed.
+const engineBase = new URL('./', import.meta.url).href;
+
+const isRuntimeAsset = (url) => {
+  try {
+    return new URL(url, globalThis.location?.href ?? engineBase).href.startsWith(engineBase);
+  } catch {
+    // An unparseable URL is not the runtime's, so it goes through the hook.
+    return false;
+  }
+};
 
 globalThis.fetch = async (input, init) => {
   const url = typeof input === 'string' ? input

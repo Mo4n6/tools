@@ -23,6 +23,23 @@ export interface Layer {
   readonly taint: Taint;
 }
 
+/**
+ * Where an event was observed, which decides how far to trust it.
+ *
+ * `text-scan` is inferred from source text: the call may never have run.
+ * The rest are chokepoints the engine passed through, so the call did happen,
+ * and they differ in what they can see and in whether a sample could have
+ * faked them:
+ *
+ * - `binder` — a .NET method call made from script. Cannot see inside a cmdlet.
+ * - `cmdlet` — a cmdlet invocation with its parameters as written. Cannot see
+ *   a .NET call.
+ * - `provider` — the write as it actually happened, path resolved.
+ * - `proxy` — a Husk function answered. Script-reachable, so forgeable; the
+ *   least trustworthy of the four, and deliberately labelled as such.
+ */
+export type EventOrigin = 'text-scan' | 'binder' | 'cmdlet' | 'provider' | 'proxy';
+
 /** Something worth showing the analyst that is not itself a new layer. */
 export interface TraceEvent {
   readonly provenance: Provenance;
@@ -33,6 +50,16 @@ export interface TraceEvent {
   /** Rendered arguments. Payload-derived, so redact before sharing. */
   readonly args: readonly string[];
   readonly taint: Taint;
+  /**
+   * Where this was observed. Optional for now because the tree-walker's own
+   * events predate it; absent means `text-scan`, which is what they are.
+   */
+  readonly origin?: EventOrigin;
+  /**
+   * The canonical op, when the producer knows it. The tree-walker's scanner
+   * reports a category and a signature only.
+   */
+  readonly op?: string;
 }
 
 /**
