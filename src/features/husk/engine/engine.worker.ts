@@ -32,7 +32,8 @@ interface EngineGlobals {
   hostCalls(): EngineRun['hostCalls'];
   registryDump(): EngineRun['registry'];
   droppedFiles(): EngineRun['dropped'];
-  readDropped(path: string): string;
+  /** The file's bytes. .NET's `byte[]` marshals straight to a Uint8Array. */
+  readDropped(path: string): Uint8Array;
   proxyCalls(): unknown;
   snapshotFs(): number;
   setNetworkMode(mode: 'blocked' | 'live'): void;
@@ -109,14 +110,18 @@ async function load(baseUrl: string): Promise<EngineGlobals> {
   return globals as EngineGlobals;
 }
 
-/** Hex, as `readDropped` returns it, into bytes. */
-function fromHex(hex: string): Uint8Array<ArrayBuffer> {
-  const clean = hex.trim();
-  const bytes = new Uint8Array(clean.length >> 1);
-  for (let i = 0; i < bytes.length; i += 1) {
-    bytes[i] = Number.parseInt(clean.substr(i * 2, 2), 16);
-  }
-  return bytes;
+/**
+ * Copies the engine's bytes into an array the page can own.
+ *
+ * `readDropped` marshals .NET's `byte[]` to a Uint8Array over the wasm heap.
+ * Posting that across to the main thread hands the page a view of the engine's
+ * memory, and `Blob` will not take it either — it wants an array backed by a
+ * plain ArrayBuffer. One copy, at the only place it has to happen.
+ */
+function toOwnedBytes(view: Uint8Array): Uint8Array<ArrayBuffer> {
+  const owned = new Uint8Array(new ArrayBuffer(view.length));
+  owned.set(view);
+  return owned;
 }
 
 self.onmessage = async (event: MessageEvent<EngineRequest>): Promise<void> => {
@@ -147,7 +152,12 @@ self.onmessage = async (event: MessageEvent<EngineRequest>): Promise<void> => {
 
   try {
     if (message.kind === 'read') {
-      post({ kind: 'read', id: message.id, ok: true, bytes: fromHex(engine.readDropped(message.path)) });
+      post({
+        kind: 'read',
+        id: message.id,
+        ok: true,
+        bytes: toOwnedBytes(engine.readDropped(message.path)),
+      });
       return;
     }
 

@@ -1283,6 +1283,29 @@ and the IOC extraction run regexes over the sample's own text, and the one rule
 the whole design turns on is that the payload never reaches the main thread. So
 the worker returns a finished `AnalysisResult` rather than a raw run.
 
+### Verified end to end, which found one more bug
+
+`scripts/husk/engine/e2e.mjs` serves the built app with the engine under
+`dist/husk-engine/`, drives the real UI with Playwright and checks twelve
+things. All twelve pass: the offer appears, a dropper runs on real PowerShell
+in 273 ms, the dropped file is named by the path the sample used, the
+persistence key is reported while Husk's own seeds are not, the C2 URL comes
+out, every recorded call says where it was observed, **the Save button yields
+`note.txt.malware`**, there are no page errors, and nothing left the page.
+
+It was worth running, because the unit tests could not have caught what it
+found. `readDropped` returns .NET's `byte[]`, which marshals to a Uint8Array —
+and the worker was decoding it as a hex string, so the page threw
+`t.trim is not a function` and Save did nothing. An adapter tested against
+captured output and a loader tested against a fake worker are both correct
+about their own side of a boundary neither one owns.
+
+Two of the twelve checks were wrong before they were right, both my own:
+waiting for `/real powershell/i` matched the **checkbox label** and read the
+page mid-run, and a case-sensitive probe missed a line the UI renders in
+uppercase. A check that passes for the wrong reason is worse than no check, so
+both now match the summary line specifically.
+
 What is left is smaller than it was:
 
 - **Serving the bundle.** The workflow uploads it as an artifact; something has
