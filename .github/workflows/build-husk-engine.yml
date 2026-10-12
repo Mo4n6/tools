@@ -36,10 +36,14 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Install the wasm-tools workload
-        run: dotnet workload install wasm-tools
-
       - name: Build the engine
+        env:
+          # build.sh installs wasm-tools itself, from inside the PowerShell
+          # clone, because the workload is per SDK feature band and the clone's
+          # global.json is what picks the SDK. Installing it here would target
+          # this runner's newest SDK instead - .NET 10, not the 8.0.4xx that
+          # compiles the engine.
+          HUSK_ENGINE_INSTALL_WORKLOAD: '1'
         run: scripts/husk/engine/build.sh "$GITHUB_WORKSPACE/husk-engine"
 
       - name: Report what was built

@@ -13,7 +13,9 @@
 #
 #   scripts/husk/engine/build.sh [output-directory]
 #
-# Needs: dotnet SDK 8, the wasm-tools workload, pwsh, git, python3.
+# Needs: dotnet SDK 8, the wasm-tools workload installed for that SDK's own
+# feature band, pwsh, git, python3. It checks the workload before the slow part
+# and says what to run; HUSK_ENGINE_INSTALL_WORKLOAD=1 lets it install it.
 # Takes 20-40 minutes from cold, most of it PowerShell's own codegen and three
 # assembly builds.
 #
@@ -67,6 +69,42 @@ else
   echo "the patch series does not apply to $PS_TAG and is not already applied;" >&2
   echo "regenerate it from the fork, or check the tag" >&2
   exit 1
+fi
+
+# ------------------------------------------------------- the wasm workload ---
+# Which SDK compiles this is decided by the clone's own global.json, which the
+# patch pins to the 8.0 band and rolls forward to the newest one installed. The
+# wasm-tools workload is recorded per SDK feature band, so the install has to
+# resolve the same SDK the build will, which means running it from in here.
+#
+# Run anywhere without that global.json - a repository root, CI's workspace -
+# `dotnet workload install wasm-tools` resolves the newest SDK on the machine
+# instead. A GitHub runner carries .NET 10 beside 8.0.4xx, so the workload
+# lands in band 10.0.400, the build resolves 8.0.425, and it dies with
+# NETSDK1147 having already spent the clone and the codegen.
+#
+# Installing a workload mutates the whole dotnet installation, so a developer
+# gets told rather than surprised; CI opts in through the environment.
+if ! dotnet workload list 2>/dev/null | grep -qE '^[[:space:]]*wasm-tools([[:space:]]|$)'; then
+  if [[ -n "${HUSK_ENGINE_INSTALL_WORKLOAD:-}" ]]; then
+    say "installing wasm-tools for SDK $(dotnet --version)"
+    dotnet workload install wasm-tools
+    # Asserted, not assumed: this is the one failure that otherwise surfaces
+    # half an hour later as a compiler error about a missing workload.
+    if ! dotnet workload list | grep -qE '^[[:space:]]*wasm-tools([[:space:]]|$)'; then
+      echo "installed wasm-tools, but SDK $(dotnet --version) still does not see it" >&2
+      exit 1
+    fi
+  else
+    echo "wasm-tools is not installed for SDK $(dotnet --version), which is the" >&2
+    echo "one this build resolves through $PWD/global.json." >&2
+    echo >&2
+    echo "install it for that SDK - the directory matters - with:" >&2
+    echo "  (cd $PWD && dotnet workload install wasm-tools)" >&2
+    echo >&2
+    echo "or set HUSK_ENGINE_INSTALL_WORKLOAD=1 to have this script do it." >&2
+    exit 1
+  fi
 fi
 
 # -------------------------------------------------------------- codegen -----
