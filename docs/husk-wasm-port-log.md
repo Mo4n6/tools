@@ -1671,6 +1671,39 @@ What is left:
   the operator their payload is being analysed and hands them the analyst's
   address. That cost is real and belongs next to the switch, not in a doc.
 
+### 12. The result panels, as tabs, with an output window
+
+The panels had grown to several screens stacked vertically, and the one an
+analyst wanted was usually below the fold. They are tabs now - Output,
+Indicators, Calls, Layers, Files, Registry, Fidelity - with the count in the
+tab, so "Files 3" says there is something to look at without opening it. Only
+tabs the result actually has are shown. The summary line and any warning stay
+outside the tabs, because those are the things you should not have to click for.
+
+The selected tab is resolved rather than stored: a result that lacks the
+selected tab falls back to the first one it has. Keeping it in state alone
+needed an effect to correct it afterwards, which renders the empty panel for a
+frame first.
+
+**The output window is new, and it says which output it is showing.** The two
+backends mean different things by it - the engine reports what the sample
+printed, the tree-walker reports the source with every layer resolved, because
+it reads rather than runs. Labelling both "output" would be the quiet kind of
+wrong: a sample that prints nothing can still drop a file and persist, and that
+is not the same claim as "no output, so nothing happened". So the heading
+changes with the backend, and an empty engine run reads "(the sample printed
+nothing)" rather than blank.
+
+Tabbing the panels broke an assumption in `e2e.mjs` that is worth recording.
+Its checks read whole-page text, and with every panel on the page at once an
+assertion did not have to say which panel it meant. One of them had been
+passing for the wrong reason: it looked for the raw C2 URL and found it in
+Layers, while the Indicators panel it was supposed to be checking renders the
+**defanged** form. Isolating the panels surfaced that immediately. The check now
+asserts `hxxp://evil[.]test/...`, which is what that panel is for - an
+indicator that can be pasted into a ticket without becoming a live link - and
+pins the defanging as well.
+
 ### Known gaps not yet scheduled
 
 - `file://` cannot work (ES module CORS). The tree-walker keeps that property.

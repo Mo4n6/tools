@@ -148,19 +148,62 @@ async function main() {
       { timeout: 300_000 },
     );
 
-    const text = (await page.locator('body').innerText()).toLowerCase();
-    const shows = (needle) => text.includes(needle.toLowerCase());
+    /**
+     * Open a result tab and read the page back.
+     *
+     * The panels are tabbed, so only one is in the document at a time and an
+     * assertion against whole-page text now has to say which tab it means.
+     * Matched on the label's start because each tab also carries a count.
+     */
+    const openTab = async (label) => {
+      await page.getByRole('tab', { name: new RegExp(`^${label}`, 'i') }).click();
+      return (await page.locator('body').innerText()).toLowerCase();
+    };
+    const has = (text, needle) => text.includes(needle.toLowerCase());
 
-    check(/real powershell\s*\u00b7/i.test(text), 'the result says which backend ran');
-    check(shows('Files the sample wrote'), 'the dropped-file panel is there');
-    check(shows('C:\\Users\\Public\\note.txt'), 'the dropped path is the one the sample used');
-    check(shows('Registry the sample wrote'), 'the registry panel is there');
-    check(shows('CurrentVersion\\Run'), 'the persistence key is reported');
-    check(!shows('Shell Folders'), 'the values Husk seeded are not reported as writes');
-    check(shows('http://evil.test/stage2.ps1'), 'the C2 URL was extracted');
-    check(shows('provider'), 'each recorded call says where it was observed');
+    const summary = (await page.locator('body').innerText()).toLowerCase();
+    check(/real powershell\s*\u00b7/i.test(summary), 'the result says which backend ran');
+    check(
+      (await page.getByRole('tab').count()) >= 4,
+      'the result is split into tabs rather than one long page',
+    );
+    // Output is first and selected: it is the question the sample answers.
+    check(
+      (await page.getByRole('tab', { selected: true }).innerText()).toLowerCase().startsWith('output'),
+      'the output tab is the one that opens',
+    );
 
-    // The payload leaving the sandbox for the analyst's own disk.
+    const files = await openTab('files');
+    check(has(files, 'Files the sample wrote'), 'the dropped-file panel is there');
+    check(
+      has(files, 'C:\\Users\\Public\\note.txt'),
+      'the dropped path is the one the sample used',
+    );
+
+    const registry = await openTab('registry');
+    check(has(registry, 'Registry the sample wrote'), 'the registry panel is there');
+    check(has(registry, 'CurrentVersion\\Run'), 'the persistence key is reported');
+    check(
+      !has(registry, 'Shell Folders'),
+      'the values Husk seeded are not reported as writes',
+    );
+
+    // Defanged, which is what this panel renders and the point of it: an
+    // indicator an analyst can paste into a ticket without it becoming a live
+    // link. Asserting the raw URL passed before the panels were tabbed only
+    // because Layers and Calls were on the same page and do show it raw.
+    const indicators = await openTab('indicators');
+    check(
+      has(indicators, 'hxxp://evil[.]test/stage2[.]ps1'),
+      'the C2 URL is extracted, and defanged',
+    );
+
+    const calls = await openTab('calls');
+    check(has(calls, 'provider'), 'each recorded call says where it was observed');
+
+    // The payload leaving the sandbox for the analyst's own disk. Back to the
+    // Files tab: the Save buttons are in it.
+    await openTab('files');
     const [download] = await Promise.all([
       page.waitForEvent('download', { timeout: 60_000 }),
       page.getByRole('button', { name: 'Save' }).first().click(),
@@ -239,7 +282,31 @@ async function main() {
     } catch {
       secondRan = false;
     }
+    // Those two waits rely on the Files tab still being the selected one from
+    // earlier, which is the intended behaviour: a tab an analyst picked should
+    // survive the next run rather than snapping back.
     check(secondRan, "the next sample reports its own result and not the last one's");
+
+    // The output window, and the tab fallback with it. A script that only
+    // prints drops no files, so the Files tab it was on disappears and the
+    // selection has to fall back rather than render an empty panel.
+    await page.fill('#husk-input', String.raw`Write-Host 'PRINTED-BY-THE-SAMPLE'`);
+    await page.getByRole('button', { name: 'Analyse' }).click();
+    let printed = true;
+    try {
+      await page.waitForFunction(
+        () => document.body.innerText.includes('PRINTED-BY-THE-SAMPLE'),
+        null,
+        { timeout: 300_000 },
+      );
+    } catch {
+      printed = false;
+    }
+    check(printed, 'the output window shows what the sample printed');
+    check(
+      (await page.getByRole('tab', { selected: true }).innerText()).toLowerCase().startsWith('output'),
+      'the selection falls back when the tab it was on goes away',
+    );
 
     check(pageErrors.length === 0, `no page errors${pageErrors.length ? `: ${pageErrors[0]}` : ''}`);
     check(offsite.length === 0, `nothing left the page${offsite.length ? `: ${offsite[0]}` : ''}`);
