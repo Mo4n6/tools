@@ -25,8 +25,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # PowerShell's own codegen plus three assembly builds. Cold, this took
-    # about half an hour locally.
+    # PowerShell's own codegen plus three assembly builds. Cold, this is a
+    # few minutes - 2m24s measured on a runner - but the ceiling is left high
+    # because the cost is a timeout nobody is waiting on, and a wasm toolchain
+    # that has to fetch more than it expects is slow rather than broken.
     timeout-minutes: 90
 
     steps:

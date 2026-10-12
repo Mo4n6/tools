@@ -48,9 +48,9 @@ jobs:
       # Husk's wasm PowerShell engine.
       #
       # Cached on the hash of everything that goes into it, so a deploy that
-      # does not change the engine restores 33 MB instead of spending half an
-      # hour rebuilding it. A miss rebuilds; there is no state that can go
-      # stale into a wrong bundle.
+      # does not change the engine restores 33 MB instead of rebuilding it.
+      # A miss rebuilds - a few minutes, measured at 2m24s - and there is no
+      # state that can go stale into a wrong bundle.
       #
       # The build is allowed to fail. Husk's tree-walker is a complete answer
       # on its own and the engine is an opt-in extra, so a broken engine build
