@@ -182,6 +182,11 @@ public static class HuskNet
     {
         url ??= "";
         method = string.IsNullOrEmpty(method) ? "GET" : method.ToUpperInvariant();
+
+        // PowerShell's WebRequestMethod.Default is GET - WebRequestPSCmdlet maps
+        // it in GetHttpMethod - so a sample writing `-Method Default` must not
+        // be reported as having used a "DEFAULT" verb, nor send one.
+        if (method == "DEFAULT") { method = "GET"; }
         byte[]? body = null;
         string outcome;
 

