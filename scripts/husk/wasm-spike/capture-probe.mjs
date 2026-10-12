@@ -16,6 +16,9 @@
 //   HUSK_CHROME=/opt/pw-browsers/chromium-*/chrome-linux/chrome \
 //   node scripts/husk/wasm-spike/capture-probe.mjs \
 //     scripts/husk/wasm-spike/probes/host-calls.ps1
+//
+// The playwright package is a devDependency, so `npm ci` installs it but not
+// the browsers: `npx playwright install chromium`, or point HUSK_CHROME at one.
 import { chromium } from "playwright";
 import { createServer } from "node:http";
 import { readFileSync, existsSync } from "node:fs";

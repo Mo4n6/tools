@@ -16,6 +16,10 @@
 //   node scripts/husk/engine/e2e.mjs
 //
 // Env: HUSK_DIST (default ./dist), HUSK_CHROME (default Playwright's own).
+//
+// Needs a browser: `npx playwright install chromium`, or point HUSK_CHROME at
+// one you already have. The playwright package itself is a devDependency;
+// `npm ci` installs it but not the browsers.
 
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
