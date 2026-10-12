@@ -1,0 +1,88 @@
+# Builds Husk's wasm PowerShell engine and uploads it as an artifact.
+#
+# Manual only, on purpose. The engine is 16 MB gzipped of .NET assemblies and
+# this workflow does not touch the Pages deploy: it produces a bundle you can
+# download and serve, so that deciding where the engine lives stays a decision
+# rather than a side effect of a build.
+#
+# Why build it rather than commit it: 43 MB raw of assemblies is a lot of
+# permanent git history for something a build can reproduce, and the build is
+# reproducible — the patch series in the repo applies to a clean v7.4.6
+# checkout, which this workflow is also the proof of.
+name: Build Husk engine
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_corpus:
+        description: 'Measure the built engine against the corpus'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # PowerShell's own codegen plus three assembly builds. Cold, this took
+    # about half an hour locally.
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install the wasm-tools workload
+        run: dotnet workload install wasm-tools
+
+      - name: Build the engine
+        run: scripts/husk/engine/build.sh "$GITHUB_WORKSPACE/husk-engine"
+
+      - name: Report what was built
+        run: |
+          python3 - <<'PY'
+          import gzip, os
+          root = os.path.join(os.environ['GITHUB_WORKSPACE'], 'husk-engine')
+          raw = total = count = 0
+          for base, _, files in os.walk(root):
+              for name in files:
+                  data = open(os.path.join(base, name), 'rb').read()
+                  raw += len(data)
+                  total += len(gzip.compress(data, 6))
+                  count += 1
+          summary = (
+              f'| files | raw | gzipped |\n|---|---|---|\n'
+              f'| {count} | {raw / 1048576:.2f} MB | {total / 1048576:.2f} MB |\n'
+          )
+          print(summary)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as handle:
+              handle.write('## Husk engine\n\n' + summary)
+          PY
+
+      - name: Measure against the corpus
+        if: ${{ inputs.run_corpus }}
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          HUSK_BUNDLE="$GITHUB_WORKSPACE/husk-engine" \
+          HUSK_REPO="$GITHUB_WORKSPACE" \
+          HUSK_OUT="$RUNNER_TEMP" \
+            node scripts/husk/wasm-spike/measure.mjs | tee "$RUNNER_TEMP/corpus.txt"
+          {
+            echo '## Corpus'
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/corpus.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: husk-engine
+          path: husk-engine
+          # Long enough to deploy from, short enough not to accumulate.
+          retention-days: 14

@@ -8,7 +8,7 @@ the engine beats the tree-walker outright.**
 | single-transform (244) | 80.7%       | **97.5%**  |
 | layered (864)          | 50.2%       | **100.0%** |
 
-219 cmdlets and 128 aliases live, in a 15.95 MB gzipped bundle. Runs on
+219 cmdlets and 128 aliases live, in a 12.64 MB gzipped bundle. Runs on
 **ordinary static hosting** — no
 cross-origin isolation headers; `file://` does not, for an unrelated loader
 reason. Five fixtures miss in total, and none of them for a reason
@@ -1230,18 +1230,43 @@ engine.
 
 ### What is left
 
-**The engine has nowhere to live.** 16 MB gzipped of .NET assemblies, which is
-a decision rather than a task:
+**The engine is now built rather than committed**, by
+`scripts/husk/engine/build.sh`, from nothing but the patch series in this repo:
+clone `v7.4.6`, apply the patches, run PowerShell's codegen, build four
+assemblies for `browser-wasm`, harvest SMA's dependency closure, publish the
+host app, inject the assemblies into the boot manifest. One command, 20–40
+minutes cold.
 
-- commit them under `public/husk-engine/` — 43 MB raw in git, shipped with
-  every deploy, and the MIT notice obligation in `THIRD-PARTY.md` comes due;
-- build them in CI — needs the .NET SDK, the `wasm-tools` workload and the
-  fork, and this environment's network policy blocks the .NET CDN;
-- publish them as a release asset and fetch at runtime — a cross-origin
-  dependency for a tool whose whole claim is that nothing leaves the machine.
+That settles the hosting question the useful way round. 33 MB raw of assemblies
+is a lot of permanent git history for something a build reproduces, so
+`.github/workflows/build-husk-engine.yml` builds it on demand and uploads it as
+an artifact. **Manual only, and it does not touch the Pages deploy** — where
+the engine is served from stays a decision rather than a side effect.
 
-`VITE_HUSK_ENGINE_URL` points at wherever that lands. Unset, which is the
-default, Husk uses the tree-walker and says nothing about an engine.
+Writing the script was worth it twice over.
+
+**It proved the patch series applies to a clean checkout**, which this log had
+asserted for a long time without anyone checking. `git apply --check` on a
+fresh shallow clone of `v7.4.6`: every file, no fuzz.
+
+**It produced a better bundle than the one I had built by hand** — 12.64 MB
+gzipped against 15.95 MB, 199 files against 209, with the corpus identical at
+98.0% / 100.0% and the same five misses. The ten extra assemblies were left
+over from a dependency harvest I had done separately and forgotten; a recipe
+nobody can re-run accumulates that kind of thing invisibly.
+
+And it found a flaw in my own recipe, because the script asserts what the log
+only described. **Only the project named on the `dotnet build` command line
+gets the `browser-wasm` output.** Its dependencies build for the default RID
+into a directory with no RID in the path, and a project nothing references is
+not built at all: building Management alone produced no Utility anywhere and
+SMA only under `net8.0/`. Each project is built explicitly now, and the four
+assemblies are collected by search rather than from one directory, because
+Security arrives in Management's output and the next one may land elsewhere
+again.
+
+`VITE_HUSK_ENGINE_URL` points at wherever the bundle is served. Unset, which is
+the default, Husk uses the tree-walker and says nothing about an engine.
 
 **The UI has no backend switch.** The loader degrades honestly, so nothing is
 broken by its absence, but an analyst cannot choose the engine yet, and the
