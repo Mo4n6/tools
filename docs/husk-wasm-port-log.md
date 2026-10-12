@@ -8,17 +8,18 @@ the engine beats the tree-walker outright.**
 | single-transform (244) | 80.7%       | **97.5%**  |
 | layered (864)          | 50.2%       | **100.0%** |
 
-220 cmdlets and 128 aliases live. Runs on **ordinary static hosting** — no
-cross-origin isolation headers. `file://` does not work, for an unrelated
-loader reason. Five fixtures miss in total, and none of them for a reason
+219 cmdlets and 128 aliases live, in a 15.95 MB gzipped bundle. Runs on
+**ordinary static hosting** — no
+cross-origin isolation headers; `file://` does not, for an unrelated loader
+reason. Five fixtures miss in total, and none of them for a reason
 patching PowerShell can fix: four depend on .NET Framework's own reflection
 member order and one is a corpus defect. See the corpus section.
 
-Fifteen real source patches, 1,508 insertions across 20 files — seven
+Sixteen real source patches, 1,528 insertions across 21 files — seven
 portability guards, three deliberate Windows PowerShell 5.1 fidelity patches,
-a cmdlet-level capture layer, the step and time budgets, and a managed AES.
-The fidelity patches are the ones that moved the corpus number: without them
-the engine scored **11.5%**.
+a cmdlet-level capture layer, the step and time budgets, a managed AES, and
+one build exclusion that halves the bundle. The fidelity patches are the ones
+that moved the corpus number: without them the engine scored **11.5%**.
 
 This is a work log, not a spec. It exists so the work can be resumed from a
 cold container, because the scratchpad does not survive one. `husk-spec.md` §1
@@ -284,7 +285,7 @@ Output: `src/System.Management.Automation/bin/Release/net8.0/browser-wasm/System
 ## The patch series
 
 `scripts/husk/wasm-spike/patches/0001-powershell-browser-wasm.patch` — the whole
-port is **1,508 insertions across 20 files**. Apply to a clean `v7.4.6`
+port is **1,528 insertions across 21 files**. Apply to a clean `v7.4.6`
 checkout.
 
 Three are environment-only, needed because of this network policy:
@@ -1102,18 +1103,57 @@ should make it free, but that is asserted rather than measured.
 **Done when:** a benchmark script shows bind-heavy code is not measurably
 slower than stock SMA.
 
-### 6. Trimming
+### 6. Trimming — DONE, 26.63 MB → 15.95 MB
 
-**Why:** 197 assemblies, ~12 MB gzipped, ~1.5 s boot. Most of Roslyn,
-Markdig, JsonSchema.Net and System.Drawing.Common is dead weight for
-deobfuscation. `Add-Type` needs Roslyn; nothing else does.
+Measured properly this time, by rebuilding both ways and gzipping every file
+the server would send. The earlier "~12 MB" in this log was taken before
+Commands.Management and Security joined the bundle and is not comparable.
 
-**Done when:** the bundle is meaningfully smaller with the corpus number
-unchanged.
+| | gzipped | assemblies |
+|---|---|---|
+| before | 26.63 MB | 199 |
+| after | **15.95 MB** | 196 |
 
-**Known:** `PublishTrimmed` is off because SMA is reflection-heavy and
-trimming it is the documented hazard. Removing whole package references is
-safer than trimming.
+Two changes, and **no corpus movement**: 98.0% / 100.0% either way, with 219
+live cmdlets instead of 220 — the one lost being `Add-Type`.
+
+**Roslyn, 10.6 MB gzipped, was 40% of the bundle and bought nothing.** It is
+there for `Add-Type`, and `Add-Type` cannot work in a browser: with Roslyn
+present the cmdlet's own type initializer throws `TypeInitializationException`
+on wasm. The capability was already absent; only the download was real.
+
+Removing the *package reference* is not enough — the file has to go. Husk
+registers cmdlets with `Assembly.GetTypes()`, which throws whole if any type
+fails to resolve, and **mono's `ReflectionTypeLoadException.Types` comes back
+with most of the assembly missing**: tolerating the exception and taking the
+non-null types dropped Utility from 220 live cmdlets to **105**. So the
+Utility csproj excludes `commands/utility/AddType.cs` for `browser-wasm`, and
+a proxy function records the C# source and the P/Invoke imports the sample
+declared — which is the evidence an analyst wants, since the imports name the
+Windows API the sample intended to call and there is no native library behind
+them here anyway.
+
+**`SMA-unix.dll` was being downloaded twice.** The app references the patched
+SMA by file name, so the wasm SDK bundles it under that name while the
+injection step writes it under its assembly name; both landed in
+`blazor.boot.json`. 2 MB, for nothing.
+
+`Microsoft.ApplicationInsights` has to stay, though telemetry is opted out:
+SMA holds a static field of a type from it, and the field's type must load for
+the class to initialise. Measured by removing it — `Init` failed with "could
+not load type of field …`<s_telemetryClient>k__BackingField`".
+
+**Stopped here deliberately.** The next tranche — Markdig, JsonSchema.Net,
+System.Drawing.Common and its `System.Private.Windows.Core` — is 1.76 MB for
+four more csproj exclusions and the compile errors that follow from the files
+that reference them. 11% of the bundle for an afternoon, and it changes no
+decision. What is left is mostly irreducible without ILLink, and
+`PublishTrimmed` on SMA is the documented hazard: it is reflection-heavy and
+trimming it breaks it quietly.
+
+The honest framing for 16 MB: it is a once-per-browser download, cached, for a
+tool that replaces a VM, and the tree-walker still serves the first paint and
+the `file://` case. The engine has to be a lazy import, not a page weight.
 
 ### 7. Integrate with Husk proper — **the next thing to do**
 

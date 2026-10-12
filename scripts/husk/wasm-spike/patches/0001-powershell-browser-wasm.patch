@@ -31,6 +31,39 @@ index db65daa..245c709 100644
 -    <clear />
 -  </disabledPackageSources>
  </configuration>
+diff --git a/src/Microsoft.PowerShell.Commands.Utility/Microsoft.PowerShell.Commands.Utility.csproj b/src/Microsoft.PowerShell.Commands.Utility/Microsoft.PowerShell.Commands.Utility.csproj
+index 76bd021..3024e57 100644
+--- a/src/Microsoft.PowerShell.Commands.Utility/Microsoft.PowerShell.Commands.Utility.csproj
++++ b/src/Microsoft.PowerShell.Commands.Utility/Microsoft.PowerShell.Commands.Utility.csproj
+@@ -31,8 +31,27 @@
+     <EmbeddedResource Remove="resources\ImmutableStrings.resx" />
+   </ItemGroup>
+ 
+-  <ItemGroup>
++  <!-- wasm port: Add-Type cannot work in a browser, and it is the only thing
++       in this assembly that references Roslyn - which is 10.6 MB gzipped, 66%
++       of the whole engine bundle. Even with Roslyn present the cmdlet's type
++       initializer throws on wasm, so the capability is already absent; this
++       only stops the bundle paying 10.6 MB for it.
++
++       Excluding the file rather than leaving the reference unused matters:
++       Husk registers cmdlets with Assembly.GetTypes(), which throws whole if
++       any type fails to resolve, and mono's ReflectionTypeLoadException.Types
++       comes back with most of the assembly missing - measured, 220 live
++       cmdlets fell to 105. A proxy function records the C# source and the
++       P/Invoke imports a sample declares, which is the evidence anyway. -->
++  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'browser-wasm'">
++    <Compile Remove="commands\utility\AddType.cs" />
++  </ItemGroup>
++
++  <ItemGroup Condition="'$(RuntimeIdentifier)' != 'browser-wasm'">
+     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.9.2" />
++  </ItemGroup>
++
++  <ItemGroup>
+     <PackageReference Include="System.Threading.AccessControl" Version="9.0.0-preview.6.24327.7" />
+     <PackageReference Include="System.Drawing.Common" Version="9.0.0-preview.6.24327.6" />
+     <PackageReference Include="JsonSchema.Net" Version="7.0.4" />
 diff --git a/src/System.Management.Automation/CoreCLR/CorePsAssemblyLoadContext.cs b/src/System.Management.Automation/CoreCLR/CorePsAssemblyLoadContext.cs
 index 6be8d3c..2f41b5b 100644
 --- a/src/System.Management.Automation/CoreCLR/CorePsAssemblyLoadContext.cs

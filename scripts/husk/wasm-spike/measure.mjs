@@ -107,8 +107,11 @@ await page.waitForFunction(
   null,
   { timeout: 180000 },
 );
-if (String(await page.evaluate(() => globalThis.psInit())).trim() !== "OK") {
-  console.log("init failed");
+const init = String(await page.evaluate(() => globalThis.psInit())).trim();
+if (init !== "OK") {
+  // The reason, not just the fact: an init failure is almost always a
+  // missing assembly, and the exception names which one.
+  console.log("init failed:", init.slice(0, 600));
   process.exit(1);
 }
 const run = async (src) => {

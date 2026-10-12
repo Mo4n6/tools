@@ -477,7 +477,7 @@ public static partial class Spike
     private static int RegisterCmdlets(InitialSessionState iss, Assembly assembly)
     {
         var added = 0;
-        foreach (var type in assembly.GetTypes())
+        foreach (var type in SafeGetTypes(assembly))
         {
             if (type.IsAbstract || !type.IsPublic) { continue; }
             var attr = type.GetCustomAttribute<CmdletAttribute>();
@@ -488,6 +488,27 @@ public static partial class Spike
             added++;
         }
         return added;
+    }
+
+    /// The types an assembly can actually load.
+    ///
+    /// GetTypes() throws ReflectionTypeLoadException whole if *any* type fails
+    /// to resolve, and types do fail once an assembly is left out of the
+    /// bundle deliberately: ConvertFrom-Markdown names Markdig types in its
+    /// signature, and Markdig is 548 KB gzipped for a cmdlet no sample uses.
+    /// Taking the types that did load means a cmdlet whose dependency is gone
+    /// is simply absent, rather than taking every other cmdlet in the
+    /// assembly down with it.
+    private static IEnumerable<Type> SafeGetTypes(Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException ex)
+        {
+            return ex.Types.Where(t => t is not null)!;
+        }
     }
 
     /// Every cmdlet name registered off an assembly, so the alias table can
@@ -666,6 +687,42 @@ function Start-BitsTransfer {
 # not as a module, so there is no Microsoft.PowerShell.Utility to qualify with.
 $global:HuskRealNewObject = Get-Command -Name New-Object -CommandType Cmdlet
 $global:HuskRealIex = Get-Command -Name Invoke-Expression -CommandType Cmdlet
+
+# Add-Type cannot work here and never will: Roslyn is 10.6 MB gzipped - 86% of
+# the whole bundle - and even with it present the cmdlet's type initializer
+# throws on wasm. The C# a sample hands it is still evidence, and in malware it
+# is nearly always a P/Invoke declaration, which names the Windows API the
+# sample intends to call. Recording the source and returning is strictly more
+# useful than a TypeInitializationException.
+function Add-Type {
+    [CmdletBinding()]
+    param(
+        [Parameter(Position=0)] [string[]] $TypeDefinition,
+        [string[]] $MemberDefinition,
+        [string[]] $Path,
+        [string[]] $LiteralPath,
+        [string] $Name,
+        [string] $Namespace,
+        [string[]] $AssemblyName,
+        [Parameter(ValueFromRemainingArguments=$true)] $Rest
+    )
+
+    $source = @()
+    if ($TypeDefinition) { $source += $TypeDefinition }
+    if ($MemberDefinition) { $source += $MemberDefinition }
+    if ($Path) { $source += $Path }
+    if ($LiteralPath) { $source += $LiteralPath }
+    if ($AssemblyName) { $source += $AssemblyName }
+    [HuskHost]::Record('assembly.define-type', 'Add-Type', [string[]]$source)
+
+    # P/Invoke declarations are the common case, so name the imports too: the
+    # API a sample declares is an indicator on its own, even unexecuted.
+    foreach ($text in $source) {
+        foreach ($m in [regex]::Matches([string]$text, '(?i)DllImport\s*\(\s*""([^""]+)""')) {
+            [HuskHost]::Record('assembly.pinvoke', 'Add-Type DllImport', @($m.Groups[1].Value))
+        }
+    }
+}
 
 function New-Object {
     [CmdletBinding()]
