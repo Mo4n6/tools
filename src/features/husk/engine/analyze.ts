@@ -16,6 +16,7 @@
 
 import type { AnalysisResult } from '../analyze';
 import { describeLauncher, parseLauncher } from '../eval/launcher';
+import { extractPayloads } from '../ioc/payloads';
 import { scanAllLayers } from '../host/stubs';
 import { extractIocs } from '../ioc/extract';
 import { adaptRun, type DroppedFile, type RegistryWrite } from './adapt';
@@ -66,6 +67,7 @@ export function analyzeRun(source: string, run: EngineRun, elapsedMs: number): E
   // over a trace neither pass can tell apart from the tree-walker's.
   scanAllLayers(trace);
   const iocs = extractIocs(trace);
+  const payloads = extractPayloads(trace);
 
   const launcher = parseLauncher(source);
 
@@ -75,6 +77,7 @@ export function analyzeRun(source: string, run: EngineRun, elapsedMs: number): E
     output: adapted.output,
     events: trace.events,
     iocs,
+    payloads,
     // A run that was cut short, or that stopped early, or that recorded a
     // vocabulary gap, is not a result to be relied on without reading why.
     reliable: trace.isReliable && adapted.stoppedBy === undefined && adapted.completed,
