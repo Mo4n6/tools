@@ -210,10 +210,117 @@ function evaluateBinary(
       return psBool(toStringValue(left).toLowerCase() === toStringValue(right).toLowerCase(), taint);
     case TokenKind.Ceq:
       return psBool(toStringValue(left) === toStringValue(right), taint);
+    case TokenKind.Ine:
+      return psBool(toStringValue(left).toLowerCase() !== toStringValue(right).toLowerCase(), taint);
+    case TokenKind.Cne:
+      return psBool(toStringValue(left) !== toStringValue(right), taint);
 
+    // Ordering. PowerShell compares numerically when the left operand is a
+    // number and by string otherwise, which is the rule that decides whether
+    // '10' -gt '9' is true: as numbers yes, as strings no.
+    case TokenKind.Igt:
+    case TokenKind.Cgt:
+      return psBool(compareOperands(left, right, node.op === TokenKind.Cgt) > 0, taint);
+    case TokenKind.Ige:
+    case TokenKind.Cge:
+      return psBool(compareOperands(left, right, node.op === TokenKind.Cge) >= 0, taint);
+    case TokenKind.Ilt:
+    case TokenKind.Clt:
+      return psBool(compareOperands(left, right, node.op === TokenKind.Clt) < 0, taint);
+    case TokenKind.Ile:
+    case TokenKind.Cle:
+      return psBool(compareOperands(left, right, node.op === TokenKind.Cle) <= 0, taint);
+
+    // Membership. -contains takes the collection on the left, -in on the
+    // right; getting that backwards silently inverts the result.
+    case TokenKind.Icontains:
+    case TokenKind.Ccontains:
+      return psBool(
+        containsValue(left, right, node.op === TokenKind.Ccontains),
+        taint,
+      );
+    case TokenKind.Iin:
+    case TokenKind.Cin:
+      return psBool(containsValue(right, left, node.op === TokenKind.Cin), taint);
+
+    // The range operator, which obfuscators use to build char arrays and to
+    // reverse strings - `[char[]](72,105)` and `$s[-1..-$s.Length]`.
+    case TokenKind.DotDot:
+      return rangeOperator(left, right, taint, ctx, node);
+
+    // -like and -match stay unimplemented on purpose, and record a gap rather
+    // than a wrong answer. Both would compile a pattern out of sample-supplied
+    // text, and a deobfuscator that can be made to backtrack catastrophically
+    // by its input has handed the sample a hang. The parser already caps
+    // nesting for the same reason. Implementing them needs a bounded matcher,
+    // not a RegExp.
     default:
       return psNull(gap(ctx, 'GAP', `operator ${TokenKind[node.op]}`, [], node));
   }
+}
+
+/**
+ * PowerShell's comparison rule: numeric when the left operand is a number,
+ * string otherwise. Returns the sign of left - right.
+ */
+function compareOperands(left: PSValue, right: PSValue, caseSensitive: boolean): number {
+  const leftNumber = toNumber(left);
+  if (leftNumber !== undefined) {
+    const rightNumber = toNumber(right) ?? 0;
+    return leftNumber < rightNumber ? -1 : leftNumber > rightNumber ? 1 : 0;
+  }
+
+  const a = caseSensitive ? toStringValue(left) : toStringValue(left).toLowerCase();
+  const b = caseSensitive ? toStringValue(right) : toStringValue(right).toLowerCase();
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Whether `collection` holds `item`, compared the way PowerShell compares. */
+function containsValue(collection: PSValue, item: PSValue, caseSensitive: boolean): boolean {
+  const needle = caseSensitive ? toStringValue(item) : toStringValue(item).toLowerCase();
+  return toArrayValue(collection).some((entry) => {
+    const hay = caseSensitive ? toStringValue(entry) : toStringValue(entry).toLowerCase();
+    return hay === needle;
+  });
+}
+
+/**
+ * `1..10`, and the descending form obfuscators use to reverse a string.
+ *
+ * Bounded, because the operands come from the sample: `1..99999999` would
+ * otherwise allocate until the tab died, which is the hang the budgets exist
+ * to prevent and which no budget check inside a single expression would catch.
+ * Over the cap it records a gap instead, so the result says it was refused.
+ */
+const MAX_RANGE = 65_536;
+
+function rangeOperator(
+  left: PSValue,
+  right: PSValue,
+  taint: Taint,
+  ctx: EvalContext,
+  node: { start: number },
+): PSValue {
+  const from = toNumber(left);
+  const to = toNumber(right);
+  if (from === undefined || to === undefined) {
+    return psNull(
+      gap(ctx, 'GAP', 'operator DotDot', [], node, 'a range bound did not resolve to a number'),
+    );
+  }
+
+  const span = Math.abs(Math.trunc(to) - Math.trunc(from)) + 1;
+  if (span > MAX_RANGE) {
+    return psNull(
+      gap(ctx, 'GAP', 'operator DotDot', [], node, `range of ${span} exceeds the ${MAX_RANGE} cap`),
+    );
+  }
+
+  const start = Math.trunc(from);
+  const step = Math.trunc(to) >= start ? 1 : -1;
+  const values: PSValue[] = [];
+  for (let i = 0; i < span; i += 1) values.push(psNumber(start + i * step, taint));
+  return psArray(values, taint);
 }
 
 /** '+' concatenates strings and arrays, and adds numbers. */

@@ -113,7 +113,21 @@ const RULES: readonly Rule[] = [
     // The label repetition is bounded for the same reason as the email rule:
     // a hostname has at most a handful of labels, and an unbounded '+' over a
     // long run is a backtracking hazard.
-    pattern: /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){1,8}(?:com|net|org|ru|cn|top|xyz|info|biz|online|site|club|tk|ml|ga|cf|pw|cc|io|co|us|uk|de|fr|nl|pl|br|in|ir|su)\b/gi,
+    //
+    // The TLD set is curated for this job rather than complete. A real
+    // Emotet sample whose whole C2 list was `"anyconnect.stream",
+    // "bigip.stream"` yielded zero indicators and still reported as fully
+    // resolved, because `.stream` was not here - the worst kind of miss, since
+    // nothing says it happened. The additions are the registries with
+    // documented abuse rates: the ShortDot set, the old Famous Four
+    // (.stream/.download/.racing/.party and friends), and the cheap gTLDs that
+    // keep turning up in commodity malspam.
+    //
+    // Deliberately NOT added: .zip, .mov, .app, .dev, .sh, .py, .rs. They are
+    // real TLDs that collide with file extensions, and `payload.zip` reading
+    // as a domain would put a fabricated indicator in front of an analyst,
+    // which is worse than a missing one.
+    pattern: /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){1,8}(?:com|net|org|ru|cn|top|xyz|info|biz|online|site|club|tk|ml|ga|cf|pw|cc|io|co|us|uk|de|fr|nl|pl|br|in|ir|su|stream|download|racing|party|review|win|bid|trade|webcam|men|loan|date|click|link|work|science|faith|cricket|accountant|gdn|country|icu|cyou|sbs|cfd|bond|buzz|monster|quest|rest|surf|bar|best|lol|shop|live|fun|space|website|press|host|store|uno|ooo|wiki|pics|fit|beauty|hair|skin|makeup|mom|autos|homes|boats)\b/gi,
     confidence: 'medium',
     normalize: (v) => v.toLowerCase(),
     reject: (value, context) => {

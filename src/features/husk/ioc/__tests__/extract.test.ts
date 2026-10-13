@@ -108,3 +108,23 @@ describe('indicators are found across layers, not just the final stage', () => {
     expect(url?.layer).toBe(0);
   });
 });
+
+describe('domain TLD coverage', () => {
+  // A real Emotet sample whose whole C2 list was these two names yielded zero
+  // indicators and still reported as fully resolved, because `.stream` was not
+  // in the TLD set. Found by running the local corpus over PSDecode's samples.
+  it('extracts the newer gTLDs commodity malware actually uses', async () => {
+    const r = await analyze(`$Global:domainList = "anyconnect.stream","bigip.stream"`);
+    expect(kinds(r, 'domain')).toEqual(
+      expect.arrayContaining(['anyconnect.stream', 'bigip.stream']),
+    );
+  });
+
+  it('still refuses the TLDs that collide with file extensions', async () => {
+    // .zip and .mov are real TLDs. Reading `payload.zip` as a domain would put
+    // a fabricated indicator in front of an analyst, which is worse than a
+    // missing one, so they stay out of the set on purpose.
+    const r = await analyze(`$a = 'payload.zip'; $b = 'clip.mov'`);
+    expect(kinds(r, 'domain')).toEqual([]);
+  });
+});
