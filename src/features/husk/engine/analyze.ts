@@ -32,6 +32,8 @@ export interface EngineAnalysisResult extends AnalysisResult {
    * partial, not failed — and the UI has to say which.
    */
   readonly stoppedBy?: string;
+  /** Records the engine's cap discarded, so a shortened call list says so. */
+  readonly droppedCalls?: number;
   /** The first error the sample raised, terminating or not. */
   readonly engineError?: string;
   /**
@@ -88,6 +90,7 @@ export function analyzeRun(source: string, run: EngineRun, elapsedMs: number): E
     registryWrites: adapted.registryWrites,
     dropped: adapted.dropped,
     stoppedBy: adapted.stoppedBy,
+    droppedCalls: run.result.droppedCalls,
     engineError: adapted.error,
     completed: adapted.completed,
     elapsedMs,

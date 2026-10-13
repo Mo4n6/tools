@@ -301,6 +301,16 @@ const HuskApp = (): JSX.Element => {
                 ) : null}
               </div>
 
+              {(engineResult?.droppedCalls ?? 0) > 0 ? (
+                <p className={`${panel} border-amber-500/40 text-amber-200`}>
+                  The sample made more recorded calls than Husk keeps, so{' '}
+                  {engineResult?.droppedCalls} were discarded after the first{' '}
+                  {result.events.length > 0 ? 'few thousand' : 'batch'}. Usually a loop repeating
+                  itself; the calls below are the earliest, which are the ones that say what the
+                  sample set out to do.
+                </p>
+              ) : null}
+
               {engineResult?.stoppedBy !== undefined ? (
                 <p className={`${panel} border-amber-500/40 text-amber-200`}>
                   The run was cut short: {engineResult.stoppedBy}. Everything below is still
