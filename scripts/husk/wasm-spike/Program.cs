@@ -1068,6 +1068,78 @@ function Start-BitsTransfer {
     $null
 }
 
+# A dropper relaunching itself is the commonest dead end in this engine: 90 of
+# 300 real samples carry `powershell -enc <base64>` or similar, and `powershell`
+# is not a command here, so the chain stopped at the relaunch and everything
+# past it went unseen.
+#
+# Two separate things are worth having. The command line itself is evidence -
+# the switches say how the sample meant to hide, -w hidden -nop -ep bypass - so
+# it is recorded as process.start. And the payload is the next stage, so it is
+# decoded and run, which makes it a layer through the Invoke-Expression proxy
+# and puts it in front of the analyst like any other.
+#
+# The depth cap is not decoration: a stage that relaunches itself would recurse
+# until the stack gave out, and a sample can write that in one line.
+$global:HuskRelaunchDepth = 0
+
+# Deliberately not an advanced function. [CmdletBinding()] brings the common
+# parameters with it, and PowerShell then binds -w to -WarningAction and -e to
+# -ErrorAction before they ever reach a remaining-arguments parameter: measured,
+# `powershell -nop -w hidden -enc ...` failed with 'the parameter name w is
+# ambiguous'. What is being emulated is an executable taking a raw command line,
+# which does no binding at all, and plain $args is exactly that.
+function powershell {
+    $parts = @()
+    foreach ($a in $args) { $parts += [string]$a }
+    [HuskHost]::Record('process.start', 'powershell', @(($parts -join ' ')))
+
+    # -e, -en, -enc ... are all EncodedCommand; -ex is ExecutionPolicy and must
+    # not match, which falls out of the prefix test because encodedcommand has
+    # an n where executionpolicy has an x.
+    $payload = $null
+    $encoded = $false
+    for ($i = 0; $i -lt $parts.Count; $i++) {
+        $flag = $parts[$i]
+        if (-not $flag.StartsWith('-')) { continue }
+        if ($i + 1 -ge $parts.Count) { continue }
+
+        $name = $flag.TrimStart('-').ToLower()
+        if ($name.Length -eq 0) { continue }
+
+        if ('encodedcommand'.StartsWith($name)) {
+            $payload = $parts[$i + 1]
+            $encoded = $true
+            break
+        }
+        if ('command'.StartsWith($name)) {
+            $payload = $parts[$i + 1]
+            break
+        }
+    }
+
+    if ($null -eq $payload) { return $null }
+
+    if ($encoded) {
+        try {
+            $payload = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($payload))
+        } catch {
+            # Not base64 after all. The command line is already recorded, which
+            # is the part that does not depend on decoding it.
+            return $null
+        }
+    }
+
+    if ($global:HuskRelaunchDepth -ge 3) { return $null }
+
+    $global:HuskRelaunchDepth++
+    try { Invoke-Expression $payload }
+    finally { $global:HuskRelaunchDepth-- }
+}
+Set-Alias powershell.exe powershell -Scope Global -Force
+Set-Alias pwsh powershell -Scope Global -Force
+Set-Alias pwsh.exe powershell -Scope Global -Force
+
 # Sleeping here waits for nothing. There is no clock the sample is
 # synchronising with and nothing will arrive while it waits, so a real sleep
 # only burns the wall-clock budget - and a sample that ends in
