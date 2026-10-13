@@ -541,24 +541,39 @@ is the point. Network blocked, filesystem, registry and process APIs proxied.
 
 The measure that matters is whether the pipeline **ran to the end**, which is not
 the same question as whether the sample raised an error: `Start-Process` failing
-is non-terminating, the script carries on, and the analysis is whole. Over the
-300: **214 ran to the end (71.3%)**, 59 of them raising a non-terminating error
-along the way. 86 were cut short. Host calls were recorded on 165 samples and
-files dropped on 58.
+is non-terminating, the script carries on, and the analysis is whole. Counting
+those as failures is what produced the "48% error rate" recorded in an earlier
+version of this file, and it was wrong.
 
-Of the 86 that did not finish, only about half are the engine's fault:
+Over the 300, with the launcher unwrapped the way the worker does it:
 
 | | |
 |---|---|
-| sample is not parseable as PowerShell | 26x |
+| ran to the end | **221 (73.7%)** |
+| host calls recorded | **198 (66.0%)** |
+| files dropped | 62 (20.7%) |
+| cut short | 79 (26.3%) |
+
+Measured both ways, which is the clearest evidence the unwrapping was worth
+doing: feeding the raw source instead gives 214 run to the end and host calls on
+only 165. Unwrapping the launcher is a third more samples whose behaviour the
+engine actually observes, and it drops "not parseable as PowerShell" from 26 to
+15.
+
+Of the 79 that did not finish:
+
+| | |
+|---|---|
 | budget stop at 10s | 21x |
-| browser-wasm operation unsupported | 12x |
-| cmdlet not in the bundle | 7x |
+| sample is not parseable as PowerShell | 15x |
+| browser-wasm operation unsupported | 11x |
+| cmdlet not in the bundle | 6x |
 | sample terminated the runtime | 1x |
 
-So the engine's own gaps account for roughly 41 of 300, not the 145 a naive
-error count gives. 37 of the 86 still recorded host calls before stopping, so
-even a cut-short run is usually evidence.
+So the engine's own gaps account for **40 of 300 (13.3%)**, and the single
+biggest one is the time budget rather than a missing capability. 37 of the
+cut-short runs still recorded host calls before stopping, so even a cut-short
+run is usually evidence.
 
 Which chokepoint saw anything, across the corpus: cmdlet 99, binder 91, proxy
 77, provider 8. That spread is the engine's whole argument - four independent
