@@ -532,6 +532,43 @@ had; the original string is still what the report reads the launcher's switches
 back out of. The shipped example went from a `'powershell' is not recognized`
 error to three indicators and two events on the first click.
 
+### Processes and sockets
+
+`System.Diagnostics.Process` does not exist on browser-wasm: constructing one
+threw "not supported on this platform", which **killed** the run rather than
+degrading it - the worst failure mode available. 31 of 300 samples construct
+one, and 17 more open sockets. Both now have stand-ins in the `New-Object`
+proxy, reporting in the canonical vocabulary:
+
+    New-Object Net.Sockets.TcpClient('10.0.0.5', 4444)
+        -> network.connect  10.0.0.5:4444
+
+Over the 300: host calls produced on 210 -> **218** samples, `network.connect`
+recorded on **0 -> 10**, "not supported" failures 43 -> 39. No sample lost a
+call. The host and port are the point - that is a C2 endpoint an analyst pivots
+on, from a construct that previously produced nothing at all.
+
+`ProcessStartInfo` is deliberately left as the real type, which is the half of
+this the corpus had to settle. Standing in for it gave the instance path a full
+command line - `process.start "cmd.exe /c whoami"` instead of `""` - and cost a
+real sample its only record: the static form,
+`[Diagnostics.Process]::Start($si)`, is recorded by the binder chokepoint, and a
+PSObject matches no overload, so binding fails and the binder sees nothing.
+Giving the stand-in a `ToString` did not rescue it either, because binding fails
+before `ToString` is reached.
+
+The corpus settles the trade rather than taste: **4 of 300 samples use the
+static form against 1 using the instance form**. Standing in buys a full command
+line for that one and silences four. Getting both would need the binder to read
+a PSObject, and the binder lives in the PowerShell patch rather than the host
+shim.
+
+Worth noting how that was caught. Six hand-written cases all passed; the
+corpus run found the regression. That is twice in this file now - the other was
+the fold that looked strictly better in isolation - and both times the losing
+change was one that unit tests cannot see, because it turns on which shape real
+samples actually use.
+
 ### Running the stage a sample relaunches itself with
 
 A dropper relaunching itself was the commonest dead end here: 90 of the 300
