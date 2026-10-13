@@ -588,6 +588,27 @@ export async function deobfuscate(
     trace.taintDeepest(taintFrom(id));
   }
 
+  // The other half of that: Husk recognised something, could not resolve it,
+  // and has nothing to show for the run.
+  //
+  // `isReliable` reads layer and event taint, so it answers "is what I
+  // produced trustworthy". When nothing was produced, that question is
+  // vacuously true - there is no output for the gap's taint to reach, and the
+  // result reports as fully resolved while the ledger holds an unimplemented
+  // construct. Two real samples failed exactly this way: a reflective loader
+  // whose every `GetAssemblies()` was recorded as a gap, and a script using an
+  // operator with no rule yet. Both read as clean.
+  //
+  // Tainting the deepest layer is what turns that into "incomplete - see
+  // fidelity", which is the honest answer and names the construct.
+  if (trace.layers.length === 1 && trace.events.length === 0 && trace.gaps.size > 0) {
+    // Ranked, so the taint points at the gap with the widest blast radius
+    // rather than whichever happened to be recorded first.
+    for (const record of trace.gaps.ranked().slice(0, 1)) {
+      trace.taintDeepest(taintFrom(record.id));
+    }
+  }
+
   if (exhaustedLayers) {
     const id = trace.gaps.report({
       kind: 'GAP',

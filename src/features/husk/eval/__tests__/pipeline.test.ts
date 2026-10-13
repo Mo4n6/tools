@@ -140,3 +140,79 @@ describe('end to end', () => {
     expect(result.trace.layers.length).toBeLessThanOrEqual(2);
   });
 });
+
+describe('operators found in real samples but not in the synthetic corpus', () => {
+  // Invoke-Obfuscation never emits these, so the generated corpus could not
+  // have caught them, and it did not: coverage over it is unchanged. They
+  // turned up running the local corpus over sandbox-sourced samples, where
+  // DotDot appeared 14 times and Ine 11 times in 300 files.
+  //
+  // Every case is wrapped in IEX on purpose. Only an evaluated position is
+  // folded, so `$a = ('abc' -ine 'ABC')` asserts nothing at all - the first
+  // version of these tests passed that way, with the operator never reached.
+  it('folds an ascending range', async () => {
+    const { output } = await deobfuscate(`IEX ((1..3) -join '-')`);
+    expect(output).toBe('1-2-3');
+  });
+
+  it('folds a descending range, which is how a string gets reversed', async () => {
+    const { output } = await deobfuscate(`IEX ((10..8) -join ',')`);
+    expect(output).toBe('10,9,8');
+  });
+
+  it('refuses a range large enough to be a hang', async () => {
+    // The bounds come from the sample, so an unbounded range is an allocation
+    // no budget can interrupt: it happens inside a single expression.
+    const { trace, reliable } = await deobfuscate(`IEX (1..99999999)`);
+    expect(trace.gaps.ranked().some((g) => g.signature === 'operator DotDot')).toBe(true);
+    expect(reliable).toBe(false);
+  });
+
+  it('compares case-insensitively with -ine', async () => {
+    // 'abc' and 'ABC' are equal ignoring case, so -ine is False. Getting this
+    // inverted would quietly flip every branch a sample takes.
+    const { output, trace } = await deobfuscate(`IEX ('abc' -ine 'ABC')`);
+    expect(output).toBe('False');
+    expect(trace.gaps.size).toBe(0);
+  });
+
+  it('orders numerically when the left operand is a number, by string otherwise', async () => {
+    expect((await deobfuscate(`IEX (65 -gt 9)`)).output).toBe('True');
+    expect((await deobfuscate(`IEX ('b' -gt 'a')`)).output).toBe('True');
+  });
+
+  it('takes the collection on the left for -contains and on the right for -in', async () => {
+    // Backwards, both of these still evaluate - to the wrong answer.
+    expect((await deobfuscate(`IEX (@('a','b') -contains 'A')`)).output).toBe('True');
+    expect((await deobfuscate(`IEX ('a' -in @('A','b'))`)).output).toBe('True');
+  });
+
+  it('leaves -match unimplemented, and says so', async () => {
+    // Deliberate: it would compile a pattern out of sample-supplied text, and
+    // a deobfuscator its input can make backtrack has handed over a hang.
+    const { trace } = await deobfuscate(`IEX ('abc' -match 'a.*c')`);
+    expect(trace.gaps.ranked().some((g) => g.signature === 'operator Imatch')).toBe(true);
+  });
+});
+
+describe('reliability is not vacuous', () => {
+  // isReliable reads layer and event taint, so it answers "is what I produced
+  // trustworthy". With nothing produced that is vacuously true, and two real
+  // samples reported as fully resolved while the ledger held an unimplemented
+  // construct - the worst failure the design exists to prevent.
+  it('is false when a gap was recorded and nothing was produced', async () => {
+    const { trace, reliable } = await deobfuscate(`IEX ('abc' -match 'a.*c')`);
+    expect(trace.layers.length).toBe(1);
+    expect(trace.events.length).toBe(0);
+    expect(trace.gaps.size).toBeGreaterThan(0);
+    expect(reliable).toBe(false);
+  });
+
+  it('stays true for an ordinary script with nothing to unwrap', async () => {
+    // The other half: calling a benign script unreliable would cry wolf on
+    // every one of them.
+    const { trace, reliable } = await deobfuscate(`Write-Output 'hello'`);
+    expect(trace.gaps.size).toBe(0);
+    expect(reliable).toBe(true);
+  });
+});

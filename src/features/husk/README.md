@@ -292,6 +292,43 @@ deobfuscator mostly needs text rather than binaries:
   get ground truth for what each sample does.
 - **MalwareBazaar**, **MalShare** and **Triage** for volume, via free API keys.
 
+### What the last run over it found
+
+300 samples from `bazaar_out` and `hybrid_analysis_out`, plus the four Emotet
+droppers: no crashes, nothing near the time budget, 92% yielded indicators -
+and **two false cleans**, each a different fault.
+
+**A silent TLD miss.** One sample's entire C2 list was
+`"anyconnect.stream","bigip.stream"`, and it produced zero indicators while
+reporting as fully resolved, because `.stream` was not in the domain rule's TLD
+set. The set is curated rather than complete, deliberately - bare hostnames are
+noisy - but it was missing the registries with the worst abuse rates. Added
+those; left out the TLDs that collide with file extensions (`.zip`, `.mov`,
+`.app`), since `payload.zip` reading as a domain is a fabricated indicator,
+which is worse than a missing one.
+
+**Reliability was vacuous when nothing was produced.** `isReliable` reads layer
+and event taint, so it answers "is what I produced trustworthy". With nothing
+produced that is vacuously true: a reflective loader whose every
+`GetAssemblies()` was recorded as a gap still reported as fully resolved,
+because there was no output for the gap's taint to reach. The pipeline now
+taints the deepest layer when the ledger is non-empty and the run produced
+neither a layer nor an event.
+
+**Eighteen of twenty comparison operators were unimplemented.** The tokenizer
+knows all twenty; the evaluator handled `-eq` and `-ceq` only, so `-ine` alone
+accounted for 11 gap records in 300 files. Implemented the equality, ordering
+and membership families, and the range operator `..` (14 records), which
+obfuscators use to build char arrays and to reverse strings. `-match` and
+`-like` are still gaps on purpose: both would compile a pattern out of
+sample-supplied text, and a deobfuscator its input can make backtrack has
+handed the sample a hang.
+
+Worth noting what did **not** move: coverage over the generated corpus is
+unchanged at 80.7% / 50.2%. Invoke-Obfuscation emits none of these constructs,
+so no amount of that corpus could have found them. That is the argument for
+keeping a local corpus in the loop rather than trusting the generated one.
+
 ## Security properties
 
 Two are asserted by tests rather than assumed:
