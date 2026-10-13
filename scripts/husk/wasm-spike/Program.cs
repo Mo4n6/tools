@@ -1253,6 +1253,74 @@ function New-Object {
         return $w
     }
 
+    # System.Diagnostics.Process does not exist on browser-wasm at all:
+    # constructing one throws 'not supported on this platform', which killed
+    # the run outright rather than degrading it - the worst failure mode
+    # available, and 31 of 300 real samples construct one. The shape that
+    # matters is StartInfo being filled in field by field and Start() called
+    # afterwards, so the stand-in carries a StartInfo and reports what it was
+    # finally told to run.
+    # ProcessStartInfo is deliberately NOT stood in for, though it does not
+    # construct here either - its ctor throws the same 'Process is not supported
+    # on this platform'. Standing in for it was tried and reverted, because the
+    # binder chokepoint is what records the static form,
+    # `[Diagnostics.Process]::Start($si)`, and a PSObject matches no overload:
+    # binding fails, so the binder records nothing at all. Giving the stand-in a
+    # ToString did not help, because binding fails before ToString is reached.
+    #
+    # So it is a straight trade, and the corpus settles it: 4 of 300 samples use
+    # the static form against 1 using the instance form. Standing in buys a full
+    # command line for that one and silences the other four. Leaving the real
+    # type in place means the binder still records process.start on all five,
+    # with an empty argument - which says a process started and not which one,
+    # and is the lesser loss. Getting both needs the binder to read a PSObject,
+    # which lives in the PowerShell patch rather than here.
+    if ($TypeName -match '(^|\.)Process$') {
+        $proc = & $global:HuskRealNewObject -TypeName PSObject
+        $proc | Add-Member NoteProperty StartInfo (New-Object Diagnostics.ProcessStartInfo) -Force
+        $proc | Add-Member ScriptMethod Start {
+            $line = (([string]$this.StartInfo.FileName) + ' ' + ([string]$this.StartInfo.Arguments)).Trim()
+            [HuskHost]::Record('process.start', 'Diagnostics.Process.Start', @($line))
+            $true
+        } -Force
+        $proc | Add-Member ScriptMethod WaitForExit { param($ms) $null } -Force
+        $proc | Add-Member ScriptMethod Kill {
+            [HuskHost]::Record('process.kill', 'Diagnostics.Process.Kill', @(''))
+            $null
+        } -Force
+        $proc | Add-Member ScriptMethod Close { $null } -Force
+        $proc | Add-Member ScriptMethod Dispose { $null } -Force
+        return $proc
+    }
+
+    # A socket is a connection attempt, and the host and port are the indicator
+    # an analyst wants whether or not anything could be sent. Note $target, not
+    # $host: $host is an automatic variable and assigning it is an error.
+    if ($TypeName -match '(^|\.)(Tcp|Udp)Client$') {
+        $kind = if ($TypeName -match 'Udp') { 'Udp' } else { 'Tcp' }
+        $target = ''
+        if ($null -ne $ArgumentList) {
+            $al = @($ArgumentList)
+            if ($al.Count -ge 2) { $target = [string]$al[0] + ':' + [string]$al[1] }
+            elseif ($al.Count -eq 1) { $target = [string]$al[0] }
+        }
+        if ($target.Length -gt 0) {
+            [HuskHost]::Record('network.connect', 'Net.Sockets.' + $kind + 'Client', @($target))
+        }
+        $sock = & $global:HuskRealNewObject -TypeName PSObject
+        $sock | Add-Member NoteProperty Client (& $global:HuskRealNewObject -TypeName PSObject) -Force
+        $sock | Add-Member ScriptMethod Connect {
+            param($h, $pt)
+            [HuskHost]::Record('network.connect', 'Net.Sockets.Client.Connect', @(([string]$h + ':' + [string]$pt)))
+            $null
+        } -Force
+        $sock | Add-Member ScriptMethod GetStream { $null } -Force
+        $sock | Add-Member ScriptMethod Send { param($b, $n) [HuskHost]::Record('network.upload', 'Net.Sockets.Client.Send', @('')); 0 } -Force
+        $sock | Add-Member ScriptMethod Close { $null } -Force
+        $sock | Add-Member ScriptMethod Dispose { $null } -Force
+        return $sock
+    }
+
     if ($PSBoundParameters.ContainsKey('ArgumentList')) {
         & $global:HuskRealNewObject -TypeName $TypeName -ArgumentList $ArgumentList
     } else {
