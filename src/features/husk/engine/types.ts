@@ -67,6 +67,15 @@ export interface EngineRunResult {
    * sample may have had more to do, and whatever it was is not in this report.
    */
   readonly completed: boolean;
+  /**
+   * Records the engine's cap discarded this run, 0 normally.
+   *
+   * A sample decides how many records it makes - a tight loop makes thousands
+   * of identical ones - so the ledger is bounded. A call list silently cut
+   * short reads like a sample that did less than it did, so the count comes
+   * back with it.
+   */
+  readonly droppedCalls?: number;
   /** Each text handed to Invoke-Expression, outermost first. */
   readonly layers: readonly string[];
 }

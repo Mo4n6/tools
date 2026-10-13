@@ -532,6 +532,37 @@ had; the original string is still what the report reads the launcher's switches
 back out of. The shipped example went from a `'powershell' is not recognized`
 error to three indicators and two events on the first click.
 
+### Sleeping, and the loop behind it
+
+A sample that ends `for (;;){ Start-Sleep 60 }` - and real ones do - used to
+defeat the engine outright. `Start-Sleep` was aliased but not proxied, so the
+run really slept, burned the whole wall-clock budget, and was killed by the
+client's 30s hard timeout. The analyst got **nothing**: no calls, no ops, no
+partial evidence.
+
+Sleeping here waits for nothing. There is no clock the sample is synchronising
+with and nothing arrives while it waits. The proxy records the duration and
+returns, because the duration is evidence in its own right - a long sleep ahead
+of the payload is a sandbox-evasion tell - and `timing.sleep` was already in the
+op vocabulary with nothing emitting it.
+
+That does not stop the loop, it just makes it spin, which is the point: the run
+now reaches the engine's **own** budget and stops cleanly with partial evidence
+instead of being killed from outside with none.
+
+| | before | after |
+|---|---|---|
+| outcome | killed at the 30s hard timeout | `husk: time budget exhausted after 10000 ms` |
+| host calls | **0** | **4,096** |
+| ops seen | none | `assembly.define-type`, `assembly.pinvoke`, `timing.sleep` |
+
+The spinning loop then exposed the next thing: it recorded 14,803 calls, and
+nothing capped them. A sample decides how many records it makes, so without a
+cap it decides how much memory the host uses - and a loop's ten-thousandth
+identical record says nothing its first did not. The ledger now stops at 4,096
+and reports how many it discarded (12,413 on that run), because a call list
+silently cut short reads like a sample that did less than it did.
+
 ### The engine over the same samples
 
 The numbers above are the tree-walker. `scripts/husk/engine/corpus.mjs` is the

@@ -22,6 +22,17 @@ public static class HuskHost
     private static readonly List<string> s_calls = new();
     private static int s_seq;
 
+    /// How many records the cap below threw away this run.
+    private static int s_dropped;
+
+    /// A sample decides how many records it makes, so without a cap it decides
+    /// how much memory the host uses. `for (;;){ Start-Sleep 60 }` produced
+    /// 14,803 of them the moment Start-Sleep stopped actually sleeping - and a
+    /// loop's ten-thousandth identical record says nothing its first did not.
+    /// The count that was dropped is reported, because a call list silently
+    /// cut short reads like a sample that did less than it did.
+    private const int MaxRecords = 4096;
+
     /// Public because the proxy functions are PowerShell script. A sample can
     /// call it and inject a record, which adds noise rather than removing
     /// evidence, and the source is always "proxy" - the layer whose records an
@@ -41,6 +52,12 @@ public static class HuskHost
         var quoted = string.Join(",", (args ?? Array.Empty<string>()).Select(JsonQuote));
         lock (s_calls)
         {
+            if (s_calls.Count >= MaxRecords)
+            {
+                s_dropped++;
+                return;
+            }
+
             s_calls.Add(
                 $"{{\"seq\":{s_seq++},\"op\":{JsonQuote(op)}," +
                 $"\"native\":{JsonQuote(nativeSignature)},\"args\":[{quoted}],\"source\":{JsonQuote(source)}}}");
@@ -76,6 +93,18 @@ public static class HuskHost
             var json = "[" + string.Join(",", s_calls) + "]";
             s_calls.Clear();
             return json;
+        }
+    }
+
+    /// How many records the cap discarded, and resets the counter. Read once
+    /// per run, with the rest of the report.
+    internal static int TakeDropped()
+    {
+        lock (s_calls)
+        {
+            var dropped = s_dropped;
+            s_dropped = 0;
+            return dropped;
         }
     }
 
@@ -1039,6 +1068,34 @@ function Start-BitsTransfer {
     $null
 }
 
+# Sleeping here waits for nothing. There is no clock the sample is
+# synchronising with and nothing will arrive while it waits, so a real sleep
+# only burns the wall-clock budget - and a sample that ends in
+# `for (;;){Start-Sleep 60}`, which real ones do, spent the whole budget and
+# produced no analysis at all. Measured before this existed: the run hit the
+# client's 30s hard timeout rather than the engine's own budget, so the
+# analyst got nothing rather than partial evidence.
+#
+# The duration is kept because it is evidence in its own right: a long sleep
+# before the payload is a sandbox-evasion tell, and `timing.sleep` was already
+# in the op vocabulary waiting for something to emit it.
+function Start-Sleep {
+    [CmdletBinding()]
+    param(
+        [Parameter(Position=0)] $Seconds,
+        $Milliseconds,
+        [Parameter(ValueFromRemainingArguments=$true)] $Rest
+    )
+
+    $ms = 0
+    if ($null -ne $Milliseconds) { $ms = [int]$Milliseconds }
+    elseif ($null -ne $Seconds) { $ms = [int]([double]$Seconds * 1000) }
+
+    [HuskHost]::Record('timing.sleep', 'Start-Sleep', @(([string]$ms + ' ms')))
+    $null
+}
+Set-Alias sleep Start-Sleep -Scope Global -Force
+
 # New-Object is the classic cradle: New-Object Net.WebClient. Hand back a fake
 # whose methods record, and fall through to the real cmdlet for everything
 # else so ordinary object creation is untouched.
@@ -1241,6 +1298,7 @@ function New-Object {
         return "{\"output\":" + HuskHost.JsonQuotePublic(output) +
                ",\"error\":" + HuskHost.JsonQuotePublic(error) +
                ",\"completed\":" + (completed ? "true" : "false") +
+               ",\"droppedCalls\":" + HuskHost.TakeDropped().ToString(System.Globalization.CultureInfo.InvariantCulture) +
                ",\"layers\":[" + layers + "]}";
     }
 
