@@ -511,6 +511,27 @@ keeping a local corpus in the loop rather than trusting the generated one - and
 for distrusting a headline counter until a single sample has been read by hand,
 since two of the four findings here were misread the first time.
 
+### The engine runs by default
+
+The engine is the default backend when one is being served; the tree-walker is
+the other option in the picker rather than the starting point. Two things had to
+change for that to be honest.
+
+The intro said Husk "emulates it rather than running it", which stops being true
+the moment the engine is the default. It now says what actually happens: a real
+PowerShell build compiled to WebAssembly, sandboxed in the tab, with the
+filesystem, registry and network as stand-ins.
+
+And the worker was handing the engine whatever the analyst pasted. That is very
+often a command line rather than a script - `powershell -nop -w hidden -enc
+<base64>`, which is **36 of the 300** real samples and the product's own built-in
+example. Run as PowerShell, `powershell` is not a command, so nothing executed
+and the analysis came back empty. The worker now runs
+`parseLauncher(source).script`, the same unwrapping the tree-walker has always
+had; the original string is still what the report reads the launcher's switches
+back out of. The shipped example went from a `'powershell' is not recognized`
+error to three indicators and two events on the first click.
+
 ### The engine over the same samples
 
 The numbers above are the tree-walker. `scripts/husk/engine/corpus.mjs` is the
@@ -518,28 +539,34 @@ same exercise for the wasm engine, which *executes* the sample where the
 tree-walker only reads it, so the two fail in unrelated ways and the comparison
 is the point. Network blocked, filesystem, registry and process APIs proxied.
 
-Over the same 300: **155 ran cleanly (51.7%)**, 145 errored, median 107ms, p95
-10.1s. Host calls were recorded on 165 samples and files dropped on 58 - and 78
-of the 145 failures still produced host calls before failing, so a failed engine
-run is usually still evidence.
+The measure that matters is whether the pipeline **ran to the end**, which is not
+the same question as whether the sample raised an error: `Start-Process` failing
+is non-terminating, the script carries on, and the analysis is whole. Over the
+300: **214 ran to the end (71.3%)**, 59 of them raising a non-terminating error
+along the way. 86 were cut short. Host calls were recorded on 165 samples and
+files dropped on 58.
 
-What the engine cannot do, ranked:
+Of the 86 that did not finish, only about half are the engine's fault:
 
 | | |
 |---|---|
-| browser-wasm operation unsupported | 28x (`System.Diagnostics.Process` 16x) |
-| cmdlet not in the bundle | 28x (`powershell` 11x, `Get-MpComputerStatus` 3x) |
-| time budget exhausted at 10s | 21x |
-| missing assembly | 2x (`Microsoft.CSharp.CSharpCodeProvider`) |
+| sample is not parseable as PowerShell | 26x |
+| budget stop at 10s | 21x |
+| browser-wasm operation unsupported | 12x |
+| cmdlet not in the bundle | 7x |
+| sample terminated the runtime | 1x |
 
-`powershell` not being a command is the one worth fixing first: droppers
-relaunch themselves through it constantly. And `CSharpCodeProvider` is the only
-confirmed gap *shared* by both backends - the tree-walker reports the same
-thing as `microsoft.csharp.csharpcodeprovider` and
-`codedom.compiler.compilerparameters`.
+So the engine's own gaps account for roughly 41 of 300, not the 145 a naive
+error count gives. 37 of the 86 still recorded host calls before stopping, so
+even a cut-short run is usually evidence.
 
-Setting the two side by side, counting a sample as covered when a backend
-produced either indicators/events or host calls/dropped files:
+Which chokepoint saw anything, across the corpus: cmdlet 99, binder 91, proxy
+77, provider 8. That spread is the engine's whole argument - four independent
+places a call can be caught, three of them seeing real traffic on a third of the
+corpus.
+
+Setting the two backends side by side, counting a sample as covered when a
+backend produced either indicators/events or host calls/dropped files:
 
 | | |
 |---|---|
@@ -548,12 +575,13 @@ produced either indicators/events or host calls/dropped files:
 | **engine only** | **5** |
 | neither | 7 |
 
-So the engine uniquely covers five samples out of 298 - and two of those five
-are the samples where the tree-walker's fold guard correctly refuses to invent
-a value. That is the engine earning its place exactly where the other backend
-is honest about not knowing, which is the argument for keeping both. It is not
-an argument that the engine carries the analysis: on this corpus the
-tree-walker does, by a wide margin.
+The engine uniquely covers five samples out of 298 - and two of those five are
+the samples where the tree-walker's fold guard correctly refuses to invent a
+value. That is the engine earning its place exactly where the other backend is
+honest about not knowing, which is the argument for keeping both. It is not an
+argument that the engine carries the analysis: on this corpus the tree-walker
+does, by a wide margin, which is worth knowing now that the engine is what runs
+first.
 
 The seven neither backend gets anything from: one is the benign `Write-Host`
 test file (correct on both), one is written with literal spaces between every
@@ -561,14 +589,14 @@ character so neither can parse it, four are parse failures on what look like
 truncated fragments, and one terminates the wasm runtime outright by calling
 `exit`.
 
-That last one is worth knowing about. A sample that exits the runtime leaves
-the runspace dead, and because the runspace is single-threaded every later
-script then fails with "a pipeline is already running". The product handles
-this already - `EngineClient` rejects on an error response, and `useHusk`
-discards the client and builds a fresh one, with a comment saying why - so this
-is a harness hazard rather than a product bug. It cost 206 invalid rows before
-the harness was taught the same discipline, which is why `corpus.mjs` probes
-the engine's health after every failure.
+That last one is worth knowing about. A sample that exits the runtime leaves the
+runspace dead, and because the runspace is single-threaded every later script
+then fails with "a pipeline is already running". The product handles this -
+`EngineClient` rejects on an error response, and `useHusk` discards the client
+and builds a fresh one, with a comment saying why - so this is a harness hazard
+rather than a product bug. It cost 206 invalid rows before the harness was
+taught the same discipline, which is why `corpus.mjs` probes the engine's health
+after every failure.
 
 ## Security properties
 

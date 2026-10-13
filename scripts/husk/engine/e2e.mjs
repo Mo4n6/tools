@@ -131,19 +131,23 @@ async function main() {
   try {
     await page.goto(`${ORIGIN}${BASE}husk`, { waitUntil: 'networkidle' });
 
-    const offer = page.locator('input[type=checkbox]');
-    await offer.waitFor({ timeout: 30_000 });
-    check((await offer.count()) === 1, 'the engine is offered once the probe finds it');
+    // The engine is the default, so the picker shows it already selected
+    // rather than offering an unticked box.
+    const onEngine = page.getByRole('radio', { name: /real PowerShell/i });
+    await onEngine.waitFor({ timeout: 30_000 });
+    check(
+      (await onEngine.getAttribute('aria-checked')) === 'true',
+      'the engine is selected by default once the probe finds it',
+    );
 
     await page.fill('#husk-input', DROPPER);
-    await offer.check();
     await page.getByRole('button', { name: 'Analyse' }).click();
 
-    // The summary line, not the checkbox label — "real PowerShell" appears in
-    // both, and waiting on the label resolved immediately and read the page
-    // mid-run. The interpunct is only in the summary.
+    // Read the backend badge by id rather than matching page text: "real
+    // PowerShell" also appears in the picker, so matching body text resolved
+    // immediately and read the page mid-run.
     await page.waitForFunction(
-      () => /real powershell\s*\u00b7/i.test(document.body.innerText),
+      () => document.querySelector('#husk-backend')?.textContent?.trim() === 'real PowerShell',
       null,
       { timeout: 300_000 },
     );
@@ -162,7 +166,10 @@ async function main() {
     const has = (text, needle) => text.includes(needle.toLowerCase());
 
     const summary = (await page.locator('body').innerText()).toLowerCase();
-    check(/real powershell\s*\u00b7/i.test(summary), 'the result says which backend ran');
+    check(
+      (await page.locator('#husk-backend').innerText()).trim() === 'real PowerShell',
+      'the result says which backend ran',
+    );
     check(
       (await page.getByRole('tab').count()) >= 4,
       'the result is split into tabs rather than one long page',

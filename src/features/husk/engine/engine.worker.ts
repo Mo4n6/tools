@@ -22,6 +22,7 @@
 // statically.
 
 import { analyzeRun, type EngineAnalysisResult } from './analyze';
+import { parseLauncher } from '../eval/launcher';
 import { engineUrl } from './paths';
 import type { EngineRun } from './types';
 
@@ -225,9 +226,16 @@ self.onmessage = async (event: MessageEvent<EngineRequest>): Promise<void> => {
       engine.supplyDownload(supplied.key, supplied.content);
     }
 
+    // What an analyst pastes is very often a command line, not a script:
+    // `powershell -nop -w hidden -enc <base64>`. Handing that to the engine
+    // runs it as PowerShell, where `powershell` is not a command and nothing
+    // executes - so the launcher the sample is wrapped in has to come off
+    // first, exactly as it does for the tree-walker. The original string is
+    // still what analyzeRun reports on, so the launcher's own switches are
+    // read back out of it.
     const started = Date.now();
     const run: EngineRun = {
-      result: engine.runFixture(message.script),
+      result: engine.runFixture(parseLauncher(message.script).script),
       hostCalls: engine.hostCalls(),
       registry: engine.registryDump(),
       dropped: engine.droppedFiles(),
