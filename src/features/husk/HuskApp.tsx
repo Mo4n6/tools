@@ -809,6 +809,17 @@ const TabBar = ({
  * file and persist, and that is not the same claim as "no output, nothing
  * happened".
  */
+/**
+ * Did the sample fail because its download was blocked?
+ *
+ * `IEX` of an empty string is what a fetch that returned nothing becomes, and
+ * it is the single most common way a downloader ends here - the shipped
+ * example included. Raw, the message names a parameter binding and reads like
+ * Husk broke, when the chain is simply waiting on a stage to be supplied.
+ */
+const blockedDownload = (error: string | undefined): boolean =>
+  error !== undefined && /parameter 'Command'.*empty string/i.test(error);
+
 const OutputPanel = ({
   text,
   isEngine,
@@ -843,8 +854,18 @@ const OutputPanel = ({
       {text.length > 0 ? text : isEngine ? '(the sample printed nothing)' : '(nothing resolved)'}
     </pre>
     {error !== undefined && error.length > 0 ? (
-      <p className="mt-2 text-xs text-rose-300">
-        First error the sample raised: {error}
+      <p className={`mt-2 text-xs ${completed ? 'text-emerald-300/70' : 'text-rose-300'}`}>
+        {completed
+          ? 'The sample raised an error and carried on, which is usually the sandbox refusing it rather than a fault: '
+          : 'The sample raised an error and stopped: '}
+        {error}
+      </p>
+    ) : null}
+    {isEngine && blockedDownload(error) ? (
+      <p className="mt-2 text-xs text-amber-300">
+        That is what a blocked download looks like. The sample fetched its next stage, the
+        network is a stand-in so it got nothing back, and running nothing is the error above.
+        Paste the stage into <strong>Stages to serve</strong> and the chain runs for real.
       </p>
     ) : null}
     {isEngine && !completed ? (
