@@ -295,17 +295,50 @@ deobfuscator mostly needs text rather than binaries:
 ### What the last run over it found
 
 300 samples from `bazaar_out` and `hybrid_analysis_out`, plus the four Emotet
-droppers: no crashes, nothing near the time budget, 92% yielded indicators -
-and **two false cleans**, each a different fault.
+droppers: no crashes, nothing near the time budget, **94% yielded indicators**,
+121 of 300 unwrapped a layer, and **no sample that Husk was blind to**. Getting
+to that reading took four fixes and two corrections to my own first reading of
+the numbers, which are both recorded below because the corrections are the more
+useful half.
 
-**A silent TLD miss.** One sample's entire C2 list was
-`"anyconnect.stream","bigip.stream"`, and it produced zero indicators while
-reporting as fully resolved, because `.stream` was not in the domain rule's TLD
-set. The set is curated rather than complete, deliberately - bare hostnames are
-noisy - but it was missing the registries with the worst abuse rates. Added
-those; left out the TLDs that collide with file extensions (`.zip`, `.mov`,
-`.app`), since `payload.zip` reading as a domain is a fabricated indicator,
-which is worse than a missing one.
+The one sample the harness still flags as a false clean is
+`Write-Host -ForegroundColor Red 'BAd Boys Test'` followed by `Pause` - 59
+bytes, genuinely benign, somebody's test file sitting in a malware feed. Husk
+found nothing and said it was confident, which is correct. The flag is a
+limitation of the metric, which cannot tell "found nothing because the sample is
+harmless" from "found nothing because I am blind"; on a malware corpus that
+heuristic is usually right, and here it is not. Worth knowing that the previous
+reading of zero false cleans was two errors cancelling: the stray UTF-8 BOM was
+raising a gap that marked this benign file unreliable, so stripping the BOM is
+what exposed it.
+
+**UTF-16 samples were read as mojibake - by the harness, not the tool.**
+Seven of the 300 are UTF-16LE. `run-local-corpus.mjs` read every file as UTF-8,
+which puts a NUL between every character; that tokenises to nothing, so all
+seven scored as "found nothing" for a reason that had no bearing on Husk. One of
+them was a false clean. Decoding them properly turns six of the seven from zero
+indicators into real ones - 59 indicators that the measurement could not see,
+and one sample that goes from 1 layer to 3 with 21 events. The harness now
+sniffs the BOM, and the no-BOM case too, since some droppers omit it. The
+browser is unaffected: Husk takes pasted text, which the clipboard has already
+decoded, so the sniffing belongs in the harness and nowhere else. UTF-8 BOMs
+were checked at the same time and are harmless - a leading U+FEFF changes
+nothing - but it is stripped now so layer 0 matches the file.
+
+**A TLD gap that was real but not what it looked like.** `.stream` was missing
+from the domain rule's TLD set, along with the rest of the registries with the
+worst abuse rates. The set is curated rather than complete, deliberately - bare
+hostnames are noisy - so these were added, leaving out the TLDs that collide
+with file extensions (`.zip`, `.mov`, `.app`), since `payload.zip` reading as a
+domain is a fabricated indicator, which is worse than a missing one. What this
+did *not* do is fix the false clean originally attributed to it: that sample is
+one of the seven UTF-16 files, and the `"anyconnect.stream","bigip.stream"`
+line first quoted as evidence came from a `tr -d '\0'` in the inspection
+pipeline, which made mojibake look like clean ASCII. The domains are genuinely
+in the file; Husk never saw them, for the encoding reason above. Re-measuring
+showed no indicator count anywhere changed when the TLDs were added, which is
+how the misattribution surfaced. The addition stands on its own merits and is
+covered by tests; it earned no part of the false-clean fix.
 
 **Reliability was vacuous when nothing was produced.** `isReliable` reads layer
 and event taint, so it answers "is what I produced trustworthy". With nothing
@@ -324,10 +357,27 @@ obfuscators use to build char arrays and to reverse strings. `-match` and
 sample-supplied text, and a deobfuscator its input can make backtrack has
 handed the sample a hang.
 
+**The range operator was inflating layer and event counts.** Implementing `..`
+moved "unwrapped a layer" from 120 of 300 to 119, which looked like a
+regression and was the opposite. The one sample that moved contains
+`-join ((65..90) + (97..122) | Get-Random -Count 9 | % {[char]$_})`, a random
+identifier generator. With `..` unimplemented the constant-folder replaced that
+59-character expression with the literal `'0'` - a fabricated value - and the
+56-byte difference counted as a new layer. It then did it again. The result was
+three "deobfuscation layers" that were the same script with a wrong
+substitution, and its nine events counted three times, 27. With `..`
+implemented there is one layer and nine events, and the nine are byte-identical
+to what layer 0 reported before, at the same offsets. A second sample shed a
+phantom layer the same way, 36 events to 24. So the honest reading of the
+counter is that it was over-reporting, and one sample's worth of that
+over-reporting is now gone.
+
 Worth noting what did **not** move: coverage over the generated corpus is
 unchanged at 80.7% / 50.2%. Invoke-Obfuscation emits none of these constructs,
 so no amount of that corpus could have found them. That is the argument for
-keeping a local corpus in the loop rather than trusting the generated one.
+keeping a local corpus in the loop rather than trusting the generated one - and
+for distrusting a headline counter until a single sample has been read by hand,
+since two of the four findings here were misread the first time.
 
 ## Security properties
 
