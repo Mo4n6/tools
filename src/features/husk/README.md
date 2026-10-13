@@ -532,6 +532,52 @@ had; the original string is still what the report reads the launcher's switches
 back out of. The shipped example went from a `'powershell' is not recognized`
 error to three indicators and two events on the first click.
 
+### Running the stage a sample relaunches itself with
+
+A dropper relaunching itself was the commonest dead end here: 90 of the 300
+samples carry `powershell -enc <base64>` or similar, and `powershell` is not a
+command in this engine, so the chain stopped at the relaunch and everything past
+it went unseen. The worker strips the launcher a sample is *wrapped* in, but a
+relaunch in the middle of a script is untouched by that, and that is the shape
+those 90 files have.
+
+The proxy records the command line as `process.start` - the switches are
+evidence in their own right, `-w hidden -nop -ep bypass` is a sample saying what
+it is - then decodes `-EncodedCommand` and runs it. Running it through
+`Invoke-Expression` means the decoded stage arrives as a layer by the same path
+every other stage does, with no special handling anywhere downstream.
+
+Over the 300:
+
+| | before | after |
+|---|---|---|
+| produced host calls | 198 | **210** |
+| produced layers | 75 | **78** |
+| total layers | 206 | **217** |
+| `process.start` recorded | 60 | **79** |
+| budget stops | 22 | 22 |
+
+Eleven samples gained layers and none lost any. The risk worth naming beforehand
+was that executing stages the engine previously skipped would push samples into
+the time budget; it did not - budget stops are unchanged.
+
+Total host calls appear to fall slightly, which is an artifact rather than a
+regression: six samples record fewer, all six are loops stopped by the ten
+second wall clock in *both* runs, and how many iterations fit in ten seconds
+varies with machine load. Twenty-three samples record more.
+
+Two things worth knowing before adding the next proxy. The function is
+deliberately **not** advanced: `[CmdletBinding()]` brings the common parameters
+with it, and PowerShell then binds `-w` to `-WarningAction` and `-e` to
+`-ErrorAction` before they reach a remaining-arguments parameter - measured,
+`powershell -nop -w hidden -enc ...` failed with "the parameter name 'w' is
+ambiguous". What is being emulated is an executable taking a raw command line,
+which does no binding at all, and plain `$args` is exactly that. And a
+single-level relaunch cannot test this at all, because the harness strips the
+outer launcher exactly as the worker does: the test cases put the relaunch
+mid-script for that reason, after a first batch read as a total failure that was
+nothing of the kind.
+
 ### Sleeping, and the loop behind it
 
 A sample that ends `for (;;){ Start-Sleep 60 }` - and real ones do - used to
