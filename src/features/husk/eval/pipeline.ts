@@ -242,12 +242,22 @@ function collectVariables(source: string, trace: Trace, layer: number): EvalCont
     const [, name, expression] = match;
     const parsed = parseExpression(expression);
     if (parsed.expression.kind === 'unsupported') continue;
+    // A partial parse yields the value of a *prefix*. `$gf = (1,2,3) | %{...}`
+    // parses the bare array and stops at the pipe, so storing it would record
+    // the undecoded input as though it were the decoded result - clean, so no
+    // taint check can catch it, and simply wrong. Real samples do exactly this.
+    if (parsed.remaining > 0) continue;
 
     // Evaluating must not manufacture gaps: this is bookkeeping, and a failed
     // assignment is not something the analyst needs in the queue.
     const before = trace.gaps.size;
     const value = evaluate(parsed.expression, ctx);
     if (trace.gaps.size !== before) continue;
+    // `size` only moves for a gap this run has not seen before, because the
+    // ledger deduplicates by signature. Storing a value that was derived from
+    // a repeat would seed every later fold with a guess - the same fault the
+    // constant folder had, in the sibling check a few hundred lines below.
+    if (!isClean(value.taint)) continue;
 
     ctx.variables.set(name.toLowerCase(), value);
   }
@@ -476,6 +486,9 @@ function foldConstants(
     if (!/['"]|\bchar\b|\bf\b/i.test(inner)) continue;
 
     const parsed = parseExpression(inner);
+    // Same prefix trap as the assignment collector above: folding a group to
+    // the value of its first few tokens discards the rest of the expression.
+    if (parsed.remaining > 0) continue;
     if (parsed.expression.kind === 'unsupported') continue;
 
     const before = trace.gaps.size;

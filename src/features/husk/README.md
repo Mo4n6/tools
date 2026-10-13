@@ -468,6 +468,42 @@ of the oracle corpus, so this is a parser-mode gap, not a lexer bug. `IEX
 a constructed object does not survive to the next statement. Both predate this
 work and neither is specific to `New-Object`.
 
+**A fold could take the value of a prefix.** `parseExpression` stops where it
+stops and reports how many tokens it left behind, and two callers ignored that.
+The constant folder would parse a group's inner text, get a value for the first
+few tokens, and fold the whole group to it. For `('a' + 'b' | %{ $_ })` the
+prefix `'a' + 'b'` evaluates perfectly cleanly to `ab`, so no taint check can
+catch this - the answer is not a guess, it is the wrong expression. The
+assignment collector had the same hole. Both now refuse a partial parse. One
+fabricated layer goes away on the 300 samples, 112 to 111, with indicators
+unchanged.
+
+This was the mechanism behind the `'0'` fold recorded above, which I could not
+reproduce in a minimal case at the time: the group was not resolving to a wrong
+value, it was resolving a *prefix* of itself.
+
+Tried and reverted in the same sitting: making assigned variables visible to
+the folds. `collectVariables` already exists and walks every assignment, but it
+is called only from the alias collector, which returns early unless the script
+defines an alias - so the folds each built an empty context and a `$name` the
+script had plainly assigned read as a gap. Threading it through gained three
+real layers and two indicators, and also produced two fabricated layers out of
+the four it gained: one sample emitted 59 KB of whitespace as a decoded stage
+and reported reliable; another emitted a run of binary digits, joined from the
+literals of a `%{...}` it had not applied, and extracted a junk indicator from
+them. Both were marked clean. The layer-emission paths mark output CLEAN on the
+assumption that what fed them was unresolved, and that assumption gets weaker
+the more gets resolved - so threading needs a check that a produced layer is
+plausibly a script at all before it is worth having. The guards above are the
+part that stands on its own, and they are kept.
+
+The assignment collector's own two guards have no measured effect today, which
+is worth stating plainly rather than counting them as fixes: with the threading
+reverted, a stored variable only resolves an alias target, where a prefix
+usually still spells the right name. Isolating them on the 300 gives 112, the
+same as before. They are the invariant the threading will need, not a change to
+today's output.
+
 Worth noting what did **not** move: coverage over the generated corpus is
 unchanged at 80.7% / 50.2%. Invoke-Obfuscation emits none of these constructs,
 so no amount of that corpus could have found them. That is the argument for
