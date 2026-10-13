@@ -372,6 +372,53 @@ phantom layer the same way, 36 events to 24. So the honest reading of the
 counter is that it was over-reporting, and one sample's worth of that
 over-reporting is now gone.
 
+**Constant folding could invent a value and call it clean.** The folder
+refuses a parenthesised group whose evaluation hit a gap, on the grounds that
+folding it would be a guess. It checked this by comparing `trace.gaps.size`
+before and after - but the ledger deduplicates by signature, so that number
+only moves for a gap the run has not seen before. A *repeat* was invisible.
+`@(1..16)` earlier in a script put `operator DotDot` in the ledger; the group
+`((65..90) + (97..122) | Get-Random -Count 9 | % {[char]$_})` then evaluated
+with the check satisfied, folded to whatever the unresolved operand coerced to
+- the literal `'0'` - and shipped as a layer marked CLEAN. Two lines are enough
+to show the worst of it:
+
+    $a = (1 -match 'x')
+    $b = ('p' + (2 -match 'y'))
+
+Without the first line the guard holds, nothing folds, and the run reports
+unreliable. With it, `$b = 'p'` becomes a "deobfuscated" layer, the `-match`
+that decides `$b` is gone, and because the layer is CLEAN the whole run reports
+**reliable**. The fix tests the evaluated value's own taint, which carries the
+gap ids it was derived from and cannot be deduplicated away.
+
+Measured over the same 300: nine samples stopped producing a layer, 121 to 112.
+Indicator counts are identical on 31 of the 32 samples whose result changed,
+two samples went reliable to unreliable, none went the other way. The one
+indicator change is the fix working: a sample had been reporting
+`HKeY_curRent_USeR\SofTWARe\clAsSes\\shELL\opEN\cOmmaNd`, where the doubled
+separator is the hole left by a computed ProgID folded to an empty string. That
+path is never written. It now reports `HKeY_curRent_USeR\SofTWARe\clAsSes\`,
+truncated where resolution stopped, and flags the run unreliable - a lead that
+says where to look instead of a key that does not exist.
+
+**`-and` and `-or` were unimplemented while `-band` and `-bor` were.** So
+`$a -band $b` folded and `$a -and $b` was a gap, 14 records across 300 files.
+Implemented with `-xor`, using PowerShell truthiness rather than JavaScript's -
+`'0'` is a non-empty string and therefore true, and a one-element array takes
+its element's truthiness. Every expected value was taken from `pwsh 7.6.6`
+rather than from the documentation: 15 of 16 cases match it exactly. The
+sixteenth, `@() -or 0`, exposed something unrelated - the parser does not handle
+the empty array literal at all, and records `token RParen`. Bare `@()` and
+`@() -eq 0` fail the same way, so it predates this work; it is honest about it,
+and still uncovered.
+
+These two differ from the operators above in that PowerShell short-circuits
+`-and` and `-or` and this evaluator does not: both operands are evaluated before
+the operator is applied, so a gap in the dead branch still taints the result.
+That is the conservative direction, and this evaluator folds expressions rather
+than running them, so there are no skipped side effects to get wrong.
+
 Worth noting what did **not** move: coverage over the generated corpus is
 unchanged at 80.7% / 50.2%. Invoke-Obfuscation emits none of these constructs,
 so no amount of that corpus could have found them. That is the argument for

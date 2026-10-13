@@ -17,7 +17,7 @@
 // Anything neither engine handles is recorded as a gap, never guessed at.
 
 import { Trace } from '../core/trace';
-import { CLEAN, type Taint, markOutput, taintFrom } from '../core/taint';
+import { CLEAN, type Taint, isClean, markOutput, taintFrom } from '../core/taint';
 import { toStringValue } from '../core/value';
 import { TokenKind } from '../lexer/tokenKind';
 import { tokenize } from '../lexer/tokenizer';
@@ -480,6 +480,14 @@ function foldConstants(
     const before = trace.gaps.size;
     const value = evaluate(parsed.expression, ctx);
     if (trace.gaps.size !== before) continue; // folding it would be a guess
+    // The ledger deduplicates by signature, so `size` only moves for a gap
+    // this run has not seen before. A *repeat* of one - `@(1..16)` earlier in
+    // the script, then `(65..90)` inside this group - left the check above
+    // satisfied, and the group folded to whatever the unresolved operand
+    // coerced to: a fabricated literal, emitted as a CLEAN layer, which could
+    // carry the whole run back to `reliable`. The value's own taint carries
+    // the gap ids it was derived from and cannot be deduplicated away.
+    if (!isClean(value.taint)) continue;
     if (value.kind !== 'string' && value.kind !== 'number') continue;
 
     const text = toStringValue(value);

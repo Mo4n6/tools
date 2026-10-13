@@ -14,6 +14,7 @@ import {
   psNumber,
   psString,
   toArrayValue,
+  toBoolValue,
   toStringValue,
   typeNameOf,
   withTaint,
@@ -205,6 +206,21 @@ function evaluateBinary(
       return psNumber((toNumber(left) ?? 0) << (toNumber(right) ?? 0), taint);
     case TokenKind.Shr:
       return psNumber((toNumber(left) ?? 0) >> (toNumber(right) ?? 0), taint);
+
+    // The bitwise forms above were implemented and the logical ones were not,
+    // so `$a -band $b` folded and `$a -and $b` was a gap. PowerShell
+    // short-circuits these and this does not: both operands are already
+    // evaluated by the time we get here, so a gap in the dead branch still
+    // taints the result. That is the conservative direction - an analyst sees
+    // "not fully resolved" rather than a confident answer resting on a branch
+    // we never checked - and this evaluator folds expressions rather than
+    // running them, so there are no skipped side effects to get wrong.
+    case TokenKind.And:
+      return psBool(toBoolValue(left) && toBoolValue(right), taint);
+    case TokenKind.Or:
+      return psBool(toBoolValue(left) || toBoolValue(right), taint);
+    case TokenKind.Xor:
+      return psBool(toBoolValue(left) !== toBoolValue(right), taint);
 
     case TokenKind.Ieq:
       return psBool(toStringValue(left).toLowerCase() === toStringValue(right).toLowerCase(), taint);
