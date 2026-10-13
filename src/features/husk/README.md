@@ -511,6 +511,65 @@ keeping a local corpus in the loop rather than trusting the generated one - and
 for distrusting a headline counter until a single sample has been read by hand,
 since two of the four findings here were misread the first time.
 
+### The engine over the same samples
+
+The numbers above are the tree-walker. `scripts/husk/engine/corpus.mjs` is the
+same exercise for the wasm engine, which *executes* the sample where the
+tree-walker only reads it, so the two fail in unrelated ways and the comparison
+is the point. Network blocked, filesystem, registry and process APIs proxied.
+
+Over the same 300: **155 ran cleanly (51.7%)**, 145 errored, median 107ms, p95
+10.1s. Host calls were recorded on 165 samples and files dropped on 58 - and 78
+of the 145 failures still produced host calls before failing, so a failed engine
+run is usually still evidence.
+
+What the engine cannot do, ranked:
+
+| | |
+|---|---|
+| browser-wasm operation unsupported | 28x (`System.Diagnostics.Process` 16x) |
+| cmdlet not in the bundle | 28x (`powershell` 11x, `Get-MpComputerStatus` 3x) |
+| time budget exhausted at 10s | 21x |
+| missing assembly | 2x (`Microsoft.CSharp.CSharpCodeProvider`) |
+
+`powershell` not being a command is the one worth fixing first: droppers
+relaunch themselves through it constantly. And `CSharpCodeProvider` is the only
+confirmed gap *shared* by both backends - the tree-walker reports the same
+thing as `microsoft.csharp.csharpcodeprovider` and
+`codedom.compiler.compilerparameters`.
+
+Setting the two side by side, counting a sample as covered when a backend
+produced either indicators/events or host calls/dropped files:
+
+| | |
+|---|---|
+| both backends | 161 |
+| tree-walker only | 125 |
+| **engine only** | **5** |
+| neither | 7 |
+
+So the engine uniquely covers five samples out of 298 - and two of those five
+are the samples where the tree-walker's fold guard correctly refuses to invent
+a value. That is the engine earning its place exactly where the other backend
+is honest about not knowing, which is the argument for keeping both. It is not
+an argument that the engine carries the analysis: on this corpus the
+tree-walker does, by a wide margin.
+
+The seven neither backend gets anything from: one is the benign `Write-Host`
+test file (correct on both), one is written with literal spaces between every
+character so neither can parse it, four are parse failures on what look like
+truncated fragments, and one terminates the wasm runtime outright by calling
+`exit`.
+
+That last one is worth knowing about. A sample that exits the runtime leaves
+the runspace dead, and because the runspace is single-threaded every later
+script then fails with "a pipeline is already running". The product handles
+this already - `EngineClient` rejects on an error response, and `useHusk`
+discards the client and builds a fresh one, with a comment saying why - so this
+is a harness hazard rather than a product bug. It cost 206 invalid rows before
+the harness was taught the same discipline, which is why `corpus.mjs` probes
+the engine's health after every failure.
+
 ## Security properties
 
 Two are asserted by tests rather than assumed:
