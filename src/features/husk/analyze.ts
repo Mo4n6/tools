@@ -12,6 +12,7 @@
 import type { GapRecord } from './core/gaps';
 import type { Layer, TraceEvent } from './core/trace';
 import { describeLauncher, parseLauncher, type LauncherParse } from './eval/launcher';
+import { extractPayloads, type EmbeddedPayload } from './ioc/payloads';
 import { deobfuscate, type DeobfuscateOptions } from './eval/pipeline';
 import { scanAllLayers } from './host/stubs';
 import { extractIocs } from './ioc/extract';
@@ -25,6 +26,8 @@ export interface AnalysisResult {
   /** Host calls recorded rather than performed. */
   readonly events: readonly TraceEvent[];
   readonly iocs: IocReport;
+  /** Binary the sample carries inline rather than fetching. */
+  readonly payloads: readonly EmbeddedPayload[];
   /**
    * True when nothing in the output depends on something Husk could not
    * compute. False does not mean the output is wrong - it means it is not
@@ -68,6 +71,7 @@ export async function analyze(
   const { trace, output, reliable } = await deobfuscate(source, options);
   scanAllLayers(trace);
   const iocs = extractIocs(trace);
+  const payloads = extractPayloads(trace);
   const launcher = parseLauncher(source);
 
   return {
@@ -75,6 +79,7 @@ export async function analyze(
     output,
     events: trace.events,
     iocs,
+    payloads,
     reliable,
     gaps: trace.gaps.ranked(),
     actionableGaps: trace.gaps.actionable(),
@@ -87,4 +92,5 @@ export async function analyze(
 export type { GapRecord } from './core/gaps';
 export type { Layer, TraceEvent } from './core/trace';
 export type { Ioc, IocKind, IocReport } from './ioc/types';
+export type { EmbeddedPayload } from './ioc/payloads';
 export type { LauncherParse, LauncherQuoting, LauncherSwitch } from './eval/launcher';

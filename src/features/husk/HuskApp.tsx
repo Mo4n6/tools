@@ -8,6 +8,7 @@ import { HUSK_AUTHOR, HUSK_AUTHOR_URL, HUSK_COPYRIGHT, HUSK_SOURCE_URL } from '.
 import type { GapRecord } from './core/gaps';
 import type { EventOrigin } from './core/trace';
 import { isEngineResult } from './engine/analyze';
+import type { EmbeddedPayload } from './analyze';
 import type { SuppliedDownload as SuppliedStage } from './engine/engine.worker';
 import type { Ioc, IocKind } from './ioc/types';
 import { useHusk } from './useHusk';
@@ -26,7 +27,7 @@ const secondaryAction =
  * usually the one below the fold. 'output' is always present and always first:
  * it is the question the sample answers.
  */
-type TabId = 'output' | 'indicators' | 'calls' | 'layers' | 'files' | 'registry' | 'fidelity';
+type TabId = 'output' | 'payloads' | 'indicators' | 'calls' | 'layers' | 'files' | 'registry' | 'fidelity';
 
 const IOC_LABELS: Record<IocKind, string> = {
   url: 'URLs',
@@ -112,6 +113,9 @@ const HuskApp = (): JSX.Element => {
       ? []
       : [
           { id: 'output' as TabId, label: engineResult ? 'Output' : 'Deobfuscated' },
+          ...(result.payloads.length > 0
+            ? [{ id: 'payloads' as TabId, label: 'Payloads', count: result.payloads.length }]
+            : []),
           ...(iocGroups.length > 0
             ? [
                 {
@@ -154,6 +158,17 @@ const HuskApp = (): JSX.Element => {
    * for the analyst's own disk, and it should land somewhere no shell, handler
    * or preview will open by double-click.
    */
+  const savePayload = useCallback((payload: EmbeddedPayload, index: number) => {
+    // Suffixed like a dropped file, for the same reason: a saved sample that
+    // opens on double-click is a loaded gun on the analyst's own machine.
+    const url = URL.createObjectURL(new Blob([payload.bytes], { type: 'application/octet-stream' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `payload-${index + 1}-layer${payload.layer}-${payload.bytes.length}b.bin.malware`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
   const saveDropped = useCallback(
     async (enginePath: string, windowsPath: string) => {
       setSaving(enginePath);
@@ -361,6 +376,9 @@ const HuskApp = (): JSX.Element => {
                 </div>
               ) : null}
 
+              {active === 'payloads' ? (
+                <PayloadPanel payloads={result.payloads} onSave={savePayload} />
+              ) : null}
               {active === 'indicators' && iocGroups.length > 0 ? (
                 <div className={panel}>
                   <div className="mb-2 flex items-center justify-between gap-2">
@@ -540,6 +558,49 @@ const BackendPicker = ({
     </div>
   );
 };
+
+/**
+ * Binary the sample carries rather than fetches.
+ *
+ * A downloader's payload comes over the wire and the stage panel is how it is
+ * supplied. A dropper's is already here, as a byte-array literal feeding
+ * VirtualAlloc, with nothing fetched and nothing written to disk - so it
+ * appeared in no other panel and there was no way to get it out.
+ */
+const PayloadPanel = ({
+  payloads,
+  onSave,
+}: {
+  payloads: readonly EmbeddedPayload[];
+  onSave: (payload: EmbeddedPayload, index: number) => void;
+}): JSX.Element => (
+  <div className={panel}>
+    <h2 className="mb-2 text-sm font-bold">Payloads</h2>
+    <p className="mb-3 text-xs text-emerald-300/60">
+      Binary the sample carries inline rather than downloading. Saved with a{' '}
+      <code>.malware</code> suffix so nothing opens it by double-click.
+    </p>
+    <ul className="flex flex-col gap-2">
+      {payloads.map((payload, index) => (
+        <li
+          key={`${payload.layer}-${payload.offset}`}
+          className="flex flex-wrap items-center justify-between gap-2 rounded border border-emerald-500/20 bg-black/30 p-2"
+        >
+          <span className="text-xs">
+            <span className="tabular-nums text-emerald-100">{payload.bytes.length} bytes</span>
+            <span className="text-emerald-300/60"> · layer {payload.layer}</span>
+            {payload.magic === undefined ? null : (
+              <span className="text-emerald-300/60"> · {payload.magic}</span>
+            )}
+          </span>
+          <button className={secondaryAction} onClick={() => onSave(payload, index)}>
+            Save
+          </button>
+        </li>
+      ))}
+    </ul>
+  </div>
+);
 
 const IocGroup = ({ kind, list }: { kind: IocKind; list: readonly Ioc[] }): JSX.Element => (
   <div>
