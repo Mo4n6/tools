@@ -23,6 +23,7 @@ import { TokenKind } from '../lexer/tokenKind';
 import { tokenize } from '../lexer/tokenizer';
 import { parseExpression, type InvokeAliases } from './parser';
 import { createContext, evaluate, type EvalContext } from './evaluator';
+import { normalizeType } from './members';
 import { base64ToBytes, decodeUtf16le, decodeUtf8, decompressAny, looksLikeText } from './decode';
 import { canonicalize } from './canonicalize';
 import { decodeCharArray } from './charArray';
@@ -642,9 +643,15 @@ export async function deobfuscate(
  * signature the gap report can rank, so the residue names what to build next
  * rather than just saying "stuck".
  */
-const RESIDUE_MARKERS: ReadonlyArray<[RegExp, string]> = [
+type ResidueSignature = string | ((match: RegExpMatchArray) => string);
+
+const RESIDUE_MARKERS: ReadonlyArray<[RegExp, ResidueSignature]> = [
   [/\bfrombase64string\b/i, '[Convert]::FromBase64String in unresolved position'],
   [/\b(?:iex|invoke-expression)\b/i, 'Invoke-Expression with an unresolved argument'],
+  // Carry the type, for the same reason the evaluator's own New-Object gap
+  // does: one shared signature covering roughly 40 types ranked nothing.
+  [/\bnew-object\s+(?:-typename\s+)?['"]?([\w.]+(?:\[\s*\])?)/i,
+    (m) => `New-Object ${normalizeType(m[1])}`],
   [/\bnew-object\b/i, 'New-Object'],
   [/\bsecurestring\b/i, 'SecureString payload'],
   [/\bmarshal\b/i, '[Runtime.InteropServices.Marshal]'],
@@ -662,10 +669,11 @@ const RESIDUE_MARKERS: ReadonlyArray<[RegExp, string]> = [
 
 function recordResidue(source: string, trace: Trace, layer: number): void {
   for (const [pattern, signature] of RESIDUE_MARKERS) {
-    if (!pattern.test(source)) continue;
+    const match = source.match(pattern);
+    if (!match) continue;
     const id = trace.gaps.report({
       kind: 'GAP',
-      signature,
+      signature: typeof signature === 'string' ? signature : signature(match),
       argTypes: [],
       provenance: { layer },
       detail: 'recognised but not resolvable without the phase 2 evaluator',

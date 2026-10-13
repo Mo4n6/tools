@@ -18,6 +18,7 @@ export type Expr =
   | StaticMemberExpr
   | CastExpr
   | InvokeExpr
+  | NewObjectExpr
   | UnsupportedExpr;
 
 interface Spanned {
@@ -101,6 +102,18 @@ export interface InvokeExpr extends Spanned {
   readonly callee: Expr;
   /** The script being run, when it is written separately from the callee. */
   readonly argument: Expr;
+}
+
+/**
+ * `New-Object <Type> [args]`. The type is kept as written so an unmodelled one
+ * can be named in the gap report: 141 of 300 real samples use New-Object, over
+ * roughly 40 distinct types, and one shared `New-Object` signature said
+ * nothing about which of them mattered.
+ */
+export interface NewObjectExpr extends Spanned {
+  readonly kind: 'new';
+  readonly typeName: string;
+  readonly args: readonly Expr[];
 }
 
 export interface UnsupportedExpr extends Spanned {

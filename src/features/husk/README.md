@@ -419,6 +419,55 @@ the operator is applied, so a gap in the dead branch still taints the result.
 That is the conservative direction, and this evaluator folds expressions rather
 than running them, so there are no skipped side effects to get wrong.
 
+**`New-Object` was one gap signature standing in for about forty types.** It
+appears in 141 of the 300 samples, 541 times. The parser rejected it outright
+as `command 'New-Object'`, consuming the command token and not its arguments,
+and a residue scan added a bare `New-Object` marker for any layer mentioning
+it. So the single most common unmodelled construct in real droppers ranked as
+one undifferentiated lump that said nothing about which type to build next.
+
+It now parses - `-TypeName`, `-ArgumentList`, a parenthesised or bare positional
+argument list, and the `byte[]` shape the tokenizer splits into three tokens -
+and constructs a value for the types Husk can represent: the .NET encoder
+classes, mapped onto the same objects `[Text.Encoding]::X` already yields so
+the existing `GetString`/`GetBytes` dispatch serves both spellings;
+`New-Object byte[] N` as a zero-filled array under the same cap the range
+operator has, since the size comes from the sample; and the list types as
+arrays. Everything else is a gap **named with its normalised type**, so
+`System.Net.WebClient`, `Net.WebClient` and the `Net.Webclient` a sample
+actually wrote rank as one entry rather than three. That turns the lump into:
+
+| | |
+|---|---|
+| `New-Object net.webclient` | 28x |
+| `New-Object reflection.assemblyname` | 19x |
+| `New-Object io.memorystream` | 14x |
+| `New-Object byte[]` | 13x |
+| `New-Object` (no type readable) | 7x |
+
+WebClient, TcpClient and the stream types are deliberately **not** modelled. A
+deobfuscator cannot fetch a URL or run a stream, so an object whose
+`DownloadString` returned *something* would be inventing a value - the fault
+fixed directly above. A named gap is the honest answer and still carries the
+type.
+
+Worth being straight about the result: this moved no number on the 300 samples.
+Indicators stayed at 282, layers at 112. The constructs it resolves sit behind
+other gaps in these particular samples - unresolved `IEX` arguments, reflection,
+string interpolation - so the capability is tested and ready rather than
+already paying off. What it did deliver is the ranking above, which is what
+says where to aim next, and that is the lump's real cost: it had been hiding
+`net.webclient` at 28x behind a number that looked like one problem.
+
+Two pre-existing faults turned up while testing it, both left alone. `IEX
+(group).Member()` silently drops the member chain, because PowerShell lexes
+command-argument position differently from expression position and the
+tokenizer reproduces that faithfully - it agrees with real PowerShell on 100%
+of the oracle corpus, so this is a parser-mode gap, not a lexer bug. `IEX
+('a' + 'b').ToUpper()` loses `.ToUpper()` the same way. And a variable holding
+a constructed object does not survive to the next statement. Both predate this
+work and neither is specific to `New-Object`.
+
 Worth noting what did **not** move: coverage over the generated corpus is
 unchanged at 80.7% / 50.2%. Invoke-Obfuscation emits none of these constructs,
 so no amount of that corpus could have found them. That is the argument for

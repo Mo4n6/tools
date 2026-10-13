@@ -89,6 +89,73 @@ class Parser {
     return { start, end };
   }
 
+  /**
+   * `New-Object <Type> [-ArgumentList] [args]`.
+   *
+   * The tokenizer is helpful here: a dotted type name arrives as one Generic
+   * token, so only the `byte[]` shape needs assembling from pieces. Parsing
+   * this at all is what lets the type reach the gap report - `New-Object` was
+   * one signature standing in for roughly 40 different types.
+   */
+  private parseNewObject(token: Token): Expr {
+    // -TypeName is noise once the type itself is read; -Property takes a
+    // hashtable Husk does not model, so stop and let the gap name the type.
+    if (this.kind === TokenKind.Parameter && /^-t(y(p(e(n(a(m(e)?)?)?)?)?)?)?$/i.test(this.peek()!.text)) {
+      this.index += 1;
+    }
+
+    const typeToken = this.peek();
+    let typeName = '';
+    if (
+      typeToken &&
+      (typeToken.kind === TokenKind.Generic ||
+        typeToken.kind === TokenKind.Identifier ||
+        typeToken.kind === TokenKind.StringLiteral ||
+        typeToken.kind === TokenKind.StringExpandable)
+    ) {
+      typeName = typeToken.kind === TokenKind.Generic || typeToken.kind === TokenKind.Identifier
+        ? typeToken.text
+        : typeToken.text.slice(1, -1);
+      this.index += 1;
+      // `byte[]` tokenises as Identifier LBracket RBracket.
+      if (this.at(TokenKind.LBracket)) {
+        const save = this.index;
+        this.index += 1;
+        if (this.eat(TokenKind.RBracket)) typeName += '[]';
+        else this.index = save;
+      }
+    }
+
+    if (typeName.length === 0) {
+      return this.unsupported(token, `command '${token.text}'`);
+    }
+
+    if (this.kind === TokenKind.Parameter && /^-a(r(g(u(m(e(n(t(l(i(s(t)?)?)?)?)?)?)?)?)?)?)?$/i.test(this.peek()!.text)) {
+      this.index += 1;
+    }
+
+    const args: Expr[] = [];
+    if (this.at(TokenKind.LParen)) {
+      this.index += 1;
+      while (!this.at(TokenKind.RParen) && !this.at(TokenKind.EndOfInput)) {
+        args.push(this.parseExpression(0));
+        if (!this.eat(TokenKind.Comma)) break;
+      }
+      this.eat(TokenKind.RParen);
+    } else if (
+      this.at(TokenKind.Number) ||
+      this.at(TokenKind.Variable) ||
+      this.at(TokenKind.StringLiteral) ||
+      this.at(TokenKind.StringExpandable)
+    ) {
+      // `New-Object byte[] 1024` - a bare positional argument list.
+      args.push(this.parseExpression(0));
+      while (this.eat(TokenKind.Comma)) args.push(this.parseExpression(0));
+    }
+
+    return { kind: 'new', typeName, args, ...this.span(token) };
+  }
+
   private unsupported(from: Token | undefined, reason: string): Expr {
     const start = from?.start ?? 0;
     // Consume to the next separator so parsing can continue past the problem.
@@ -349,6 +416,7 @@ class Parser {
             end: argument.end,
           };
         }
+        if (token.text.toLowerCase() === 'new-object') return this.parseNewObject(token);
         return this.unsupported(token, `command '${token.text}'`);
       }
 

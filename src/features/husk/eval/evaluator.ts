@@ -93,6 +93,9 @@ export function evaluate(node: Expr, ctx: EvalContext): PSValue {
       // one here yields its argument so the pipeline can read the payload.
       return evaluate(node.argument, ctx);
 
+    case 'new':
+      return construct(node.typeName, node.args.map((a) => evaluate(a, ctx)), node, ctx);
+
     case 'unsupported':
       return psString(
         '',
@@ -494,7 +497,7 @@ function toNumber(value: PSValue | undefined): number | undefined {
 
 // Member and static dispatch live in ./members.ts so that every call routes
 // through a single chokepoint - spec commitment 3.
-import { callMember, callStatic, evaluateCastValue } from './members';
+import { callMember, callStatic, construct, evaluateCastValue } from './members';
 
 function evaluateMember(
   node: Extract<Expr, { kind: 'member' }>,
