@@ -54,7 +54,7 @@ const HuskApp = (): JSX.Element => {
   const [source, setSource] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
   const { state, engine, run, readDropped, reset } = useHusk();
-  const [useEngine, setUseEngine] = useState(false);
+  const [useEngine, setUseEngine] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [stages, setStages] = useState<SuppliedStage[]>([]);
   const [tab, setTab] = useState<TabId>('output');
@@ -178,10 +178,11 @@ const HuskApp = (): JSX.Element => {
       <header className="mb-4">
         <h1 className="text-3xl font-bold">Husk</h1>
         <p className="mt-2 max-w-3xl text-sm text-emerald-300/70">
-          Paste obfuscated PowerShell. Husk emulates it rather than running it: the computational
-          half of the language is evaluated for real, every dangerous construct is recorded instead
-          of performed, and each <code>IEX</code> becomes a layer you can read. Analysis happens in
-          this tab and makes no network requests.
+          Paste obfuscated PowerShell. By default Husk runs it on a real PowerShell build compiled
+          to WebAssembly, sandboxed in this tab: the filesystem, the registry and the network are
+          stand-ins, so what the sample tries to do is recorded rather than performed. Switch to the
+          tree-walker to read the sample instead of running it. Either way the analysis happens
+          locally and makes no network requests.
         </p>
       </header>
 
@@ -211,20 +212,13 @@ const HuskApp = (): JSX.Element => {
           </div>
 
           {engineAvailable ? (
-            <label className="flex items-start gap-2 text-xs text-emerald-300/70">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={useEngine}
-                onChange={(event) => setUseEngine(event.target.checked)}
-              />
-              <span>
-                Run it on real PowerShell, in this tab. Sees what the sample actually did — the
-                files it dropped, the registry it wrote — rather than what its source says. Costs a
-                one-off 13 MB download, and cannot work from a <code>file://</code> copy.
-              </span>
-            </label>
-          ) : null}
+            <BackendPicker useEngine={useEngine} onPick={setUseEngine} />
+          ) : (
+            <p className="text-xs text-emerald-300/50">
+              Reading the sample with the tree-walker. The real-PowerShell engine is not being
+              served here{engine?.reason === undefined ? '' : ` (${engine.reason})`}.
+            </p>
+          )}
 
           {engineAvailable && useEngine ? (
             <StagePanel stages={stages} setStages={setStages} />
@@ -243,22 +237,34 @@ const HuskApp = (): JSX.Element => {
           ) : (
             <>
               <div className={panel}>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs uppercase tracking-wide text-emerald-300/60">
-                    {state.backend === 'engine' ? 'real PowerShell · ' : null}
-                    {result.layers.length} layer{result.layers.length === 1 ? '' : 's'} ·{' '}
-                    {result.iocs.indicators.length} indicator
-                    {result.iocs.indicators.length === 1 ? '' : 's'} · {result.elapsedMs}ms
-                  </span>
-                  <span
-                    className={`rounded border px-2 py-0.5 text-xs ${
-                      result.reliable
-                        ? 'border-emerald-500/40 text-emerald-300'
-                        : 'border-amber-500/40 text-amber-300'
-                    }`}
-                  >
-                    {result.reliable ? 'Fully resolved' : 'Incomplete — see fidelity'}
-                  </span>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <dl className="flex flex-wrap gap-x-6 gap-y-2">
+                    <Stat label="layers" value={result.layers.length} />
+                    <Stat label="indicators" value={result.iocs.indicators.length} />
+                    <Stat label="events" value={result.events.length} />
+                    <Stat label="elapsed" value={`${result.elapsedMs}ms`} />
+                  </dl>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Named so a test can read which backend answered without
+                        regexing the page text: "real PowerShell" also appears in
+                        the picker, and matching body text there once resolved
+                        immediately and read the page mid-run. */}
+                    <span
+                      id="husk-backend"
+                      className="rounded border border-emerald-500/30 px-2 py-0.5 text-xs text-emerald-300/70"
+                    >
+                      {state.backend === 'engine' ? 'real PowerShell' : 'tree-walker'}
+                    </span>
+                    <span
+                      className={`rounded border px-2 py-0.5 text-xs ${
+                        result.reliable
+                          ? 'border-emerald-500/40 text-emerald-300'
+                          : 'border-amber-500/40 text-amber-300'
+                      }`}
+                    >
+                      {result.reliable ? '✓ Fully resolved' : '! Incomplete — see fidelity'}
+                    </span>
+                  </div>
                 </div>
                 {result.iocs.truncatedKinds.length > 0 ? (
                   <p className="mt-2 text-xs text-amber-300">
@@ -453,6 +459,77 @@ const HuskApp = (): JSX.Element => {
           Lexer tables ported from PowerShell (MIT), Copyright (c) Microsoft Corporation.
         </span>
       </footer>
+    </div>
+  );
+};
+
+/**
+ * One number from the run, with the number carrying and the label receding.
+ *
+ * Four scalar counts are stat tiles rather than a chart - there is no series
+ * here to plot - so this stays a definition list and skips the hover layer a
+ * real plot would need.
+ */
+const Stat = ({ label, value }: { label: string; value: number | string }): JSX.Element => (
+  <div>
+    <dt className="text-[0.65rem] uppercase tracking-wide text-emerald-300/50">{label}</dt>
+    <dd className="text-lg leading-tight tabular-nums text-emerald-100">{value}</dd>
+  </div>
+);
+
+/**
+ * Which backend answers.
+ *
+ * This was a checkbox while the engine was opt-in. As the default, a checkbox
+ * reads backwards - an unticked box looks like the safer choice when it is
+ * simply the other one - so both options are named and the cost of each is
+ * stated next to it.
+ */
+const BackendPicker = ({
+  useEngine,
+  onPick,
+}: {
+  useEngine: boolean;
+  onPick: (value: boolean) => void;
+}): JSX.Element => {
+  const option = (active: boolean): string =>
+    `flex-1 rounded px-3 py-1.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${
+      active
+        ? 'bg-emerald-500/15 text-emerald-100'
+        : 'text-emerald-300/60 hover:text-emerald-200'
+    }`;
+
+  return (
+    <div>
+      <div
+        role="radiogroup"
+        aria-label="Analysis backend"
+        className="flex gap-1 rounded-md border border-emerald-500/30 bg-[#07110a] p-1"
+      >
+        <button
+          type="button"
+          role="radio"
+          aria-checked={useEngine}
+          className={option(useEngine)}
+          onClick={() => onPick(true)}
+        >
+          Run on real PowerShell
+        </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={!useEngine}
+          className={option(!useEngine)}
+          onClick={() => onPick(false)}
+        >
+          Read with the tree-walker
+        </button>
+      </div>
+      <p className="mt-1.5 text-xs text-emerald-300/60">
+        {useEngine
+          ? 'Sees what the sample actually did — the files it dropped, the registry it wrote — rather than what its source says. Costs a one-off 13 MB download, and cannot work from a file:// copy.'
+          : 'Reads the sample without running it. No download, works offline, and resolves fewer samples: it reports a gap wherever it cannot be sure.'}
+      </p>
     </div>
   );
 };

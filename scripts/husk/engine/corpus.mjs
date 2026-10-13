@@ -36,6 +36,21 @@ import { join, extname } from "node:path";
 
 import { decodeSource } from "../sample-encoding.mjs";
 
+// The product's own launcher parser, loaded through vite because it is
+// TypeScript. Imported rather than reimplemented: 36 of 300 real samples are
+// `powershell -enc ...` command lines, and feeding those to the engine raw
+// runs `powershell` as a PowerShell command, which it is not. The worker
+// unwraps them before the engine sees them, so a harness that does not is
+// measuring something the product no longer does.
+const { createServer: createViteServer } = await import("vite");
+const vite = await createViteServer({
+  root: new URL("../../..", import.meta.url).pathname,
+  server: { middlewareMode: true },
+  appType: "custom",
+  logLevel: "error",
+});
+const { parseLauncher } = await vite.ssrLoadModule("/src/features/husk/eval/launcher.ts");
+
 const ENGINE = process.env.ENGINE_DIR;
 const LIST = process.argv[2];
 const LIMIT = Number(process.argv[3] ?? 25);
@@ -99,9 +114,10 @@ for (const p of list) {
   n += 1;
   const name = p.split("/").pop().slice(0, 12);
   let src;
-  try { src = decodeSource(readFileSync(p)); } catch { continue; }
+  try { src = parseLauncher(decodeSource(readFileSync(p))).script; } catch { continue; }
   const started = Date.now();
-  let row = { name, status: "ok", ms: 0, calls: 0, dropped: 0, err: "", out: 0 };
+  let row = { name, status: "ok", ms: 0, calls: 0, dropped: 0, err: "", out: 0,
+    completed: false, layers: 0, registry: 0, sources: [], ops: [] };
   try {
     const got = await Promise.race([
       page.evaluate((s) => {
@@ -116,15 +132,29 @@ for (const p of list) {
         try { r = globalThis.runFixture(s); } catch (e) { threw = show(e).slice(0, 300); }
         const calls = globalThis.hostCalls();
         const dropped = globalThis.droppedFiles();
+        let registry = [];
+        try { registry = globalThis.registryDump(); } catch { /* not fatal */ }
         globalThis.proxyCalls();
-        return { r, calls, dropped, threw };
+        return { r, calls, dropped, registry, threw };
       }, src),
       new Promise((_, bad) => setTimeout(() => bad(new Error("TIMEOUT")), PER_SAMPLE_MS)),
     ]);
     row.ms = Date.now() - started;
     row.calls = (got.calls ?? []).length;
     row.dropped = (got.dropped ?? []).length;
-    row.out = (got.r?.output ?? got.r?.Output ?? "").length;
+    row.out = (got.r?.output ?? "").length;
+    // `completed` is the signal that matters and is not the same as `error`.
+    // Start-Process failing is a *non-terminating* error: the script carries
+    // on and the analysis is whole. Counting those as failures overstated the
+    // engine's gap rate on the first pass through this corpus.
+    row.completed = got.r?.completed === true;
+    row.layers = (got.r?.layers ?? []).length;
+    row.registry = (got.registry ?? []).length;
+    // Which chokepoints saw anything, which is what the engine buys over
+    // reading the source: binder, cmdlet, provider, proxy, boundary.
+    row.sources = [...new Set((got.calls ?? []).map((c) => c.source ?? "?"))].sort();
+    row.ops = [...new Set((got.calls ?? []).map((c) => c.op ?? c.name ?? c.signature ?? "?"))]
+      .slice(0, 12);
     const e = got.threw || got.r?.error || got.r?.Error || "";
     if (e) {
       row.status = "error";
@@ -160,4 +190,4 @@ for (const p of list) {
     `  [${n}/${list.length}] ${row.status.padEnd(7)} ${row.ms}ms${row.wedged ? " RESET" : ""} ${name}\n`,
   );
 }
-await browser.close(); engine.close();
+await browser.close(); engine.close(); await vite.close();

