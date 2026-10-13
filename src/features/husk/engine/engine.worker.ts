@@ -128,25 +128,55 @@ const post = (message: EngineResponse): void =>
  * hence the `@vite-ignore`, which keeps the bundler from trying to resolve or
  * inline a 16 MB .NET build at compile time.
  */
+/** Everything this worker calls on the engine, in the order it needs them. */
+const REQUIRED: readonly (keyof EngineGlobals)[] = [
+  'psInit',
+  'runFixture',
+  'setBudget',
+  'snapshotFs',
+  'droppedFiles',
+  'readDropped',
+  'proxyCalls',
+  'registryDump',
+  'hostCalls',
+  'setNetworkMode',
+  'resetDownloads',
+  'supplyDownload',
+  'drainBoundary',
+];
+
 async function load(baseUrl: string): Promise<EngineGlobals> {
   const url = engineUrl(baseUrl, 'main.js');
   await import(/* @vite-ignore */ url);
 
   const globals = self as unknown as Partial<EngineGlobals>;
-  if (typeof globals.psInit !== 'function' || typeof globals.runFixture !== 'function') {
+  // Every function this worker goes on to call, checked here rather than two
+  // of them. The engine's files are served under stable names, so a browser
+  // that cached an older build hands it back to a newer worker, which then
+  // calls something that is not there - and an exception thrown inside a
+  // module worker reaches the host as an `error` event with no message, i.e.
+  // "the engine worker failed to start: undefined". Naming the missing pieces
+  // turns that into something an analyst can act on.
+  const missing = REQUIRED.filter((name) => typeof globals[name] !== 'function');
+  if (missing.length > 0) {
     throw new Error(
-      `the module at ${url} loaded but did not install the engine — wrong build, or a partial upload`,
+      `the engine at ${url} is missing ${missing.join(', ')} — it is an older build than this ` +
+        `copy of Husk expects. A hard reload (Ctrl/Cmd+Shift+R) usually clears a cached engine.`,
     );
   }
 
-  const init = String(globals.psInit()).trim();
+  // Narrowed by the REQUIRED check above, which TypeScript cannot follow
+  // through a filter over a name list.
+  const engine = globals as EngineGlobals;
+
+  const init = String(engine.psInit()).trim();
   if (init !== 'OK') {
     // The engine's own message, which names the missing assembly or the
     // failing proxy. Far more useful than "init failed".
     throw new Error(`engine refused to start: ${init.slice(0, 500)}`);
   }
 
-  return globals as EngineGlobals;
+  return engine;
 }
 
 /**

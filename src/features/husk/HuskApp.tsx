@@ -227,6 +227,13 @@ const HuskApp = (): JSX.Element => {
           {state.status === 'error' ? (
             <p className={`${panel} border-rose-500/40 text-rose-200`}>{state.error}</p>
           ) : null}
+
+          {state.engineError !== undefined ? (
+            <p className={`${panel} border-amber-500/40 text-amber-200`}>
+              The engine could not run, so this was read with the tree-walker instead:{' '}
+              {state.engineError}
+            </p>
+          ) : null}
         </section>
 
         <section className="flex flex-col gap-3">

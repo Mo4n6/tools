@@ -31,6 +31,12 @@ export interface HuskState {
   readonly error?: string;
   /** Which backend produced `result`. */
   readonly backend?: HuskBackend;
+  /**
+   * Why the engine was not the one that answered, when it was asked and could
+   * not. The run still carries on with the tree-walker; this is what the
+   * analyst needs in order to decide whether to care.
+   */
+  readonly engineError?: string;
 }
 
 /** Rebuilds the grouped index that structured cloning cannot carry. */
@@ -99,11 +105,14 @@ export function useHusk(): {
 
       if (message.ok) {
         const result = message.result;
-        setState({
+        setState((previous) => ({
           status: 'done',
           backend: 'tree-walker',
+          // Carried over when this run is the fallback from a failed engine,
+          // so the reason survives into the finished result.
+          ...(previous.engineError === undefined ? {} : { engineError: previous.engineError }),
           result: { ...result, iocs: { ...result.iocs, byKind: regroup(result.iocs.indicators) } },
-        });
+        }));
       } else {
         setState({ status: 'error', backend: 'tree-walker', error: message.error });
       }
@@ -149,11 +158,19 @@ export function useHusk(): {
       engineRef.current = null;
       if (id !== latestId.current) return;
 
-      setState({
-        status: 'error',
-        backend: 'engine',
-        error: error instanceof Error ? error.message : String(error),
-      });
+      // The engine failing must not leave the analyst with nothing. The
+      // tree-walker reads the same sample without it, so hand the run over and
+      // say why - the backend badge then reports tree-walker, so which one
+      // actually answered is never in doubt.
+      const reason = error instanceof Error ? error.message : String(error);
+      const worker = workerRef.current;
+      if (worker) {
+        setState({ status: 'running', backend: 'tree-walker', engineError: reason });
+        worker.postMessage({ id, source } satisfies HuskRequest);
+        return;
+      }
+
+      setState({ status: 'error', backend: 'engine', error: reason });
     }
   }, []);
 
