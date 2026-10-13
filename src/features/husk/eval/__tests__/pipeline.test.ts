@@ -215,6 +215,59 @@ describe('operators found in real samples but not in the synthetic corpus', () =
   });
 });
 
+describe('New-Object', () => {
+  // New-Object appears in 141 of 300 real samples, 541 times, over roughly 40
+  // distinct types - and all of it used to land on one `New-Object` gap
+  // signature that said nothing about which type to implement next.
+  it('constructs an encoder, so the GetString that follows resolves', async () => {
+    expect(
+      (await deobfuscate(`IEX ((New-Object System.Text.ASCIIEncoding).GetString(@(104,105)))`)).output,
+    ).toBe('hi');
+    // .NET calls UTF-16LE "Unicode"; getting this wrong decodes to mojibake.
+    expect(
+      (await deobfuscate(`IEX ((New-Object Text.UnicodeEncoding).GetString(@(104,0,105,0)))`)).output,
+    ).toBe('hi');
+  });
+
+  it('accepts -TypeName, since obfuscators write it both ways', async () => {
+    const { output } = await deobfuscate(
+      `IEX ((New-Object -TypeName System.Text.ASCIIEncoding).GetString(@(97,98)))`,
+    );
+    expect(output).toBe('ab');
+  });
+
+  it('allocates a zero-filled buffer for New-Object byte[] N', async () => {
+    expect((await deobfuscate(`IEX ((New-Object byte[] 4) -join ',')`)).output).toBe('0,0,0,0');
+    expect((await deobfuscate(`IEX ('n=' + (New-Object byte[] 5).Length)`)).output).toBe('n=5');
+  });
+
+  it('refuses an allocation big enough to be a hang', async () => {
+    // The size comes from the sample, so it needs the cap the range operator has.
+    const { trace, reliable } = await deobfuscate(`IEX ('x' + (New-Object byte[] 99999999))`);
+    expect(trace.gaps.ranked().some((g) => g.signature === 'New-Object byte[]')).toBe(true);
+    expect(reliable).toBe(false);
+  });
+
+  it('names the type in the gap for a type it does not model', async () => {
+    // The whole point: one `New-Object` signature was useless, a named one
+    // ranks the next thing worth building.
+    const { trace } = await deobfuscate(`IEX ('x' + (New-Object System.IO.MemoryStream))`);
+    const signatures = trace.gaps.ranked().map((g) => g.signature);
+    // Normalised, so System.IO.MemoryStream, IO.MemoryStream and the
+    // io.memorystream a sample wrote all rank as one entry.
+    expect(signatures).toContain('New-Object io.memorystream');
+    expect(signatures).not.toContain("command 'New-Object'");
+  });
+
+  it('does not model a WebClient, on purpose', async () => {
+    // A deobfuscator cannot fetch a URL, so an object whose DownloadString
+    // returned *something* would be inventing a value - the fault fixed below.
+    const { trace, reliable } = await deobfuscate(`IEX ('x' + (New-Object Net.WebClient))`);
+    expect(trace.gaps.ranked().some((g) => g.signature === 'New-Object net.webclient')).toBe(true);
+    expect(reliable).toBe(false);
+  });
+});
+
 describe('constant folding does not invent a value', () => {
   // The folder refuses a group whose evaluation hit a gap, because folding it
   // would be a guess. That check compared `trace.gaps.size` before and after,

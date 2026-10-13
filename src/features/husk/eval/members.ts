@@ -23,6 +23,12 @@ import { type EvalContext, gap, toNumber } from './evaluator';
 const str = (value: PSValue): string => toStringValue(value);
 
 /** Normalizes [System.Text.Encoding] and [Text.Encoding] to one key. */
+/**
+ * One canonical spelling per type, so `System.Net.WebClient`, `Net.WebClient`
+ * and the `Net.Webclient` a sample actually wrote all rank as one entry
+ * instead of three. Used for the gap signature as well as dispatch - a tally
+ * that splits a type across casings cannot rank it.
+ */
 function normalizeType(typeName: string): string {
   return typeName.replace(/^system\./i, '').replace(/[`\s]/g, '').toLowerCase();
 }
@@ -315,6 +321,84 @@ export function callStatic(
       ctx.trace.gaps,
       taint,
       gap(ctx, 'GAP', `[${typeName}]::${name}()`, argList.map(typeNameOf), node),
+    ),
+  );
+}
+
+// --- Construction ---------------------------------------------------------
+
+/**
+ * `New-Object byte[] 1024` is an allocation, and the size comes from the
+ * sample, so it needs the same cap the range operator has. 1 MiB of PSValues
+ * is already far past anything a real dropper allocates for a buffer.
+ */
+const MAX_NEW_ARRAY = 1_048_576;
+
+/**
+ * .NET encoder types, mapped onto the objects `[Text.Encoding]::X` already
+ * yields so that the GetString/GetBytes dispatch above serves both spellings.
+ */
+const ENCODER_TYPES: Readonly<Record<string, string>> = {
+  'text.asciiencoding': 'ascii',
+  'text.utf8encoding': 'utf8',
+  'text.unicodeencoding': 'unicode',
+  'text.utf32encoding': 'utf32',
+  'text.utf7encoding': 'utf8',
+};
+
+/**
+ * `New-Object <Type>`, for the types Husk can represent as a value.
+ *
+ * Everything else is a gap *named with its type*. That matters more than it
+ * looks: New-Object appears in 141 of 300 real samples, 541 times, across
+ * roughly 40 types, and all of it used to land on one `New-Object` signature
+ * that said nothing about which type was worth implementing next.
+ *
+ * Deliberately absent: WebClient, TcpClient, MemoryStream and the rest of the
+ * I/O types. A deobfuscator cannot fetch a URL or run a stream, so modelling
+ * one as an object whose members return *something* would be inventing a
+ * value - the failure this evaluator was just fixed to stop committing. A
+ * named gap is the honest answer, and it still carries the type.
+ */
+export function construct(
+  typeName: string,
+  args: readonly PSValue[],
+  node: Expr,
+  ctx: EvalContext,
+): PSValue {
+  const type = normalizeType(typeName);
+  const taint = propagate(ctx.trace.gaps, ...args.map((a) => a.taint));
+
+  const encoder = ENCODER_TYPES[type];
+  if (encoder) return psObject(`System.Text.Encoding.${encoder}`, new Map(), taint);
+
+  // An array allocation: `New-Object byte[] N`, zero-filled as .NET does.
+  if (type.endsWith('[]')) {
+    const size = toNumber(args[0] ?? psNumber(0)) ?? 0;
+    if (!Number.isFinite(size) || size < 0 || size > MAX_NEW_ARRAY) {
+      return psNull(
+        propagate(
+          ctx.trace.gaps,
+          taint,
+          gap(ctx, 'GAP', `New-Object ${type}`, args.map(typeNameOf), node,
+            `allocation of ${size} exceeds the ${MAX_NEW_ARRAY} cap`),
+        ),
+      );
+    }
+    return psArray(Array.from({ length: size }, () => psNumber(0)), taint);
+  }
+
+  // The list types a sample builds up and then joins. An array models them
+  // well enough for the member dispatch above to work on.
+  if (type === 'collections.arraylist' || type === 'collections.generic.list') {
+    return psArray([], taint);
+  }
+
+  return psNull(
+    propagate(
+      ctx.trace.gaps,
+      taint,
+      gap(ctx, 'GAP', `New-Object ${type}`, args.map(typeNameOf), node),
     ),
   );
 }
