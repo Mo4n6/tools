@@ -1260,25 +1260,21 @@ function New-Object {
     # matters is StartInfo being filled in field by field and Start() called
     # afterwards, so the stand-in carries a StartInfo and reports what it was
     # finally told to run.
-    if ($TypeName -match '(^|\.)ProcessStartInfo$') {
-        $si = & $global:HuskRealNewObject -TypeName PSObject
-        $file = ''
-        $argv = ''
-        if ($null -ne $ArgumentList) {
-            $al = @($ArgumentList)
-            if ($al.Count -ge 1) { $file = [string]$al[0] }
-            if ($al.Count -ge 2) { $argv = [string]$al[1] }
-        }
-        $si | Add-Member NoteProperty FileName $file -Force
-        $si | Add-Member NoteProperty Arguments $argv -Force
-        $si | Add-Member NoteProperty WindowStyle '' -Force
-        $si | Add-Member NoteProperty UseShellExecute $false -Force
-        $si | Add-Member NoteProperty CreateNoWindow $false -Force
-        $si | Add-Member NoteProperty RedirectStandardOutput $false -Force
-        $si | Add-Member NoteProperty Verb '' -Force
-        return $si
-    }
-
+    # ProcessStartInfo is deliberately NOT stood in for, though it does not
+    # construct here either - its ctor throws the same 'Process is not supported
+    # on this platform'. Standing in for it was tried and reverted, because the
+    # binder chokepoint is what records the static form,
+    # `[Diagnostics.Process]::Start($si)`, and a PSObject matches no overload:
+    # binding fails, so the binder records nothing at all. Giving the stand-in a
+    # ToString did not help, because binding fails before ToString is reached.
+    #
+    # So it is a straight trade, and the corpus settles it: 4 of 300 samples use
+    # the static form against 1 using the instance form. Standing in buys a full
+    # command line for that one and silences the other four. Leaving the real
+    # type in place means the binder still records process.start on all five,
+    # with an empty argument - which says a process started and not which one,
+    # and is the lesser loss. Getting both needs the binder to read a PSObject,
+    # which lives in the PowerShell patch rather than here.
     if ($TypeName -match '(^|\.)Process$') {
         $proc = & $global:HuskRealNewObject -TypeName PSObject
         $proc | Add-Member NoteProperty StartInfo (New-Object Diagnostics.ProcessStartInfo) -Force
