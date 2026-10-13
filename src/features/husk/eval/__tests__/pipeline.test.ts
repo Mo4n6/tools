@@ -193,6 +193,58 @@ describe('operators found in real samples but not in the synthetic corpus', () =
     const { trace } = await deobfuscate(`IEX ('abc' -match 'a.*c')`);
     expect(trace.gaps.ranked().some((g) => g.signature === 'operator Imatch')).toBe(true);
   });
+
+  // The bitwise forms were implemented and the logical ones were not, so
+  // `-band` folded while `-and` was a gap. Every expected value here was
+  // taken from pwsh 7.6.6 rather than from the documentation.
+  it('folds -and, -or and -xor', async () => {
+    expect((await deobfuscate(`IEX (1 -and 0)`)).output).toBe('False');
+    expect((await deobfuscate(`IEX (1 -or 0)`)).output).toBe('True');
+    expect((await deobfuscate(`IEX (1 -xor 1)`)).output).toBe('False');
+    expect((await deobfuscate(`IEX (1 -xor 0)`)).output).toBe('True');
+  });
+
+  it('uses PowerShell truthiness, not JavaScript, for the logical operators', async () => {
+    // '0' is a non-empty string, so it is true - the single case most likely
+    // to be got wrong, and it flips whichever branch the sample takes.
+    expect((await deobfuscate(`IEX ('0' -and 1)`)).output).toBe('True');
+    expect((await deobfuscate(`IEX ('' -or 0)`)).output).toBe('False');
+    // A one-element array takes that element's truthiness.
+    expect((await deobfuscate(`IEX (@(0) -or 0)`)).output).toBe('False');
+    expect((await deobfuscate(`IEX (@(1,2) -and 1)`)).output).toBe('True');
+  });
+});
+
+describe('constant folding does not invent a value', () => {
+  // The folder refuses a group whose evaluation hit a gap, because folding it
+  // would be a guess. That check compared `trace.gaps.size` before and after,
+  // and the ledger deduplicates by signature - so it only moved for a gap the
+  // run had not seen before. A repeat was invisible: the group folded to
+  // whatever the unresolved operand coerced to, and the result shipped as a
+  // CLEAN layer, which could carry the whole run back to `reliable`.
+  it('refuses a group whose gap signature was already in the ledger', async () => {
+    const seeded = await deobfuscate(`$a = (1 -match 'x')
+$b = ('p' + (2 -match 'y'))`);
+    // The fabricated layer read `$b = 'p'`, dropping the -match that decides $b.
+    expect(seeded.trace.layers).toHaveLength(1);
+    expect(seeded.reliable).toBe(false);
+  });
+
+  it('behaves the same whether or not the gap was seen before', async () => {
+    // The bug made the outcome depend on unrelated earlier text, which is the
+    // part that makes it hard to spot in a real sample.
+    const first = await deobfuscate(`$b = ('p' + (2 -match 'y'))`);
+    const again = await deobfuscate(`$a = (1 -match 'x')
+$b = ('p' + (2 -match 'y'))`);
+    expect(again.trace.layers).toHaveLength(first.trace.layers.length);
+    expect(again.reliable).toBe(first.reliable);
+  });
+
+  it('still folds a group that resolves completely', async () => {
+    // The guard must not cost the folding this exists to do.
+    const { output } = await deobfuscate(`IEX ('a' + ('b' + 'c'))`);
+    expect(output).toBe('abc');
+  });
 });
 
 describe('reliability is not vacuous', () => {
