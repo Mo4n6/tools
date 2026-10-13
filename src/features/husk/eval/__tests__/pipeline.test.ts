@@ -293,6 +293,17 @@ $b = ('p' + (2 -match 'y'))`);
     expect(again.reliable).toBe(first.reliable);
   });
 
+  it('refuses to fold a group whose expression only partly parsed', async () => {
+    // parseExpression stops where it stops and reports `remaining`. The inner
+    // text here is `'a' + 'b' | %{ $_ }`: the parse yields 'a' + 'b', stops at
+    // the pipe, and evaluates cleanly to 'ab'. Folding the group to 'ab'
+    // discards the pipeline that decides the real value - and taint cannot
+    // flag it, because the prefix resolved perfectly. It is simply the wrong
+    // answer, presented as a resolved one.
+    const { trace } = await deobfuscate(`$q = ('a' + 'b' | %{ $_ })`);
+    expect(trace.layers).toHaveLength(1);
+  });
+
   it('still folds a group that resolves completely', async () => {
     // The guard must not cost the folding this exists to do.
     const { output } = await deobfuscate(`IEX ('a' + ('b' + 'c'))`);
