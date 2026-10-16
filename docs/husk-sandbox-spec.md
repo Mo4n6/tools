@@ -170,6 +170,15 @@ the same ops.
 
 Minimum op set, chosen to cover what commodity droppers actually do:
 
+The table below was the planned set. `src/features/husk/host/ops.ts` is now the
+authoritative one — `isHostOp` rejects anything outside it at every boundary —
+and it has drifted from this: the categories are spelled `filesystem` and
+`network` rather than `fs` and `net`, `sleep` moved out of `evasion` into a
+`timing` category that also carries `kill-date`, `evasion` gained `sandbox`, a
+`wmi` category was added, and `credential` was never built. The table is kept
+as written so the drift is visible rather than quietly tidied away; read
+`ops.ts` for what the code accepts.
+
 | Category | Ops |
 |---|---|
 | `fs` | `read` `write` `append` `delete` `copy` `move` `mkdir` `list` `exists` |
@@ -181,9 +190,32 @@ Minimum op set, chosen to cover what commodity droppers actually do:
 | `evasion` | `amsi` `etw` `defender` `sleep` `vm-check` `debugger-check` |
 | `credential` | `read-store` `dpapi` `keylog` |
 
-`persistence` and `evasion` are deliberately *semantic* rather than mechanical.
-A Run-key write is also `registry.write`; emit both. The mechanical op keeps the
-timeline honest, and the semantic one is what an analyst greps for.
+`persistence` and `evasion` are deliberately *semantic* rather than mechanical:
+a Run-key write is also `registry.write`, and the semantic op is what an analyst
+greps for.
+
+This section used to say to emit both ops for such a write. The implementation
+promotes instead — one record, carrying the semantic op — and this is a reversal
+of that decision, on evidence the rule predates. "Emit both" assumed one record
+per operation, which is what a single fake surface produces. The wasm engine
+captures the same write at four independent chokepoints, so a Run-key write
+through `Set-ItemProperty` already produces two records, one from the cmdlet
+hook with the parameters as the sample wrote them and one from the registry
+provider with the path resolved. Emitting both ops makes that four entries in
+one timeline for one write, all with the same signature and arguments, which is
+not a more honest timeline but a less readable one.
+
+Nothing is lost by promoting, because the record keeps the resolved path and the
+value either way, and `categoryOf` is derived from the op rather than stored.
+What is given up is the `registry.*` filter returning *every* registry write;
+the path is in the record, so the question is still answerable, and
+`registryWrites` in the engine analysis is built from the registry dump rather
+than from ops, so the extracted-artefact view is unaffected.
+
+Promotion lives in `host/autorun.ts`, applied in the engine adapter where all
+four chokepoints funnel through one loop. Reads are never promoted: enumerating
+the Run key is reconnaissance, benign software does it, and a category an
+analyst filters on is only worth having if it is trustworthy.
 
 ### The fakes
 

@@ -646,6 +646,109 @@ identical record says nothing its first did not. The ledger now stops at 4,096
 and reports how many it discarded (12,413 on that run), because a call list
 silently cut short reads like a sample that did less than it did.
 
+### Persistence, which nothing emitted
+
+`host/ops.ts` names nine families of thing a sample can do to a machine. Three
+of them had **no emitter at all** - `persistence`, `wmi`, and every `evasion`
+op but one. Over 300 real samples the engine recorded zero persistence ops of
+any kind, which is a strange result for commodity droppers: surviving a reboot
+is most of what they are for.
+
+Two unrelated causes, so two separate fixes.
+
+**The writes were already recorded, under the wrong name.** A Run-key write
+came through as `registry.write` and a drop into the Startup folder as
+`filesystem.copy`, each carrying the full path in its arguments. The engine knew
+what had happened; nothing said that *this* registry write is how the sample
+survives a reboot. `host/autorun.ts` promotes by path, applied in the engine
+adapter where all four chokepoints funnel through one loop - so
+`Set-ItemProperty`, `reg.exe add`, the registry provider and a `Copy-Item` into
+Startup are all caught in one place. Reads are never promoted: enumerating the
+Run key is reconnaissance, benign software does it, and the category is only
+worth having if it is trustworthy.
+
+This reverses a rule written down in `docs/husk-sandbox-spec.md`, which said to
+emit both the mechanical op and the semantic one. That assumed one record per
+operation, which is what a single fake surface produces. The engine captures the
+same write at four chokepoints, so one `Set-ItemProperty` to a Run key already
+makes two records - and emitting both ops makes four timeline entries, same
+signature, same arguments, for one write. The spec section now records the
+reversal and why.
+
+**The scheduled-task shapes never reached a recordable surface.** `schtasks` is
+an external exe and `Register-ScheduledTask` lives in a Windows-only module, so
+both died at "the term is not recognized" and the sample stopped there. Counted
+in command position over the 5,180 samples on hand: `schtasks` in 197,
+the `Register-ScheduledTask` family in 96, `reg`/`reg.exe` in 73. All three are
+now proxied.
+
+    schtasks.exe /create /tn recycle /sc minute /mo 1 /tr "C:\Users\Public\Music\Loader.vbs"
+        -> persistence.scheduled-task  recycle | C:\Users\Public\Music\Loader.vbs | every 1 minute
+
+`New-Service` is **not** proxied: it is in 2 of 5,180. `persistence.service` gets
+its emitter from a write under the services key instead, which is the shape
+`reg.exe add` and `Set-ItemProperty` actually use - though no sample in the 300
+takes it, so that one op is tested and unexercised by real data.
+
+`reg add` *delegates* to `Set-ItemProperty` rather than recording directly. The
+first version recorded it here, which put the op in the timeline and left the
+write out of the registry dump - and the dump is what the extracted-artefacts
+view is built from, so `reg add …\Run` appeared in the timeline and not in the
+writes an analyst exports. Delegating means the virtual registry performs it and
+the existing chokepoints record it, with the path resolved. One mechanism, and
+no second parser turning `/t REG_SZ` into a value.
+
+Over the 298 distinct samples in the 300-file corpus:
+
+| | before | after |
+|---|---|---|
+| `persistence.scheduled-task` | **0** | **15** |
+| `persistence.run-key` | **0** | **10** |
+| `persistence.startup-folder` | **0** | **2** |
+| `registry.write` | 13 | 3 *(10 promoted)* |
+| samples producing any host call | 218 | **220** |
+| dropped files captured | 176 | **179** |
+| samples stopped by a budget | 24 | 23 |
+
+The two samples that went from **silent to recording** are the ones worth
+looking at: for both, registering the persistence *was* the observable
+behaviour, and Husk previously reported nothing at all for them.
+
+Four samples show a lower call count afterwards. All four are time-budget stops
+- 10,000 ms exhausted in both runs, identical op sets - so how far they get is a
+function of how fast the machine was that second. Not a regression, and worth
+checking rather than assuming: a lower count is exactly what a regression looks
+like.
+
+Three smaller things the measurement turned up:
+
+- **The seeded Startup folder was the one nothing uses.** `C:\Users\<user>\Start
+  Menu\Programs\Startup` is the 5.1 path; of the 26 samples in 5,180 that name a
+  real Startup path, 23 use the modern per-user one. `Copy-Item` into it failed
+  with "could not find a part of the path". The op was still recorded by the
+  cmdlet hook, which is why this never showed up as a missing op - what was lost
+  was the dropped file, which is the part the analyst downloads.
+- **Husk's own bookkeeping was being recorded as the sample's.** The `reg add`
+  delegation used `Test-Path` to decide whether to create the key, and
+  `Test-Path` is a cmdlet, so the hook recorded
+  `registry.read Test-Path [Path=HKCU:\…\Run, ErrorAction=Stop]` - Husk's own
+  `-ErrorAction` in the arguments, attributed to a sample that never read the
+  registry. There is now an unrecorded `HuskHost.RegistryKeyExists` for this.
+- **`New-Item` writes a non-terminating error**, so the try/catch around the
+  delegation never saw a failure and the error landed in the error stream -
+  where `RunFixture` reports `Error[0]` as the sample's own error. Every
+  delegated call now carries `-ErrorAction Stop`.
+
+Those last two were found by `scripts/husk/wasm-spike/probe-proxies.ps1`, which
+is new here and the reason they were found at all. The proxies are PowerShell
+inside a C# verbatim string, so testing one meant a three-minute wasm rebuild,
+so they were not tested. The probe lifts the block out of `Program.cs`,
+unescapes the doubled quotes, dot-sources it against a stand-in recorder and
+asserts on the ops - 23 checks in about a second. It runs in CI *before* the
+engine build, because it costs nothing and checks the thing most likely to be
+wrong. It also fails a proxy that records correctly but writes to the error
+stream, which is how the `New-Item` bug surfaced.
+
 ### The engine over the same samples
 
 The numbers above are the tree-walker. `scripts/husk/engine/corpus.mjs` is the

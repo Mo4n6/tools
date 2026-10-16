@@ -38,6 +38,14 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      # Before the slow part, because it is a second and it checks the thing
+      # most likely to be wrong: the proxies are PowerShell inside a C#
+      # verbatim string, where a lone double quote ends the string and breaks
+      # the build 300 lines away, and where a parser bug otherwise needs a full
+      # engine build to find. pwsh is pre-installed on the runner.
+      - name: Probe the PowerShell proxies
+        run: pwsh -NoProfile -File scripts/husk/wasm-spike/probe-proxies.ps1
+
       - name: Build the engine
         env:
           # build.sh installs wasm-tools itself, from inside the PowerShell

@@ -75,8 +75,11 @@ describe('adaptRun', () => {
     const ops = analysis.trace.events.map((e) => e.op);
     expect(ops).toContain('network.download');
     expect(ops).toContain('filesystem.write');
-    expect(ops).toContain('registry.write');
     expect(ops).toContain('process.start');
+    // The Run-key write is reported as the persistence it establishes, not as
+    // the generic registry write the provider saw.
+    expect(ops).toContain('persistence.run-key');
+    expect(ops).not.toContain('registry.write');
 
     const download = analysis.trace.events.find((e) => e.op === 'network.download')!;
     expect(download.args[0]).toBe('http://evil.test/stage2.ps1');
@@ -126,10 +129,16 @@ describe('adaptRun', () => {
     // Deliberately not deduplicated: the cmdlet record has the parameters as
     // the sample wrote them, the provider record has the path resolved, and
     // those differ whenever the path is computed.
+    //
+    // Both are promoted, because both name the Run key. Promoting only one
+    // would split a single write across two categories.
     const { script, run } = load('dropper');
-    const writes = adaptRun(script, run).trace.events.filter((e) => e.op === 'registry.write');
+    const writes = adaptRun(script, run).trace.events.filter(
+      (e) => e.op === 'persistence.run-key',
+    );
 
     expect(writes.map((e) => e.origin)).toEqual(['cmdlet', 'provider']);
+    expect(writes.map((e) => e.category)).toEqual(['persistence', 'persistence']);
     expect(writes[0].args[0]).toContain('HKCU:');
     expect(writes[1].args[0]).toContain('HKEY_CURRENT_USER');
   });

@@ -28,6 +28,7 @@
 import { type GapSeed } from '../core/gaps';
 import { Trace, type EventOrigin } from '../core/trace';
 import { CLEAN } from '../core/taint';
+import { classifyAutorun } from '../host/autorun';
 import { categoryOf, isHostOp } from '../host/ops';
 import type { EngineDroppedFile, EngineHostCall, EngineRun, EngineSource } from './types';
 
@@ -137,14 +138,22 @@ export function adaptRun(source: string, run: EngineRun): EngineAnalysis {
       continue;
     }
 
+    // A write to an autorun location is reported as the persistence it
+    // establishes rather than as the generic write the surface saw. Promotion
+    // happens here because every layer - provider, cmdlet, binder and proxy -
+    // funnels through this loop, so `Set-ItemProperty HKCU:\…\Run`,
+    // `reg.exe add` and a Copy-Item into the Startup folder are all caught
+    // once, in one place.
+    const op = classifyAutorun(call.op, call.args);
+
     trace.addEvent({
       provenance: { layer: trace.layers.length - 1 },
-      category: categoryOf(call.op),
+      category: categoryOf(op),
       signature: call.native,
       args: call.args,
       taint: CLEAN,
       origin: originOf(call.source),
-      op: call.op,
+      op,
     });
   }
 

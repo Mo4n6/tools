@@ -27,6 +27,11 @@
 //
 // <list-file> is one sample path per line. Build one with `find ... -name '*.ps1'`.
 //
+// HUSK_DUMP_CALLS=1 adds every call, with its arguments, to each row. Worth
+// reaching for whenever a change is meant to record something new: an op with
+// an empty argument says a thing happened and not which thing, which is not
+// worth shipping, and it counts as a win in any tally of op names.
+//
 // SPDX-License-Identifier: MIT
 
 import { chromium } from "playwright";
@@ -50,6 +55,13 @@ const vite = await createViteServer({
   logLevel: "error",
 });
 const { parseLauncher } = await vite.ssrLoadModule("/src/features/husk/eval/launcher.ts");
+
+// Imported from the product for the same reason parseLauncher is. The product
+// promotes a write to an autorun location into the persistence op it
+// establishes, and does that in the adapter rather than in the engine, so a
+// harness reading the engine's raw ops would report `registry.write` for a
+// Run-key write and show none of the persistence category the product shows.
+const { classifyAutorun } = await vite.ssrLoadModule("/src/features/husk/host/autorun.ts");
 
 const ENGINE = process.env.ENGINE_DIR;
 const LIST = process.argv[2];
@@ -153,8 +165,18 @@ for (const p of list) {
     // Which chokepoints saw anything, which is what the engine buys over
     // reading the source: binder, cmdlet, provider, proxy, boundary.
     row.sources = [...new Set((got.calls ?? []).map((c) => c.source ?? "?"))].sort();
-    row.ops = [...new Set((got.calls ?? []).map((c) => c.op ?? c.name ?? c.signature ?? "?"))]
+    row.ops = [...new Set((got.calls ?? []).map((c) =>
+      c.op ? classifyAutorun(c.op, c.args ?? []) : (c.name ?? c.signature ?? "?")))]
       .slice(0, 12);
+    // Every call, with its arguments, when asked for. An op recorded with an
+    // empty argument says a thing happened and not which thing, and that is
+    // not worth shipping - but it reads as a win in any count of ops, so the
+    // arguments have to be readable without writing a one-off harness.
+    if (process.env.HUSK_DUMP_CALLS) {
+      row.detail = (got.calls ?? []).map((c) => ({
+        source: c.source, op: c.op, native: c.native ?? c.signature, args: c.args,
+      }));
+    }
     const e = got.threw || got.r?.error || got.r?.Error || "";
     if (e) {
       row.status = "error";

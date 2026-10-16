@@ -41,6 +41,23 @@ public static class HuskHost
     public static void Record(string op, string nativeSignature, string[] args)
         => RecordFrom("proxy", op, nativeSignature, args);
 
+    /// Does this registry key exist? Read-only, and records nothing.
+    ///
+    /// The `reg` proxy needs to know whether to create a key before setting a
+    /// value under it, and `Test-Path` would answer - but `Test-Path` is a
+    /// cmdlet, so the hook records it as a `registry.read` **by the sample**.
+    /// Measured: `reg add HKCU\…\Run /v 1 /d x` put
+    /// `registry.read Test-Path [Path=HKCU:\…\Run, ErrorAction=Stop]` in the
+    /// timeline, with Husk's own -ErrorAction in the arguments. A sample that
+    /// never read the registry was reported as having read it, which is worse
+    /// than a missing record: the analyst cannot tell it from the sample's own
+    /// reconnaissance.
+    ///
+    /// Public for the same reason Record is - the proxies are PowerShell. A
+    /// sample calling it learns whether a key exists, which `Test-Path` already
+    /// tells it, so nothing is exposed that was not already.
+    public static bool RegistryKeyExists(string path) => VirtualRegistry.Find(path) is not null;
+
     /// Internal: the source label is the one thing a record must not be able
     /// to lie about. `Record` below is public because the proxy functions are
     /// PowerShell and have to reach it, and it hard-codes "proxy" - so a
@@ -640,7 +657,22 @@ public static partial class Spike
                 @"Users\analyst\AppData\Roaming",
                 @"Users\analyst\AppData\Local\Temp",
                 @"Users\analyst\Desktop", @"Users\analyst\Downloads",
+                // Three Startup folders, because only the 5.1-era one was here and
+                // it is the one samples have largely stopped using. Of the 26
+                // samples in 5,180 that name a real Start Menu\Programs\Startup
+                // path, 23 use the modern per-user one - either spelled out or via
+                // $env:APPDATA - and 3 the short form, so both are kept.
+                // `Copy-Item` into the modern path failed with 'could not find a
+                // part of the path'. The op was still recorded by the cmdlet hook,
+                // which is why this did not show up as a missing op: what was lost
+                // was the dropped file, which is the part the analyst downloads.
+                //
+                // The all-users path has no sample behind it at all - 0 of 5,180 -
+                // and is here as the counterpart of a path that does, at the cost
+                // of one directory existing.
                 @"Users\analyst\Start Menu\Programs\Startup",
+                @"Users\analyst\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup",
+                @"ProgramData\Microsoft\Windows\Start Menu\Programs\Startup",
                 @"Windows\Temp", @"Windows\System32", @"Windows\Tasks",
                 @"ProgramData", @"Program Files", @"Program Files (x86)",
             })
@@ -1167,6 +1199,395 @@ function Start-Sleep {
     $null
 }
 Set-Alias sleep Start-Sleep -Scope Global -Force
+
+# ---- Persistence ----------------------------------------------------------
+
+# Records with trailing empty arguments dropped.
+#
+# A scheduled task may be registered without a schedule, a schtasks line
+# without a /tn, a reg query without a /v, and the records here carry a fixed
+# argument list - so a timeline entry read `Updater, , ` where the provider's
+# own records carry only what they know. The arguments an analyst reads are the
+# evidence, and an empty one is not evidence of anything.
+function HuskRecordTrimmed {
+    param($Op, $Native, $Values)
+    $list = @($Values)
+    $end = $list.Count
+    while ($end -gt 0 -and ([string]$list[$end - 1]).Length -eq 0) { $end-- }
+    if ($end -eq 0) {
+        [HuskHost]::Record($Op, $Native, @())
+    } else {
+        [HuskHost]::Record($Op, $Native, [string[]]@($list[0..($end - 1)]))
+    }
+}
+#
+# Three of the nine op families in host/ops.ts had no emitter at all, and
+# `persistence` was one of them: the vocabulary named five ways a sample
+# survives a reboot and nothing in the engine produced any of them. Half of
+# that was classification, which now happens in host/autorun.ts where every
+# recorded write passes through. The other half is here, because the two
+# commonest scheduled-task shapes do not reach a recordable surface at all -
+# they fail at 'the term is not recognized' and the sample stops there.
+#
+# Measured over the 5,180 samples on hand, counting each in command position
+# rather than as a bare substring: `schtasks` in 197, the
+# Register-ScheduledTask cmdlet family in 96, `reg`/`reg.exe` in 73.
+# `New-Service` is in 2, which is why it is not proxied here -
+# `persistence.service` gets its emitter from a write under the services key
+# instead, which is the shape `reg.exe add` and Set-ItemProperty actually use.
+#
+# None of these are advanced functions, for the reason the `powershell` proxy
+# records: [CmdletBinding()] binds -e and -w to the common parameters before a
+# remaining-arguments parameter ever sees them. What is being emulated here is
+# an executable taking a raw command line, which binds nothing, and plain
+# $args is exactly that.
+
+# Real invocations, from the corpus, show why the verb is not what this keys on:
+#
+#   SchTasks.exe /Create /SC MINUTE /TN 'Update service for Windows Service' \
+#     /TR 'PowerShell.exe -ExecutionPolicy bypass -windowstyle hidden -File $HOME\update.ps1' /MO 30 /F
+#   schtasks /F /%windir:~0,1%reate /sc minute /mo 4 /TN '...' /TR '...\oXnnwL.exe /E:vbscript ...'
+#
+# The second spells /create through a substring of $windir, so a parser looking
+# for /create misses it - but /TN and /TR are both plain. So a task name or a
+# task command is what makes this a registration, and the verb only decides
+# between registering and the rest.
+function schtasks {
+    $parts = @()
+    foreach ($a in $args) { $parts += [string]$a }
+
+    $name = ''
+    $run = ''
+    $every = ''
+    $unit = ''
+    $verb = ''
+    for ($i = 0; $i -lt $parts.Count; $i++) {
+        $flag = $parts[$i]
+        if ($flag.Length -lt 2) { continue }
+        if (-not ($flag.StartsWith('/') -or $flag.StartsWith('-'))) { continue }
+
+        $key = $flag.Substring(1).ToLower()
+        $next = ''
+        if ($i + 1 -lt $parts.Count) { $next = $parts[$i + 1] }
+
+        switch ($key) {
+            'tn'     { $name = $next }
+            'tr'     { $run = $next }
+            'sc'     { $unit = $next }
+            'mo'     { $every = $next }
+            'create' { $verb = 'create' }
+            'change' { $verb = 'change' }
+            'delete' { $verb = 'delete' }
+            'run'    { $verb = 'run' }
+            'query'  { $verb = 'query' }
+            'end'    { $verb = 'end' }
+        }
+    }
+
+    # /sc and /mo arrive in either order, so the schedule is composed here
+    # rather than as each is read: 'every 2 minute'.
+    $schedule = $unit
+    if ($every.Length -gt 0) { $schedule = ('every ' + $every + ' ' + $unit).Trim() }
+
+    # A registration is the persistence; a /query is reconnaissance and a
+    # /delete usually removes a competitor's task, so neither is reported as
+    # persistence established. They are still a process the sample ran.
+    #
+    # /change is split by whether it supplies a command: `/change /tn X /tr Y`
+    # re-points a task at something new, which is persistence, while
+    # `/change /tn X /disable` turns one off, which is not. A /tr is also what
+    # catches the invocation that spells /create out of a $windir substring,
+    # since that one has no readable verb at all.
+    if ($run.Length -gt 0 -or ($verb -eq 'create' -and $name.Length -gt 0)) {
+        HuskRecordTrimmed 'persistence.scheduled-task' 'schtasks' @($name, $run, $schedule)
+    } else {
+        [HuskHost]::Record('process.start', 'schtasks', @(($parts -join ' ')))
+    }
+    $null
+}
+Set-Alias schtasks.exe schtasks -Scope Global -Force
+
+# The cmdlet family. These live in the ScheduledTasks module, which is Windows
+# only and not in this bundle, so every one of the 96 samples that uses them
+# died at New-ScheduledTaskAction with nothing recorded. All 96 reach
+# New-ScheduledTaskAction, so the entry point is the whole family or none of
+# it.
+#
+# The action and trigger objects are real values the sample passes around and
+# hands to Register-ScheduledTask, so they are stand-ins carrying what they
+# were told rather than $null - a sample that builds an action and registers it
+# two statements later is the normal shape:
+#
+#   $action  = New-ScheduledTaskAction -Execute 'C:\ProgramData\WD\WD.vbs'
+#   $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
+#   Register-ScheduledTask -Action $action -Trigger $trigger -TaskName 'WD'
+#
+# Constructing one is not recorded. Nothing is established until it is
+# registered, and recording the parts would put three entries in the timeline
+# for one scheduled task.
+function New-ScheduledTaskAction {
+    param($Execute, $Argument, $WorkingDirectory, $Id)
+    $a = & $global:HuskRealNewObject -TypeName PSObject
+    $a | Add-Member NoteProperty Execute ([string]$Execute) -Force
+    $a | Add-Member NoteProperty Arguments ([string]$Argument) -Force
+    $a | Add-Member NoteProperty HuskKind 'ScheduledTaskAction' -Force
+    $a
+}
+
+function New-ScheduledTaskTrigger {
+    param($At, $RepetitionInterval, $RepetitionDuration, $DaysOfWeek, $User, $RandomDelay)
+    # The switches are not declared, so they arrive in $args as their own
+    # names. Matched against the known set rather than taken as whichever
+    # switch comes last: -Force and -Confirm arrive the same way, and
+    # `-Once -RandomDelay x -Force` would otherwise report its trigger as
+    # 'force'.
+    $known = @('once', 'daily', 'weekly', 'monthly', 'atstartup', 'atlogon', 'atcreation')
+    $kind = ''
+    foreach ($a in $args) {
+        $text = [string]$a
+        if (-not $text.StartsWith('-')) { continue }
+        $candidate = $text.TrimStart('-').ToLower()
+        if ($known -contains $candidate) { $kind = $candidate; break }
+    }
+    if ($kind.Length -eq 0) { $kind = 'once' }
+
+    $rendered = $kind
+    if ($null -ne $RepetitionInterval) {
+        try { $rendered = $kind + ' every ' + [string]$RepetitionInterval.TotalMinutes + ' min' }
+        catch { $rendered = $kind }
+    } elseif ($null -ne $At) {
+        $rendered = $kind + ' at ' + [string]$At
+    }
+
+    $t = & $global:HuskRealNewObject -TypeName PSObject
+    $t | Add-Member NoteProperty HuskTrigger $rendered -Force
+    $t | Add-Member NoteProperty HuskKind 'ScheduledTaskTrigger' -Force
+    $t
+}
+
+# A principal and a settings set are passed to Register-ScheduledTask and
+# never read from, so these exist only so the statements that build them do not
+# fail. What they carry is not recorded: the task name, the command and the
+# schedule are the evidence, and a fourth and fifth argument on the record
+# would be empty in almost every sample.
+function New-ScheduledTaskPrincipal {
+    param($UserId, $LogonType, $RunLevel, $GroupId, $Id)
+    $p = & $global:HuskRealNewObject -TypeName PSObject
+    $p | Add-Member NoteProperty HuskKind 'ScheduledTaskPrincipal' -Force
+    $p
+}
+
+function New-ScheduledTaskSettingsSet {
+    $s = & $global:HuskRealNewObject -TypeName PSObject
+    $s | Add-Member NoteProperty HuskKind 'ScheduledTaskSettingsSet' -Force
+    $s
+}
+
+# Renders what the task will run, from whichever shape the action arrived in.
+function HuskTaskCommandLine {
+    param($Action)
+    if ($null -eq $Action) { return '' }
+    $line = ''
+    foreach ($one in @($Action)) {
+        if ($null -eq $one) { continue }
+        $exe = ''
+        $arg = ''
+        try { $exe = [string]$one.Execute } catch { $exe = '' }
+        try { $arg = [string]$one.Arguments } catch { $arg = '' }
+        if ($exe.Length -eq 0 -and $arg.Length -eq 0) { $exe = [string]$one }
+        $part = ($exe + ' ' + $arg).Trim()
+        if ($part.Length -eq 0) { continue }
+        if ($line.Length -gt 0) { $line = $line + ' ; ' }
+        $line = $line + $part
+    }
+    $line
+}
+
+function New-ScheduledTask {
+    param($Action, $Trigger, $Principal, $Settings, $Description)
+    $t = & $global:HuskRealNewObject -TypeName PSObject
+    $t | Add-Member NoteProperty Actions $Action -Force
+    $t | Add-Member NoteProperty Triggers $Trigger -Force
+    $t | Add-Member NoteProperty HuskKind 'ScheduledTask' -Force
+    $t
+}
+
+function Register-ScheduledTask {
+    param($TaskName, $Action, $Trigger, $Principal, $Settings, $InputObject, $TaskPath, $User, $Password, $RunLevel, $Description, $Xml)
+
+    # -InputObject takes a whole task from New-ScheduledTask, so the action and
+    # trigger may be inside it rather than passed alongside.
+    $action = $Action
+    $trigger = $Trigger
+    if ($null -ne $InputObject) {
+        try { if ($null -eq $action) { $action = $InputObject.Actions } } catch { }
+        try { if ($null -eq $trigger) { $trigger = $InputObject.Triggers } } catch { }
+    }
+
+    $when = ''
+    if ($null -ne $trigger) {
+        foreach ($one in @($trigger)) {
+            try { $text = [string]$one.HuskTrigger } catch { $text = '' }
+            if ($text.Length -eq 0) { continue }
+            if ($when.Length -gt 0) { $when = $when + ' ; ' }
+            $when = $when + $text
+        }
+    }
+
+    # The XML form carries the command inside the document rather than in a
+    # parameter. It is recorded whole: parsing it to pull out <Command> would
+    # be a second parser to get wrong, and the analyst can read the XML.
+    $command = HuskTaskCommandLine $action
+    if ($command.Length -eq 0 -and $null -ne $Xml) { $command = [string]$Xml }
+
+    HuskRecordTrimmed 'persistence.scheduled-task' 'Register-ScheduledTask' @([string]$TaskName, $command, $when)
+
+    $registered = & $global:HuskRealNewObject -TypeName PSObject
+    $registered | Add-Member NoteProperty TaskName ([string]$TaskName) -Force
+    $registered | Add-Member NoteProperty State 'Ready' -Force
+    $registered
+}
+
+function Set-ScheduledTask {
+    param($TaskName, $Action, $Trigger, $Principal, $Settings, $InputObject, $TaskPath, $User, $Password)
+    $name = [string]$TaskName
+    if ($name.Length -eq 0 -and $null -ne $InputObject) {
+        try { $name = [string]$InputObject.TaskName } catch { $name = '' }
+    }
+    HuskRecordTrimmed 'persistence.scheduled-task' 'Set-ScheduledTask' @($name, (HuskTaskCommandLine $Action))
+    $null
+}
+
+# Removing and enumerating tasks establish nothing, and host/ops.ts has no
+# term for either - the nearest, process.list, is about processes. So these two
+# exist to let the script carry on rather than die at an unrecognised command,
+# and record nothing: a wrong category costs more than a missing record,
+# because it is the category an analyst filters on. Adding
+# persistence.enumerate would be the fix if the recon itself turns out to be
+# worth reporting.
+function Unregister-ScheduledTask {
+    param($TaskName, $TaskPath, $InputObject)
+    $null
+}
+
+function Get-ScheduledTask {
+    param($TaskName, $TaskPath)
+    @()
+}
+
+# reg.exe, in 73 of 5,180.
+#
+# An add is *delegated* to Set-ItemProperty rather than recorded here. The
+# first version recorded it directly, which put the op in the timeline but left
+# the write out of the registry dump - and the dump is what the extracted
+# artefacts view is built from, so `reg add ...\Run` showed in the timeline and
+# not in the writes the analyst exports. Delegating means the virtual registry
+# provider performs it, the cmdlet and provider chokepoints record it with the
+# path resolved, and host/autorun.ts promotes it exactly as it does a write
+# from Set-ItemProperty. One mechanism, and no second parser turning /t type
+# names into values.
+#
+# A direct record is the fallback if delegation throws, so a path the provider
+# will not take still produces evidence rather than nothing.
+#
+#   REG ADD HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Run /v 1 /d 'C:\...\Untitled.exe'
+function reg {
+    $parts = @()
+    foreach ($a in $args) { $parts += [string]$a }
+    if ($parts.Count -eq 0) { return $null }
+
+    $verb = $parts[0].ToLower()
+    $key = ''
+    if ($parts.Count -gt 1 -and -not $parts[1].StartsWith('/')) { $key = $parts[1] }
+
+    $name = ''
+    $data = ''
+    for ($i = 0; $i -lt $parts.Count; $i++) {
+        $flag = $parts[$i]
+        if (-not $flag.StartsWith('/')) { continue }
+        $k = $flag.Substring(1).ToLower()
+        $next = ''
+        if ($i + 1 -lt $parts.Count) { $next = $parts[$i + 1] }
+        if ($k -eq 'v') { $name = $next }
+        elseif ($k -eq 'd') { $data = $next }
+        elseif ($k -eq 've') { $name = '(default)' }
+    }
+
+    # A sample writes whichever hive spelling it was copied with, and the
+    # provider is reached through its drives, so the long form is mapped onto
+    # the drive that roots it.
+    $drive = ''
+    $rest = ''
+    foreach ($pair in @(
+        @('HKEY_CURRENT_USER', 'HKCU'), @('HKEY_LOCAL_MACHINE', 'HKLM'),
+        @('HKEY_CLASSES_ROOT', 'HKCR'), @('HKEY_CURRENT_CONFIG', 'HKCC'),
+        @('HKEY_USERS', 'HKU'),
+        @('HKCU', 'HKCU'), @('HKLM', 'HKLM'), @('HKCR', 'HKCR'),
+        @('HKCC', 'HKCC'), @('HKU', 'HKU'))) {
+        $prefix = $pair[0]
+        if ($key.ToUpper().StartsWith($prefix)) {
+            $drive = $pair[1]
+            $rest = $key.Substring($prefix.Length).TrimStart('\', ':')
+            break
+        }
+    }
+    $psPath = ''
+    if ($drive.Length -gt 0) { $psPath = $drive + ':\' + $rest }
+
+    # -ErrorAction Stop on every delegated call, so a failure reaches the catch
+    # instead of the error stream. Without it New-Item writes a non-terminating
+    # error and carries on, and RunFixture reports Error[0] as *the sample's*
+    # error - so a path the provider would not take became the error an analyst
+    # reads for a sample whose own run was fine. Measured with a stand-in
+    # recorder outside wasm, where there are no registry drives at all: every
+    # reg add printed 'cannot find drive HKCU' before falling back correctly.
+    if ($verb -eq 'add') {
+        $done = $false
+        if ($psPath.Length -gt 0) {
+            try {
+                # [HuskHost]::RegistryKeyExists, not Test-Path: Test-Path is a
+                # cmdlet and the hook would record it as the sample reading the
+                # registry. See its comment in the C# above.
+                if (-not [HuskHost]::RegistryKeyExists($key)) {
+                    New-Item -Path $psPath -Force -ErrorAction Stop | Out-Null
+                }
+                if ($name.Length -gt 0) {
+                    Set-ItemProperty -Path $psPath -Name $name -Value $data -ErrorAction Stop
+                }
+                $done = $true
+            } catch { $done = $false }
+        }
+        if (-not $done) {
+            HuskRecordTrimmed 'registry.write' ('reg ' + $verb) @($key, $name, $data)
+        }
+    } elseif ($verb -eq 'delete') {
+        $done = $false
+        if ($psPath.Length -gt 0) {
+            try {
+                if ($name.Length -gt 0) {
+                    Remove-ItemProperty -Path $psPath -Name $name -ErrorAction Stop
+                } else {
+                    Remove-Item -Path $psPath -Recurse -Force -ErrorAction Stop
+                }
+                $done = $true
+            } catch { $done = $false }
+        }
+        if (-not $done) {
+            HuskRecordTrimmed 'registry.delete' ('reg ' + $verb) @($key, $name)
+        }
+    } elseif ($verb -eq 'copy' -or $verb -eq 'import' -or $verb -eq 'restore') {
+        # These take a source as well, and what they land is whatever that
+        # source holds - which is not in this engine. The intent is the record.
+        HuskRecordTrimmed 'registry.write' ('reg ' + $verb) @($key, $name, $data)
+    } else {
+        # A query changes nothing, so there is nothing for the dump to gain and
+        # no reason to risk the provider erroring on a key that was never
+        # written. Looking is still worth reporting.
+        HuskRecordTrimmed 'registry.read' ('reg ' + $verb) @($key, $name)
+    }
+    $null
+}
+Set-Alias reg.exe reg -Scope Global -Force
 
 # New-Object is the classic cradle: New-Object Net.WebClient. Hand back a fake
 # whose methods record, and fall through to the real cmdlet for everything
