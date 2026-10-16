@@ -89,6 +89,12 @@
       "crossScore": 92.96,
       "primaryRelative": 0.6064,
       "pbRelative": 0.5037
+    },
+    {
+      "date": "2026-10-14",
+      "crossScore": 92.31,
+      "primaryRelative": 0.6123,
+      "pbRelative": 0.5112
     }
   ],
   "XLF": [
@@ -181,6 +187,12 @@
       "crossScore": 84.58,
       "primaryRelative": 0.7372,
       "pbRelative": 0.4315
+    },
+    {
+      "date": "2026-10-14",
+      "crossScore": 84.25,
+      "primaryRelative": 0.7423,
+      "pbRelative": 0.4345
     }
   ],
   "XLB": [
@@ -273,6 +285,12 @@
       "crossScore": 79.56,
       "primaryRelative": 0.8094,
       "pbRelative": 0.5093
+    },
+    {
+      "date": "2026-10-14",
+      "crossScore": 78.75,
+      "primaryRelative": 0.8188,
+      "pbRelative": 0.515
     }
   ],
   "XLU": [
@@ -365,6 +383,12 @@
       "crossScore": 77.88,
       "primaryRelative": 0.8402,
       "pbRelative": 0.3944
+    },
+    {
+      "date": "2026-10-14",
+      "crossScore": 77.38,
+      "primaryRelative": 0.848,
+      "pbRelative": 0.397
     }
   ],
   "XLV": [
@@ -457,6 +481,12 @@
       "crossScore": 55.12,
       "primaryRelative": 0.9851,
       "pbRelative": 0.8815
+    },
+    {
+      "date": "2026-10-14",
+      "crossScore": 51.75,
+      "primaryRelative": 1.0205,
+      "pbRelative": 0.912
     }
   ],
   "XLI": [
@@ -549,6 +579,12 @@
       "crossScore": 29.7,
       "primaryRelative": 1.1896,
       "pbRelative": 1.2278
+    },
+    {
+      "date": "2026-10-14",
+      "crossScore": 29.4,
+      "primaryRelative": 1.1929,
+      "pbRelative": 1.2303
     }
   ],
   "IWM": [
@@ -635,6 +671,12 @@
       "crossScore": 85.78,
       "primaryRelative": 0.7187,
       "pbRelative": 0.3796
+    },
+    {
+      "date": "2026-10-14",
+      "crossScore": 85.25,
+      "primaryRelative": 0.7269,
+      "pbRelative": 0.3839
     }
   ],
   "IYR": [
@@ -721,6 +763,12 @@
       "crossScore": 75.19,
       "primaryRelative": 0.8817,
       "pbRelative": 0.4444
+    },
+    {
+      "date": "2026-10-14",
+      "crossScore": 74.04,
+      "primaryRelative": 0.8994,
+      "pbRelative": 0.4494
     }
   ],
   "EFA": [
@@ -807,6 +855,12 @@
       "crossScore": 83.35,
       "primaryRelative": 0.7562,
       "pbRelative": 0.4352
+    },
+    {
+      "date": "2026-10-14",
+      "crossScore": 82.66,
+      "primaryRelative": 0.7668,
+      "pbRelative": 0.4419
     }
   ],
   "EEM": [
@@ -893,6 +947,12 @@
       "crossScore": 82.55,
       "primaryRelative": 0.7685,
       "pbRelative": 0.4944
+    },
+    {
+      "date": "2026-10-14",
+      "crossScore": 82.42,
+      "primaryRelative": 0.7704,
+      "pbRelative": 0.4963
     }
   ],
   "XLK": [
@@ -985,6 +1045,12 @@
       "crossScore": 20.61,
       "primaryRelative": 1.1829,
       "pbRelative": 2.2593
+    },
+    {
+      "date": "2026-10-14",
+      "crossScore": 22.08,
+      "primaryRelative": 1.1603,
+      "pbRelative": 2.2191
     }
   ],
   "SMH": [
@@ -1071,6 +1137,12 @@
       "crossScore": 0.0,
       "primaryRelative": 1.9494,
       "pbRelative": 1.9722
+    },
+    {
+      "date": "2026-10-14",
+      "crossScore": 0.0,
+      "primaryRelative": 1.9243,
+      "pbRelative": 1.9869
     }
   ]
 }
